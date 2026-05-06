@@ -115,6 +115,7 @@ function MermaidCardComponent({ shape }: { shape: MermaidCardShape }) {
 
   return (
     <HTMLContainer
+      className="animate-in fade-in zoom-in-95 duration-300"
       style={{
         width: shape.props.w,
         height: shape.props.h,

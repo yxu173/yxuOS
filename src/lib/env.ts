@@ -16,6 +16,7 @@ const envSchema = z.object({
     empty,
     z.string().url().default("http://localhost:3000"),
   ),
+  NEXT_PUBLIC_SHOW_DEV_TOOLBAR: z.preprocess(empty, z.string().optional()),
 
   // ─── Database (Neon Postgres + pgvector) ───────────────
   DATABASE_URL: z.string().url(),

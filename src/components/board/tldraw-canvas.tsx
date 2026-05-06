@@ -77,7 +77,9 @@ export function TldrawCanvas({ boardId, initialSnapshot }: TldrawCanvasProps) {
         }
         onMount={handleMount}
       >
-        <DevShapeToolbar />
+        {process.env.NEXT_PUBLIC_SHOW_DEV_TOOLBAR ? (
+          <DevShapeToolbar />
+        ) : null}
       </Tldraw>
     </div>
   );
