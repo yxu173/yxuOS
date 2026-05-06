@@ -7,13 +7,13 @@ import { WorkspaceTopBar } from "@/components/workspaces/workspace-top-bar";
 
 import { CanvasViewport } from "./canvas-viewport";
 import { useDesignCanvas, MAX_ZOOM, MIN_ZOOM } from "./canvas-store";
-import { DesignChat } from "./design-chat";
 import {
   DesignLeftPanel,
   type DesignSummary,
 } from "./design-left-panel";
 import { DesignName } from "./design-name";
 import { DesignShareDialog } from "./design-share-dialog";
+import { DesignRightPanel } from "./right-panel";
 import type { Artboard } from "./types";
 import { useDesignPersistence } from "./use-design-persistence";
 
@@ -116,7 +116,10 @@ export function DesignShell({
           <CanvasViewport />
         </main>
         {rightOpen ? (
-          <DesignChat designId={designId} initialMessages={initialMessages} />
+          <DesignRightPanel
+            designId={designId}
+            initialMessages={initialMessages}
+          />
         ) : null}
       </div>
     </div>

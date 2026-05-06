@@ -2,6 +2,7 @@
 
 import { useDesignCanvas } from "./canvas-store";
 import { DesignRenderer } from "./design-renderer";
+import { DesignRendererProvider } from "./design-renderer-context";
 import { DEVICE_DIMENSIONS, type Artboard } from "./types";
 
 export interface ArtboardViewProps {
@@ -30,6 +31,8 @@ export function ArtboardView({
   const isSelected = useDesignCanvas((state) =>
     state.selection.includes(artboard.id),
   );
+  const selectedNodeId = useDesignCanvas((state) => state.selectedNodeId);
+  const selectNode = useDesignCanvas((state) => state.selectNode);
   const deviceLabel =
     artboard.device === "custom"
       ? `${artboard.w} × ${artboard.h}`
@@ -79,7 +82,12 @@ export function ArtboardView({
       >
         {artboard.design ? (
           <div className="h-full w-full overflow-hidden">
-            <DesignRenderer node={artboard.design} />
+            <DesignRendererProvider
+              selectedNodeId={selectedNodeId}
+              onNodeClick={(nodeId) => selectNode(nodeId)}
+            >
+              <DesignRenderer node={artboard.design} />
+            </DesignRendererProvider>
           </div>
         ) : (
           <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-zinc-400">

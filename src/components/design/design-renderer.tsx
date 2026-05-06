@@ -16,18 +16,54 @@ import type {
   TextNode,
   FrameNode,
 } from "./design-node";
+import { useDesignRendererContext } from "./design-renderer-context";
+
+interface RenderContext {
+  selectedNodeId: string | null;
+  onNodeClick: ((nodeId: string) => void) | null;
+}
+
+interface InteractiveProps {
+  "data-node-id": string | undefined;
+  onPointerDown?: (event: React.PointerEvent) => void;
+  style: CSSProperties;
+}
+
+/**
+ * Compute `data-node-id`, `onPointerDown`, and `style` (with selection
+ * outline) for a node given the rendering context. Pure function — the
+ * context is read at the top of `<NodeRenderer>` (a hook call) and passed
+ * down to leaves so each branch of the type-switch isn't a separate
+ * conditional hook call.
+ */
+function interactiveProps(
+  node: DesignNode,
+  ctx: RenderContext,
+  defaults: CSSProperties = {},
+): InteractiveProps {
+  const isSelected = !!node.id && ctx.selectedNodeId === node.id;
+  const outlineStyle: CSSProperties = isSelected
+    ? {
+        boxShadow:
+          "0 0 0 2px #3b82f6, 0 0 0 4px rgba(59, 130, 246, 0.25)",
+      }
+    : {};
+  return {
+    "data-node-id": node.id,
+    onPointerDown:
+      ctx.onNodeClick && node.id
+        ? (event) => {
+            event.stopPropagation();
+            event.preventDefault();
+            ctx.onNodeClick!(node.id!);
+          }
+        : undefined,
+    style: { ...defaults, ...node.style, ...outlineStyle },
+  };
+}
 
 /**
  * Renders a `DesignNode` tree to real React/DOM.
- *
- * Every node merges its `style` over a node-type default. The default
- * gives a sensible look out of the box (button colors, card border, link
- * underline, etc.); the agent overrides via `style` when it wants
- * something specific.
- *
- * Containers (`div`, `card`, `nav`, `section`, `frame`) recurse over
- * `children`. Leaves (`text`, `button`, `image`, `input`, `icon`, `link`,
- * `divider`) render directly.
  */
 export function DesignRenderer({ node }: { node: DesignNode | null }) {
   if (!node) return null;
@@ -35,10 +71,14 @@ export function DesignRenderer({ node }: { node: DesignNode | null }) {
 }
 
 function NodeRenderer({ node }: { node: DesignNode }): JSX.Element {
+  // Read the renderer context exactly once per NodeRenderer instance so
+  // the type-switch below isn't full of conditional hook calls.
+  const ctx = useDesignRendererContext();
+
   switch (node.type) {
     case "div":
       return (
-        <div style={mergeStyle({}, node.style)}>
+        <div {...interactiveProps(node, ctx)}>
           {(node.children ?? []).map((child, index) => (
             <NodeRenderer key={index} node={child} />
           ))}
@@ -46,7 +86,7 @@ function NodeRenderer({ node }: { node: DesignNode }): JSX.Element {
       );
     case "section":
       return (
-        <section style={mergeStyle({}, node.style)}>
+        <section {...interactiveProps(node, ctx)}>
           {(node.children ?? []).map((child, index) => (
             <NodeRenderer key={index} node={child} />
           ))}
@@ -54,30 +94,30 @@ function NodeRenderer({ node }: { node: DesignNode }): JSX.Element {
       );
     case "nav":
       return (
-        <nav style={mergeStyle({}, node.style)}>
+        <nav {...interactiveProps(node, ctx)}>
           {(node.children ?? []).map((child, index) => (
             <NodeRenderer key={index} node={child} />
           ))}
         </nav>
       );
     case "card":
-      return <CardRenderer node={node} />;
+      return <CardRenderer node={node} ctx={ctx} />;
     case "frame":
-      return <FrameRenderer node={node} />;
+      return <FrameRenderer node={node} ctx={ctx} />;
     case "text":
-      return <TextRenderer node={node} />;
+      return <TextRenderer node={node} ctx={ctx} />;
     case "button":
-      return <ButtonRenderer node={node} />;
+      return <ButtonRenderer node={node} ctx={ctx} />;
     case "image":
-      return <ImageRenderer node={node} />;
+      return <ImageRenderer node={node} ctx={ctx} />;
     case "input":
-      return <InputRenderer node={node} />;
+      return <InputRenderer node={node} ctx={ctx} />;
     case "icon":
-      return <IconRenderer node={node} />;
+      return <IconRenderer node={node} ctx={ctx} />;
     case "link":
-      return <LinkRenderer node={node} />;
+      return <LinkRenderer node={node} ctx={ctx} />;
     case "divider":
-      return <DividerRenderer node={node} />;
+      return <DividerRenderer node={node} ctx={ctx} />;
     default: {
       // Exhaustiveness check.
       const _never: never = node;
@@ -89,14 +129,7 @@ function NodeRenderer({ node }: { node: DesignNode }): JSX.Element {
 
 /* ─── Renderers ─────────────────────────────────────── */
 
-function mergeStyle(
-  defaults: CSSProperties,
-  override: CSSProperties | undefined,
-): CSSProperties {
-  return override ? { ...defaults, ...override } : defaults;
-}
-
-function TextRenderer({ node }: { node: TextNode }) {
+function TextRenderer({ node, ctx }: { node: TextNode; ctx: RenderContext }) {
   const Tag = (node.tag ?? "span") as keyof JSX.IntrinsicElements;
   const defaults: CSSProperties = (() => {
     switch (node.tag) {
@@ -120,10 +153,16 @@ function TextRenderer({ node }: { node: TextNode }) {
         return { fontSize: 14 };
     }
   })();
-  return <Tag style={mergeStyle(defaults, node.style)}>{node.text}</Tag>;
+  return <Tag {...interactiveProps(node, ctx, defaults)}>{node.text}</Tag>;
 }
 
-function ButtonRenderer({ node }: { node: ButtonNode }) {
+function ButtonRenderer({
+  node,
+  ctx,
+}: {
+  node: ButtonNode;
+  ctx: RenderContext;
+}) {
   const variant = node.variant ?? "primary";
   const size = node.size ?? "md";
 
@@ -170,29 +209,38 @@ function ButtonRenderer({ node }: { node: ButtonNode }) {
   };
 
   return (
-    <button type="button" style={mergeStyle(defaults, node.style)}>
+    <button type="button" {...interactiveProps(node, ctx, defaults)}>
       {node.label}
     </button>
   );
 }
 
-function ImageRenderer({ node }: { node: ImageNode }) {
+function ImageRenderer({
+  node,
+  ctx,
+}: {
+  node: ImageNode;
+  ctx: RenderContext;
+}) {
   const defaults: CSSProperties = {
     display: "block",
     objectFit: "cover",
     borderRadius: 8,
   };
+
   if (node.src) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
         src={node.src}
         alt={node.alt ?? ""}
-        style={mergeStyle(defaults, node.style)}
+        {...interactiveProps(node, ctx, defaults)}
       />
     );
   }
   // Placeholder.
+  const lookupName = node.placeholderIcon ?? "image";
+  const placeholderIconEl = renderLucideIcon(lookupName, { size: 32 });
   const placeholderDefaults: CSSProperties = {
     display: "flex",
     alignItems: "center",
@@ -203,19 +251,20 @@ function ImageRenderer({ node }: { node: ImageNode }) {
     minWidth: 80,
     minHeight: 80,
   };
-  // resolveLucideIcon returns a stable component reference per name —
-  // React.createElement keeps the lint rule happy (it can't tell a lookup
-  // from inline-component-creation).
-  const lookupName = node.placeholderIcon ?? "image";
-  const placeholderIconEl = renderLucideIcon(lookupName, { size: 32 });
   return (
-    <div style={mergeStyle(placeholderDefaults, node.style)}>
+    <div {...interactiveProps(node, ctx, placeholderDefaults)}>
       {placeholderIconEl}
     </div>
   );
 }
 
-function InputRenderer({ node }: { node: InputNode }) {
+function InputRenderer({
+  node,
+  ctx,
+}: {
+  node: InputNode;
+  ctx: RenderContext;
+}) {
   const defaults: CSSProperties = {
     display: "block",
     width: "100%",
@@ -226,17 +275,16 @@ function InputRenderer({ node }: { node: InputNode }) {
     borderRadius: 8,
     color: "#18181b",
   };
-
+  const props = interactiveProps(node, ctx, defaults);
   const input = (
     <input
       type={node.inputType ?? "text"}
       placeholder={node.placeholder}
-      style={mergeStyle(defaults, node.style)}
+      readOnly
+      {...props}
     />
   );
-
   if (!node.label) return input;
-
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       <span style={{ fontSize: 14, fontWeight: 500, color: "#3f3f46" }}>
@@ -247,15 +295,18 @@ function InputRenderer({ node }: { node: InputNode }) {
   );
 }
 
-function IconRenderer({ node }: { node: IconNode }) {
+function IconRenderer({ node, ctx }: { node: IconNode; ctx: RenderContext }) {
+  const props = interactiveProps(node, ctx, {});
   return renderLucideIcon(node.name, {
     size: node.size ?? 18,
     color: node.color,
-    style: node.style as CSSProperties,
+    style: props.style,
+    "data-node-id": props["data-node-id"],
+    onPointerDown: props.onPointerDown,
   });
 }
 
-function LinkRenderer({ node }: { node: LinkNode }) {
+function LinkRenderer({ node, ctx }: { node: LinkNode; ctx: RenderContext }) {
   const defaults: CSSProperties = {
     color: "#3b82f6",
     textDecoration: "underline",
@@ -266,22 +317,28 @@ function LinkRenderer({ node }: { node: LinkNode }) {
     <a
       href={node.href ?? "#"}
       onClick={(event) => event.preventDefault()}
-      style={mergeStyle(defaults, node.style)}
+      {...interactiveProps(node, ctx, defaults)}
     >
       {node.label}
     </a>
   );
 }
 
-function DividerRenderer({ node }: { node: DividerNode }) {
+function DividerRenderer({
+  node,
+  ctx,
+}: {
+  node: DividerNode;
+  ctx: RenderContext;
+}) {
   const isVertical = node.orientation === "vertical";
   const defaults: CSSProperties = isVertical
     ? { width: 1, alignSelf: "stretch", background: "#e4e4e7" }
     : { height: 1, width: "100%", background: "#e4e4e7" };
-  return <div style={mergeStyle(defaults, node.style)} />;
+  return <div {...interactiveProps(node, ctx, defaults)} />;
 }
 
-function CardRenderer({ node }: { node: CardNode }) {
+function CardRenderer({ node, ctx }: { node: CardNode; ctx: RenderContext }) {
   const defaults: CSSProperties = {
     background: "#ffffff",
     border: "1px solid #e4e4e7",
@@ -290,7 +347,7 @@ function CardRenderer({ node }: { node: CardNode }) {
     boxShadow: "0 1px 2px rgb(0 0 0 / 0.04)",
   };
   return (
-    <div style={mergeStyle(defaults, node.style)}>
+    <div {...interactiveProps(node, ctx, defaults)}>
       {(node.children ?? []).map((child, index) => (
         <NodeRenderer key={index} node={child} />
       ))}
@@ -298,14 +355,20 @@ function CardRenderer({ node }: { node: CardNode }) {
   );
 }
 
-function FrameRenderer({ node }: { node: FrameNode }) {
+function FrameRenderer({
+  node,
+  ctx,
+}: {
+  node: FrameNode;
+  ctx: RenderContext;
+}) {
   const defaults: CSSProperties = {
     display: "flex",
     flexDirection: "column",
     gap: 12,
   };
   return (
-    <div style={mergeStyle(defaults, node.style)}>
+    <div {...interactiveProps(node, ctx, defaults)}>
       {node.title ? (
         <div
           style={{
@@ -333,15 +396,13 @@ const ICON_REGISTRY = LucideIcons as unknown as Record<string, LucideIcon>;
 /**
  * Look up a lucide icon by kebab-case name and return a React element.
  *
- * We use `createElement` rather than `<Icon />` so the lint rule that
+ * Uses `createElement` rather than `<Icon />` so the lint rule that
  * forbids creating components inline (`react-hooks/static-components`)
  * stays happy — the lookup returns a stable component reference per
  * name, but the linter can't tell that from inline definition.
  */
-function renderLucideIcon(
-  name: string,
-  props: { size?: number; color?: string; style?: CSSProperties },
-): JSX.Element | null {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function renderLucideIcon(name: string, props: any): JSX.Element | null {
   const pascal = name
     .split("-")
     .filter(Boolean)

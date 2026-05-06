@@ -113,6 +113,7 @@ export function CanvasViewport() {
     if (target.closest("[data-artboard-id]")) return;
 
     event.currentTarget.setPointerCapture(event.pointerId);
+    // Clicking empty world space deselects both artboards and nodes.
     clearSelection();
     setIsPanning(true);
     dragRef.current = {

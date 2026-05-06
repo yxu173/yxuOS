@@ -173,11 +173,8 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
   };
 
   return (
-    <section className="flex h-full w-96 shrink-0 flex-col overflow-hidden border-l border-white/5 bg-zinc-950/40 backdrop-blur">
-      <div className="flex items-center justify-between border-b border-white/5 px-3 py-2">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
-          Design chat
-        </h2>
+    <div className="flex h-full w-full flex-col overflow-hidden">
+      <div className="flex items-center justify-end border-b border-white/5 px-3 py-1.5">
         <span
           className={cn(
             "text-[10px] uppercase tracking-wide",
@@ -247,7 +244,7 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
           </Button>
         )}
       </form>
-    </section>
+    </div>
   );
 }
 
