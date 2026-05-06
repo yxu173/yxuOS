@@ -1,8 +1,6 @@
 "use client";
 
 import {
-  History,
-  MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -12,9 +10,14 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 
+import { BoardName } from "./board-name";
+import { UserMenu } from "./user-menu";
+
 export interface TopBarProps {
+  boardId: string;
   boardName: string;
   userName: string;
+  userEmail?: string;
   leftPanelOpen: boolean;
   rightPanelOpen: boolean;
   onToggleLeftPanel: () => void;
@@ -22,8 +25,10 @@ export interface TopBarProps {
 }
 
 export function TopBar({
+  boardId,
   boardName,
   userName,
+  userEmail,
   leftPanelOpen,
   rightPanelOpen,
   onToggleLeftPanel,
@@ -35,7 +40,7 @@ export function TopBar({
         variant="ghost"
         size="icon-sm"
         onClick={onToggleLeftPanel}
-        title={leftPanelOpen ? "Hide chats" : "Show chats"}
+        title={leftPanelOpen ? "Hide chats (⌘\\)" : "Show chats (⌘\\)"}
         aria-label={leftPanelOpen ? "Hide chats panel" : "Show chats panel"}
       >
         {leftPanelOpen ? (
@@ -54,21 +59,14 @@ export function TopBar({
 
       <span className="text-zinc-600">/</span>
 
-      <span className="truncate text-sm font-medium text-zinc-100">
-        {boardName}
-      </span>
+      <BoardName boardId={boardId} initialName={boardName} />
 
-      <div className="ml-auto flex items-center gap-2">
-        <div className="hidden items-center gap-1.5 text-xs text-zinc-500 sm:flex">
-          <span>signed in as</span>
-          <span className="text-zinc-300">{userName}</span>
-        </div>
-
+      <div className="ml-auto flex items-center gap-1.5">
         <Button
           variant="ghost"
           size="icon-sm"
           onClick={onToggleRightPanel}
-          title={rightPanelOpen ? "Hide chat" : "Show chat"}
+          title={rightPanelOpen ? "Hide chat (⌘/)" : "Show chat (⌘/)"}
           aria-label={rightPanelOpen ? "Hide chat panel" : "Show chat panel"}
         >
           {rightPanelOpen ? (
@@ -77,13 +75,8 @@ export function TopBar({
             <PanelRightOpen className="size-4" />
           )}
         </Button>
+        <UserMenu userName={userName} userEmail={userEmail} />
       </div>
-
-      {/* Hidden duplicate icons retained for future feature wiring */}
-      <span className="sr-only">
-        <History className="size-4" />
-        <MessageSquare className="size-4" />
-      </span>
     </header>
   );
 }

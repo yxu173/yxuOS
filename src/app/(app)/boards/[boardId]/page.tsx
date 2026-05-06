@@ -75,6 +75,7 @@ export default async function BoardPage({
       boardId={board.id}
       boardName={board.name}
       userName={session.user.name}
+      userEmail={session.user.email}
       initialSnapshot={board.snapshot ?? null}
       boards={userBoards}
       initialMessages={initialMessages}

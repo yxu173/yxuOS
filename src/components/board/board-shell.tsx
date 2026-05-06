@@ -1,7 +1,7 @@
 "use client";
 
 import type { UIMessage } from "ai";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Whiteboard } from "@/components/board/whiteboard";
 
@@ -14,6 +14,7 @@ export interface BoardShellProps {
   boardId: string;
   boardName: string;
   userName: string;
+  userEmail?: string;
   initialSnapshot: Record<string, unknown> | null;
   boards: BoardSummary[];
   initialMessages: UIMessage[];
@@ -23,6 +24,7 @@ export function BoardShell({
   boardId,
   boardName,
   userName,
+  userEmail,
   initialSnapshot,
   boards,
   initialMessages,
@@ -30,12 +32,30 @@ export function BoardShell({
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
 
+  // Keyboard shortcuts: Cmd/Ctrl + \ → left panel, Cmd/Ctrl + / → right panel.
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.key === "\\") {
+        event.preventDefault();
+        setLeftOpen((value) => !value);
+      } else if (event.key === "/") {
+        event.preventDefault();
+        setRightOpen((value) => !value);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
   return (
     <EditorRefProvider>
       <div className="fixed inset-0 flex flex-col bg-background">
         <TopBar
+          boardId={boardId}
           boardName={boardName}
           userName={userName}
+          userEmail={userEmail}
           leftPanelOpen={leftOpen}
           rightPanelOpen={rightOpen}
           onToggleLeftPanel={() => setLeftOpen((value) => !value)}
