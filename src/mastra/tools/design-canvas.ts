@@ -1,0 +1,234 @@
+import { createTool } from "@mastra/core/tools";
+import { z } from "zod";
+
+/**
+ * Tools the design agent calls to read and mutate the design canvas.
+ *
+ * None of these define `execute` — they're client-side tools. The browser
+ * runs them against the zustand store via `onToolCall` in the chat
+ * component. The schemas here are what the model is shown.
+ */
+
+/* ─── DesignNode schema ─────────────────────────────────── */
+
+// CSS object — keep loose. The renderer only renders inline-style props
+// it understands and ignores the rest.
+const cssSchema = z
+  .record(
+    z.string(),
+    z.union([z.string(), z.number()]),
+  )
+  .optional()
+  .describe(
+    "Inline CSS styles as a JSON object (camelCased keys: backgroundColor, fontSize, padding, etc.). Numbers are interpreted as pixels by React.",
+  );
+
+const baseNode = {
+  id: z.string().optional(),
+  style: cssSchema,
+};
+
+// Recursive — the children of a container can be any DesignNode again.
+const designNodeSchema: z.ZodTypeAny = z.lazy(() =>
+  z.discriminatedUnion("type", [
+    z.object({
+      type: z.literal("div"),
+      ...baseNode,
+      children: z.array(designNodeSchema).optional(),
+    }),
+    z.object({
+      type: z.literal("section"),
+      ...baseNode,
+      children: z.array(designNodeSchema).optional(),
+    }),
+    z.object({
+      type: z.literal("nav"),
+      ...baseNode,
+      children: z.array(designNodeSchema).optional(),
+    }),
+    z.object({
+      type: z.literal("card"),
+      ...baseNode,
+      children: z.array(designNodeSchema).optional(),
+    }),
+    z.object({
+      type: z.literal("frame"),
+      ...baseNode,
+      title: z.string().optional(),
+      children: z.array(designNodeSchema).optional(),
+    }),
+    z.object({
+      type: z.literal("text"),
+      ...baseNode,
+      text: z.string(),
+      tag: z
+        .enum(["h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "label"])
+        .optional(),
+    }),
+    z.object({
+      type: z.literal("button"),
+      ...baseNode,
+      label: z.string(),
+      variant: z.enum(["primary", "secondary", "ghost", "outline"]).optional(),
+      size: z.enum(["sm", "md", "lg"]).optional(),
+    }),
+    z.object({
+      type: z.literal("image"),
+      ...baseNode,
+      src: z.string().optional(),
+      alt: z.string().optional(),
+      placeholderColor: z.string().optional(),
+      placeholderIcon: z.string().optional(),
+    }),
+    z.object({
+      type: z.literal("input"),
+      ...baseNode,
+      placeholder: z.string().optional(),
+      inputType: z
+        .enum(["text", "email", "password", "search", "number", "tel"])
+        .optional(),
+      label: z.string().optional(),
+    }),
+    z.object({
+      type: z.literal("icon"),
+      ...baseNode,
+      name: z.string().describe("Lucide icon name in kebab-case, e.g. 'arrow-right'."),
+      size: z.number().optional(),
+      color: z.string().optional(),
+    }),
+    z.object({
+      type: z.literal("link"),
+      ...baseNode,
+      label: z.string(),
+      href: z.string().optional(),
+    }),
+    z.object({
+      type: z.literal("divider"),
+      ...baseNode,
+      orientation: z.enum(["horizontal", "vertical"]).optional(),
+    }),
+  ]),
+);
+
+/* ─── Common ────────────────────────────────────────────── */
+
+const devicePresetSchema = z
+  .enum(["desktop", "laptop", "tablet", "mobile", "custom"])
+  .describe(
+    "Device preset. desktop=1440×900, laptop=1280×800, tablet=768×1024, mobile=393×852. `custom` requires explicit w + h.",
+  );
+
+/* ─── Tools ─────────────────────────────────────────────── */
+
+export const queryCanvasTool = createTool({
+  id: "query_canvas",
+  description:
+    "List existing artboards on the design canvas with their position, dimensions, name, device preset, and a one-line summary of any design tree they contain. Call this BEFORE add_artboard if you need to position relative to existing screens (e.g. 'put the mobile version next to the desktop one').",
+  inputSchema: z.object({}),
+  outputSchema: z.object({
+    artboards: z.array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        device: z.string(),
+        x: z.number(),
+        y: z.number(),
+        w: z.number(),
+        h: z.number(),
+        hasDesign: z.boolean(),
+        rootNodeType: z.string().optional(),
+      }),
+    ),
+    selectedArtboardIds: z.array(z.string()),
+  }),
+});
+
+export const addArtboardTool = createTool({
+  id: "add_artboard",
+  description:
+    "Create a new artboard on the canvas with a complete DesignNode tree inside. Use a tall height (1800-3200) for full landing pages so the whole page fits. Position is in world coordinates — omit `x`/`y` to auto-place to the right of the rightmost existing artboard.",
+  inputSchema: z.object({
+    name: z
+      .string()
+      .describe(
+        "Human-readable name shown above the artboard, e.g. 'Stride landing — Desktop'.",
+      ),
+    device: devicePresetSchema,
+    width: z
+      .number()
+      .optional()
+      .describe(
+        "Override the device preset's width. Required when device=custom. For tall landing pages, set width to the device width and use a custom height.",
+      ),
+    height: z
+      .number()
+      .optional()
+      .describe(
+        "Override the device preset's height. Use a tall value (1800-3200) for full landing pages so the whole design fits without clipping.",
+      ),
+    x: z.number().optional(),
+    y: z.number().optional(),
+    design: designNodeSchema.optional().describe(
+      "Root DesignNode tree to render inside. Can be omitted for an empty artboard.",
+    ),
+  }),
+  outputSchema: z.object({
+    artboardId: z.string(),
+  }),
+});
+
+export const updateArtboardTool = createTool({
+  id: "update_artboard",
+  description:
+    "Patch an existing artboard. Use this for iterations like 'make the hero darker', 'rewrite the footer', 'rename to Mobile'. Provide only the fields you want to change. To replace the entire design tree, pass the new tree as `design`.",
+  inputSchema: z.object({
+    artboardId: z.string(),
+    name: z.string().optional(),
+    x: z.number().optional(),
+    y: z.number().optional(),
+    width: z.number().optional(),
+    height: z.number().optional(),
+    design: designNodeSchema.optional(),
+  }),
+  outputSchema: z.object({
+    artboardId: z.string(),
+  }),
+});
+
+export const deleteArtboardTool = createTool({
+  id: "delete_artboard",
+  description: "Remove an artboard from the canvas.",
+  inputSchema: z.object({
+    artboardId: z.string(),
+  }),
+  outputSchema: z.object({
+    artboardId: z.string(),
+  }),
+});
+
+export const getArtboardTool = createTool({
+  id: "get_artboard",
+  description:
+    "Read the full DesignNode tree of an artboard. Use this when the user asks for a small patch ('make the CTA emerald instead of indigo') so you can return a precise update via update_artboard rather than regenerating the whole tree.",
+  inputSchema: z.object({
+    artboardId: z.string(),
+  }),
+  outputSchema: z.object({
+    id: z.string(),
+    name: z.string(),
+    device: z.string(),
+    x: z.number(),
+    y: z.number(),
+    w: z.number(),
+    h: z.number(),
+    design: z.unknown().nullable(),
+  }),
+});
+
+export const designCanvasTools = {
+  query_canvas: queryCanvasTool,
+  add_artboard: addArtboardTool,
+  update_artboard: updateArtboardTool,
+  delete_artboard: deleteArtboardTool,
+  get_artboard: getArtboardTool,
+};

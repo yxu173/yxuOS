@@ -1,8 +1,19 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport, type UIMessage } from "ai";
-import { ArrowUp, Square } from "lucide-react";
+import {
+  DefaultChatTransport,
+  lastAssistantMessageIsCompleteWithToolCalls,
+  type UIMessage,
+} from "ai";
+import {
+  ArrowUp,
+  CheckCircle2,
+  Loader2,
+  Sparkles,
+  Square,
+  TriangleAlert,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { ChatMarkdown } from "@/components/board/chat-markdown";
@@ -11,29 +22,128 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
+import {
+  executeAddArtboard,
+  executeDeleteArtboard,
+  executeGetArtboard,
+  executeQueryCanvas,
+  executeUpdateArtboard,
+} from "./canvas-tools";
+
 export interface DesignChatProps {
   designId: string;
   initialMessages?: UIMessage[];
 }
 
+const TOOL_LABELS: Record<string, string> = {
+  query_canvas: "Reading canvas",
+  add_artboard: "Drawing artboard",
+  update_artboard: "Updating artboard",
+  delete_artboard: "Deleting artboard",
+  get_artboard: "Reading artboard",
+};
+
 /**
  * Chat panel for the design agent (right side of the design canvas).
  *
  * Mirrors the board chat in shape — same composer, same scroll, same
- * markdown — but points at /api/design-chat/[designId] and registers no
- * tool handlers yet (canvas tools land in commit 7).
+ * markdown — but points at /api/design-chat/[designId] and dispatches
+ * the design canvas tools (add_artboard / update_artboard / etc.) into
+ * the zustand store via `onToolCall`.
  */
 export function DesignChat({ designId, initialMessages }: DesignChatProps) {
   const [input, setInput] = useState("");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
-  const { messages, sendMessage, status, error, stop } = useChat({
-    messages: initialMessages,
-    transport: new DefaultChatTransport({
-      api: `/api/design-chat/${designId}`,
-    }),
-  });
+  const { messages, sendMessage, status, error, addToolOutput, stop } =
+    useChat({
+      messages: initialMessages,
+      transport: new DefaultChatTransport({
+        api: `/api/design-chat/${designId}`,
+      }),
+      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+      async onToolCall({ toolCall }) {
+        if (toolCall.dynamic) return;
+
+        const reportError = (errorText: string) => {
+          addToolOutput({
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            tool: toolCall.toolName as any,
+            toolCallId: toolCall.toolCallId,
+            state: "output-error",
+            errorText,
+          });
+        };
+
+        try {
+          switch (toolCall.toolName) {
+            case "query_canvas": {
+              const output = executeQueryCanvas();
+              addToolOutput({
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                tool: toolCall.toolName as any,
+                toolCallId: toolCall.toolCallId,
+                output,
+              });
+              break;
+            }
+            case "add_artboard": {
+              const output = executeAddArtboard(
+                toolCall.input as Parameters<typeof executeAddArtboard>[0],
+              );
+              addToolOutput({
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                tool: toolCall.toolName as any,
+                toolCallId: toolCall.toolCallId,
+                output,
+              });
+              break;
+            }
+            case "update_artboard": {
+              const output = executeUpdateArtboard(
+                toolCall.input as Parameters<typeof executeUpdateArtboard>[0],
+              );
+              addToolOutput({
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                tool: toolCall.toolName as any,
+                toolCallId: toolCall.toolCallId,
+                output,
+              });
+              break;
+            }
+            case "delete_artboard": {
+              const output = executeDeleteArtboard(
+                toolCall.input as Parameters<typeof executeDeleteArtboard>[0],
+              );
+              addToolOutput({
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                tool: toolCall.toolName as any,
+                toolCallId: toolCall.toolCallId,
+                output,
+              });
+              break;
+            }
+            case "get_artboard": {
+              const output = executeGetArtboard(
+                toolCall.input as Parameters<typeof executeGetArtboard>[0],
+              );
+              addToolOutput({
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                tool: toolCall.toolName as any,
+                toolCallId: toolCall.toolCallId,
+                output,
+              });
+              break;
+            }
+            default:
+              reportError(`Unknown tool: ${toolCall.toolName}`);
+          }
+        } catch (err) {
+          reportError(err instanceof Error ? err.message : "Tool failed");
+        }
+      },
+    });
 
   const isStreaming = status === "streaming" || status === "submitted";
 
@@ -196,9 +306,87 @@ function MessageRow({ message }: { message: UIMessage }) {
               </ChatMarkdown>
             );
           }
+          if (part.type.startsWith("tool-")) {
+            return <ToolPart key={index} part={part} />;
+          }
           return null;
         })}
       </div>
     </div>
   );
+}
+
+interface ToolUIPartLike {
+  type: string;
+  state?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  input?: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  output?: any;
+  errorText?: string;
+}
+
+function ToolPart({ part }: { part: ToolUIPartLike }) {
+  const toolName = part.type.replace(/^tool-/, "");
+  const label = TOOL_LABELS[toolName] ?? toolName;
+
+  let icon = <Sparkles className="size-3.5" />;
+  let body: React.ReactNode = label;
+  let tone = "border-white/10 bg-white/5 text-zinc-300";
+
+  switch (part.state) {
+    case "input-streaming":
+    case "input-available":
+      icon = <Loader2 className="size-3.5 animate-spin" />;
+      body = `${label}…`;
+      break;
+    case "output-available":
+      icon = <CheckCircle2 className="size-3.5" />;
+      body = describeToolResult(toolName, part.input) ?? label;
+      tone = "border-emerald-500/20 bg-emerald-500/10 text-emerald-200";
+      break;
+    case "output-error":
+      icon = <TriangleAlert className="size-3.5" />;
+      body = part.errorText ?? `${label} failed`;
+      tone = "border-red-500/30 bg-red-500/10 text-red-200";
+      break;
+    default:
+      break;
+  }
+
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs",
+        tone,
+      )}
+      role="status"
+    >
+      {icon}
+      <span className="truncate">{body}</span>
+    </div>
+  );
+}
+
+function describeToolResult(
+  toolName: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  input: any,
+): string | null {
+  switch (toolName) {
+    case "query_canvas":
+      return "Read canvas";
+    case "add_artboard":
+      return input?.name
+        ? `Added artboard "${input.name}"`
+        : "Added artboard";
+    case "update_artboard":
+      return "Updated artboard";
+    case "delete_artboard":
+      return "Removed artboard";
+    case "get_artboard":
+      return "Read artboard";
+    default:
+      return null;
+  }
 }
