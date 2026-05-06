@@ -1,20 +1,23 @@
 import { Mastra } from "@mastra/core/mastra";
-import { LibSQLStore } from "@mastra/libsql";
+import { PostgresStore } from "@mastra/pg";
+
+import { env } from "@/lib/env";
 
 import { boardArchitect } from "./agents/board-architect";
 
 /**
  * Single Mastra instance shared by every server component / route handler.
  *
- * Storage is the local LibSQL file `mastra.db` at the project root —
- * matches the choice the user made in step 0. Swap to `@mastra/pg` and
- * point at `DATABASE_URL` once we want chat memory living in Neon
- * alongside the rest of the app data.
+ * Storage now lives in Neon Postgres (same database as the rest of the app).
+ * Mastra creates its own tables (threads, messages, resources, …) in the
+ * `mastra` schema so they don't collide with our Drizzle-managed schema in
+ * `public`.
  */
 export const mastra = new Mastra({
-  storage: new LibSQLStore({
+  storage: new PostgresStore({
     id: "yxuos-mastra",
-    url: "file:./mastra.db",
+    connectionString: env.DATABASE_URL,
+    schemaName: "mastra",
   }),
   agents: { boardArchitect },
 });
