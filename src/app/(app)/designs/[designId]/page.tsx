@@ -1,6 +1,6 @@
 import { toAISdkMessages } from "@mastra/ai-sdk/ui";
 import type { UIMessage } from "ai";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 
@@ -43,13 +43,30 @@ export default async function DesignPage({
     redirect("/sign-in");
   }
 
-  const design = await db.query.designs.findFirst({
-    where: and(
-      eq(designs.id, designId),
-      eq(designs.ownerId, session.user.id),
-    ),
-    columns: { id: true, name: true, snapshot: true, threadId: true },
-  });
+  const [design, userDesigns] = await Promise.all([
+    db.query.designs.findFirst({
+      where: and(
+        eq(designs.id, designId),
+        eq(designs.ownerId, session.user.id),
+      ),
+      columns: {
+        id: true,
+        name: true,
+        snapshot: true,
+        threadId: true,
+        shareToken: true,
+      },
+    }),
+    db.query.designs.findMany({
+      where: eq(designs.ownerId, session.user.id),
+      orderBy: desc(designs.updatedAt),
+      columns: {
+        id: true,
+        name: true,
+        updatedAt: true,
+      },
+    }),
+  ]);
 
   if (!design) {
     notFound();
@@ -66,8 +83,12 @@ export default async function DesignPage({
     <DesignShell
       designId={design.id}
       designName={design.name}
+      userName={session.user.name}
+      userEmail={session.user.email}
+      shareToken={design.shareToken}
       initialArtboards={initialArtboards}
       initialMessages={initialMessages}
+      designs={userDesigns}
     />
   );
 }

@@ -1,61 +1,153 @@
 "use client";
 
 import type { UIMessage } from "ai";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { CanvasViewport } from "./canvas-viewport";
-import { useDesignCanvas } from "./canvas-store";
+import { useDesignCanvas, MAX_ZOOM, MIN_ZOOM } from "./canvas-store";
 import { DesignChat } from "./design-chat";
+import {
+  DesignLeftPanel,
+  type DesignSummary,
+} from "./design-left-panel";
+import { DesignTopBar } from "./design-top-bar";
 import type { Artboard } from "./types";
 import { useDesignPersistence } from "./use-design-persistence";
 
 export interface DesignShellProps {
   designId: string;
   designName: string;
+  userName: string;
+  userEmail?: string;
+  shareToken: string | null;
   initialArtboards: Artboard[];
   initialMessages: UIMessage[];
+  designs: DesignSummary[];
 }
 
-/**
- * Page-level wrapper for the design canvas.
- *
- * Top bar with proper rename / share / panel toggles + left panel for the
- * designs history land in commit 8 (polish). Right panel = design chat is
- * here from commit 6.
- */
 export function DesignShell({
   designId,
   designName,
+  userName,
+  userEmail,
+  shareToken,
   initialArtboards,
   initialMessages,
+  designs,
 }: DesignShellProps) {
-  // Lazy initializer: runs once before the first render. Side-effect into
-  // the zustand store so CanvasViewport sees the artboards on its very
-  // first paint, no flash of empty canvas.
+  const [leftOpen, setLeftOpen] = useState(true);
+  const [rightOpen, setRightOpen] = useState(true);
+
+  // Hydrate the zustand store with the server-fetched artboards on first
+  // render via a lazy initializer (no flash of empty canvas).
   useState(() => {
     useDesignCanvas.getState().setArtboards(initialArtboards);
     return null;
   });
 
-  // Debounced snapshot save on every artboard mutation; flushes on unmount.
+  // Debounced snapshot save on every artboard mutation.
   useDesignPersistence(designId);
+
+  // Keyboard shortcuts:
+  // - ⌘\ toggles left panel, ⌘/ toggles right.
+  // - ⌘0 fits all artboards, ⌘= zooms in, ⌘- zooms out.
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (event.key === "\\") {
+        event.preventDefault();
+        setLeftOpen((value) => !value);
+      } else if (event.key === "/") {
+        event.preventDefault();
+        setRightOpen((value) => !value);
+      } else if (event.key === "0") {
+        event.preventDefault();
+        fitAll();
+      } else if (event.key === "=" || event.key === "+") {
+        event.preventDefault();
+        zoomCenter(1.25);
+      } else if (event.key === "-") {
+        event.preventDefault();
+        zoomCenter(0.8);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   return (
     <div className="fixed inset-0 flex flex-col bg-zinc-950 text-zinc-100">
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-white/5 bg-zinc-950/80 px-3 backdrop-blur">
-        <span className="text-sm font-medium text-zinc-100">
-          {designName}
-        </span>
-        <span className="text-[10px] uppercase tracking-wide text-zinc-500">
-          design canvas
-        </span>
-      </header>
+      <DesignTopBar
+        designId={designId}
+        designName={designName}
+        userName={userName}
+        userEmail={userEmail}
+        shareToken={shareToken}
+        leftPanelOpen={leftOpen}
+        rightPanelOpen={rightOpen}
+        onToggleLeftPanel={() => setLeftOpen((value) => !value)}
+        onToggleRightPanel={() => setRightOpen((value) => !value)}
+      />
       <div className="flex min-h-0 flex-1">
+        {leftOpen ? (
+          <DesignLeftPanel designs={designs} activeDesignId={designId} />
+        ) : null}
         <main className="relative flex-1 overflow-hidden">
           <CanvasViewport />
         </main>
-        <DesignChat designId={designId} initialMessages={initialMessages} />
+        {rightOpen ? (
+          <DesignChat designId={designId} initialMessages={initialMessages} />
+        ) : null}
       </div>
     </div>
   );
+}
+
+/* ─── Keyboard helpers ─── */
+
+function zoomCenter(factor: number) {
+  if (typeof window === "undefined") return;
+  useDesignCanvas
+    .getState()
+    .zoomAt(window.innerWidth / 2, window.innerHeight / 2, factor);
+}
+
+function fitAll() {
+  if (typeof window === "undefined") return;
+  const state = useDesignCanvas.getState();
+  if (state.artboards.length === 0) {
+    state.setCamera({ x: 200, y: 200, zoom: 0.5 });
+    return;
+  }
+  const minX = Math.min(...state.artboards.map((a) => a.x));
+  const minY = Math.min(...state.artboards.map((a) => a.y));
+  const maxX = Math.max(...state.artboards.map((a) => a.x + a.w));
+  const maxY = Math.max(...state.artboards.map((a) => a.y + a.h));
+  const w = maxX - minX;
+  const h = maxY - minY;
+  const padding = 200;
+  const screenW = window.innerWidth - 320 - 384;
+  const screenH = window.innerHeight - 60;
+  const zoom = Math.min(
+    MAX_ZOOM,
+    Math.max(
+      MIN_ZOOM,
+      Math.min(screenW / (w + padding), screenH / (h + padding)),
+    ),
+  );
+  state.setCamera({
+    x: -minX * zoom + (screenW - w * zoom) / 2 + 320,
+    y: -minY * zoom + (screenH - h * zoom) / 2 + 60,
+    zoom,
+  });
 }
