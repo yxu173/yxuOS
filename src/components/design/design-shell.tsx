@@ -5,6 +5,7 @@ import { useState } from "react";
 import { CanvasViewport } from "./canvas-viewport";
 import { useDesignCanvas } from "./canvas-store";
 import type { Artboard } from "./types";
+import { useDesignPersistence } from "./use-design-persistence";
 
 export interface DesignShellProps {
   designId: string;
@@ -20,6 +21,7 @@ export interface DesignShellProps {
  * left history panel / right chat panel land in commit 6.
  */
 export function DesignShell({
+  designId,
   designName,
   initialArtboards,
 }: DesignShellProps) {
@@ -30,6 +32,9 @@ export function DesignShell({
     useDesignCanvas.getState().setArtboards(initialArtboards);
     return null;
   });
+
+  // Debounced snapshot save on every artboard mutation; flushes on unmount.
+  useDesignPersistence(designId);
 
   return (
     <div className="fixed inset-0 flex flex-col bg-zinc-950 text-zinc-100">
