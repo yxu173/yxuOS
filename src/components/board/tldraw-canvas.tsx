@@ -5,6 +5,9 @@ import "tldraw/tldraw.css";
 
 import { saveBoardSnapshot } from "@/app/(app)/boards/actions";
 
+import { DevShapeToolbar } from "./dev-shape-toolbar";
+import { customShapeUtils } from "./shapes";
+
 const SAVE_DEBOUNCE_MS = 1500;
 
 export interface TldrawCanvasProps {
@@ -59,13 +62,16 @@ export function TldrawCanvas({ boardId, initialSnapshot }: TldrawCanvasProps) {
   return (
     <div className="fixed inset-0">
       <Tldraw
+        shapeUtils={customShapeUtils}
         snapshot={
           initialSnapshot
             ? (initialSnapshot as unknown as TLStoreSnapshot)
             : undefined
         }
         onMount={handleMount}
-      />
+      >
+        <DevShapeToolbar />
+      </Tldraw>
     </div>
   );
 }
