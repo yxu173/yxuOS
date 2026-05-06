@@ -10,9 +10,11 @@ import {
   ArrowUp,
   CheckCircle2,
   Loader2,
+  Paperclip,
   Sparkles,
   Square,
   TriangleAlert,
+  X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -54,10 +56,24 @@ const TOOL_LABELS: Record<string, string> = {
  * the design canvas tools (add_artboard / update_artboard / etc.) into
  * the zustand store via `onToolCall`.
  */
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB per image
+const MAX_FILES = 5;
+
+interface PendingFile {
+  /** Stable id so we can remove a single attachment. */
+  id: string;
+  file: File;
+  /** Object URL used to preview the image in the composer thumbnail. */
+  previewUrl: string;
+}
+
 export function DesignChat({ designId, initialMessages }: DesignChatProps) {
   const [input, setInput] = useState("");
+  const [pending, setPending] = useState<PendingFile[]>([]);
+  const [attachError, setAttachError] = useState<string | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const library = useComponentLibrary();
 
   const { messages, sendMessage, status, error, addToolOutput, stop } =
@@ -172,18 +188,99 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
     });
   }, [messages]);
 
-  const submit = () => {
+  const submit = async () => {
     const text = input.trim();
-    if (!text || isStreaming) return;
-    sendMessage({ text });
+    if (isStreaming) return;
+    if (!text && pending.length === 0) return;
+
+    // Convert each File to a data-URL FileUIPart so the AI SDK can pass
+    // it through to the model without the chat needing to upload to
+    // storage first. Persistent asset uploads land in the next commit.
+    const files =
+      pending.length === 0
+        ? undefined
+        : await Promise.all(
+            pending.map(async (p) => ({
+              type: "file" as const,
+              filename: p.file.name,
+              mediaType: p.file.type,
+              url: await fileToDataUrl(p.file),
+            })),
+          );
+
+    sendMessage({
+      text: text || "What do you see in this image?",
+      files,
+    });
+
     setInput("");
+    // Clear pending attachments and revoke their object URLs so they get GC'd.
+    for (const p of pending) URL.revokeObjectURL(p.previewUrl);
+    setPending([]);
+    setAttachError(null);
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      submit();
+      void submit();
     }
+  };
+
+  const addFiles = (files: FileList | File[]) => {
+    setAttachError(null);
+    const incoming = Array.from(files);
+    const next: PendingFile[] = [];
+    for (const file of incoming) {
+      if (!file.type.startsWith("image/")) {
+        setAttachError("Only image files are supported.");
+        continue;
+      }
+      if (file.size > MAX_FILE_SIZE) {
+        setAttachError(`Image too large: ${file.name} (max 5 MB).`);
+        continue;
+      }
+      if (pending.length + next.length >= MAX_FILES) {
+        setAttachError(`Up to ${MAX_FILES} images per message.`);
+        break;
+      }
+      next.push({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        file,
+        previewUrl: URL.createObjectURL(file),
+      });
+    }
+    if (next.length > 0) setPending((prev) => [...prev, ...next]);
+  };
+
+  const removePending = (id: string) => {
+    setPending((prev) => {
+      const target = prev.find((p) => p.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((p) => p.id !== id);
+    });
+  };
+
+  const onPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = event.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (const item of items) {
+      if (item.kind === "file") {
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    if (files.length > 0) {
+      event.preventDefault();
+      addFiles(files);
+    }
+  };
+
+  const onDrop = (event: React.DragEvent<HTMLFormElement>) => {
+    if (event.dataTransfer.files.length === 0) return;
+    event.preventDefault();
+    addFiles(event.dataTransfer.files);
   };
 
   return (
@@ -222,41 +319,97 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          submit();
+          void submit();
         }}
-        className="flex items-end gap-2 border-t border-white/5 p-3"
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={onDrop}
+        className="flex flex-col gap-2 border-t border-white/5 p-3"
       >
-        <Textarea
-          ref={composerRef}
-          rows={1}
-          placeholder="Describe what to design…"
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          onKeyDown={onKeyDown}
-          className="max-h-40 min-h-9 resize-none bg-zinc-900/80 text-sm"
-        />
-        {isStreaming ? (
+        {pending.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {pending.map((p) => (
+              <div
+                key={p.id}
+                className="group relative size-16 overflow-hidden rounded-md border border-white/10 bg-zinc-900"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={p.previewUrl}
+                  alt={p.file.name}
+                  className="h-full w-full object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={() => removePending(p.id)}
+                  className="absolute right-0.5 top-0.5 grid size-4 place-items-center rounded-full bg-black/70 text-zinc-100 opacity-0 transition-opacity group-hover:opacity-100"
+                  aria-label="Remove attachment"
+                >
+                  <X className="size-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {attachError ? (
+          <p className="text-[11px] text-red-300">{attachError}</p>
+        ) : null}
+
+        <div className="flex items-end gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(event) => {
+              if (event.target.files) addFiles(event.target.files);
+              event.target.value = ""; // allow picking the same file again
+            }}
+          />
           <Button
             type="button"
             size="icon"
-            variant="destructive"
-            onClick={() => stop()}
-            aria-label="Stop generating"
-            title="Stop"
+            variant="ghost"
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Attach image"
+            title="Attach image (or paste / drop into the chat)"
           >
-            <Square className="size-3.5" fill="currentColor" />
+            <Paperclip className="size-4" />
           </Button>
-        ) : (
-          <Button
-            type="submit"
-            size="icon"
-            disabled={!input.trim()}
-            aria-label="Send message"
-            title="Send"
-          >
-            <ArrowUp className="size-4" />
-          </Button>
-        )}
+          <Textarea
+            ref={composerRef}
+            rows={1}
+            placeholder="Describe what to design…"
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={onKeyDown}
+            onPaste={onPaste}
+            className="max-h-40 min-h-9 resize-none bg-zinc-900/80 text-sm"
+          />
+          {isStreaming ? (
+            <Button
+              type="button"
+              size="icon"
+              variant="destructive"
+              onClick={() => stop()}
+              aria-label="Stop generating"
+              title="Stop"
+            >
+              <Square className="size-3.5" fill="currentColor" />
+            </Button>
+          ) : (
+            <Button
+              type="submit"
+              size="icon"
+              disabled={!input.trim() && pending.length === 0}
+              aria-label="Send message"
+              title="Send"
+            >
+              <ArrowUp className="size-4" />
+            </Button>
+          )}
+        </div>
       </form>
     </div>
   );
@@ -317,6 +470,9 @@ function MessageRow({ message }: { message: UIMessage }) {
               </ChatMarkdown>
             );
           }
+          if (part.type === "file") {
+            return <FilePart key={index} part={part} />;
+          }
           if (part.type.startsWith("tool-")) {
             return <ToolPart key={index} part={part} />;
           }
@@ -324,6 +480,43 @@ function MessageRow({ message }: { message: UIMessage }) {
         })}
       </div>
     </div>
+  );
+}
+
+interface FileUIPartLike {
+  type: "file";
+  url: string;
+  mediaType?: string;
+  filename?: string;
+}
+
+function FilePart({ part }: { part: FileUIPartLike }) {
+  if (part.mediaType && part.mediaType.startsWith("image/")) {
+    return (
+      <a
+        href={part.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="block w-fit overflow-hidden rounded-md border border-white/10"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={part.url}
+          alt={part.filename ?? "attachment"}
+          className="max-h-72 max-w-full object-contain"
+        />
+      </a>
+    );
+  }
+  return (
+    <a
+      href={part.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-xs text-zinc-200"
+    >
+      {part.filename ?? "Attachment"}
+    </a>
   );
 }
 
@@ -377,6 +570,17 @@ function ToolPart({ part }: { part: ToolUIPartLike }) {
       <span className="truncate">{body}</span>
     </div>
   );
+}
+
+/* ─── helpers ──────────────────────────────────────── */
+
+async function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+    reader.readAsDataURL(file);
+  });
 }
 
 function describeToolResult(

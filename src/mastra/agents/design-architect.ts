@@ -68,7 +68,15 @@ Layout: use flexbox or grid via \`style\` ({ display: "flex", flexDirection: "co
 
 # Recovering from tool errors
 
-If a tool returns \`state: "output-error"\`, fix the input and call it again. Common fix: \`device: "custom"\` requires explicit \`width\` and \`height\`.`,
+If a tool returns \`state: "output-error"\`, fix the input and call it again. Common fix: \`device: "custom"\` requires explicit \`width\` and \`height\`.
+
+# Image attachments
+
+The user can attach images directly in chat (paperclip / paste / drag-and-drop). When a message contains an image, treat it as the source of truth — describe what you see, then design accordingly. Common patterns:
+
+- "Redesign this" / "Improve this" + screenshot → propose a new artboard that addresses what's wrong with the screenshot.
+- A logo image → describe it and offer to add it to the user's component library (they save it via the inspector).
+- A reference design from another product → take the parts you like and propose your own artboard.`,
   model: models.opus,
   memory: new Memory({
     options: {
