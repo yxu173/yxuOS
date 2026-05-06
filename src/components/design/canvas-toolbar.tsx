@@ -3,6 +3,7 @@
 import {
   Maximize2,
   Plus,
+  Sparkles,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -17,6 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 import { MAX_ZOOM, MIN_ZOOM, useDesignCanvas } from "./canvas-store";
+import { SAMPLE_LANDING } from "./sample-design";
 import { DEVICE_DIMENSIONS, type DevicePreset } from "./types";
 
 export function CanvasToolbar() {
@@ -26,6 +28,14 @@ export function CanvasToolbar() {
   const artboards = useDesignCanvas((state) => state.artboards);
   const addArtboard = useDesignCanvas((state) => state.addArtboard);
   const selectOnly = useDesignCanvas((state) => state.selectOnly);
+  const updateArtboardDesign = useDesignCanvas(
+    (state) => state.updateArtboardDesign,
+  );
+  const selection = useDesignCanvas((state) => state.selection);
+
+  const showDevTools =
+    typeof process !== "undefined" &&
+    process.env.NEXT_PUBLIC_SHOW_DEV_TOOLBAR === "1";
 
   const screenCenter = () => {
     if (typeof window === "undefined") return { x: 0, y: 0 };
@@ -63,6 +73,39 @@ export function CanvasToolbar() {
       y: -minY * zoom + (screenH - h * zoom) / 2 + 60,
       zoom,
     });
+  };
+
+  const onInsertSample = () => {
+    // Either patch the selected artboard or drop a fresh desktop with the
+    // sample tree. Used during dev to verify <DesignRenderer> end-to-end.
+    if (selection.length > 0) {
+      for (const id of selection) {
+        updateArtboardDesign(id, SAMPLE_LANDING);
+      }
+      return;
+    }
+    const dimensions = DEVICE_DIMENSIONS.desktop;
+    const rightmost =
+      artboards.length === 0
+        ? null
+        : artboards.reduce((acc, a) =>
+            a.x + a.w > acc.x + acc.w ? a : acc,
+          );
+    const x = rightmost ? rightmost.x + rightmost.w + 80 : 0;
+    const y = rightmost ? rightmost.y : 0;
+    const id = nanoid();
+    addArtboard({
+      id,
+      name: "Stride landing — Desktop",
+      device: "desktop",
+      x,
+      y,
+      w: dimensions.w,
+      // Tall enough for the sample landing-page tree.
+      h: 1800,
+      design: SAMPLE_LANDING,
+    });
+    selectOnly(id);
   };
 
   const onAddArtboard = (preset: Exclude<DevicePreset, "custom">) => {
@@ -156,6 +199,21 @@ export function CanvasToolbar() {
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+        {showDevTools ? (
+          <>
+            <span className="mx-1 h-5 w-px bg-white/10" />
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1.5"
+              onClick={onInsertSample}
+              title="Insert sample landing-page design (dev)"
+            >
+              <Sparkles className="size-3.5" />
+              Sample
+            </Button>
+          </>
+        ) : null}
       </div>
     </div>
   );

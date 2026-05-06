@@ -1,6 +1,7 @@
 "use client";
 
 import { useDesignCanvas } from "./canvas-store";
+import { DesignRenderer } from "./design-renderer";
 import { DEVICE_DIMENSIONS, type Artboard } from "./types";
 
 export interface ArtboardViewProps {
@@ -76,10 +77,9 @@ export function ArtboardView({
             : "0 24px 80px rgb(0 0 0 / 0.4)",
         }}
       >
-        {/* Placeholder content until commit 4 lands DesignRenderer */}
         {artboard.design ? (
-          <div className="grid h-full w-full place-items-center text-zinc-500">
-            <span className="text-sm">Design tree (rendered in commit 4)</span>
+          <div className="h-full w-full overflow-hidden">
+            <DesignRenderer node={artboard.design} />
           </div>
         ) : (
           <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-zinc-400">

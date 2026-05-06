@@ -1,12 +1,12 @@
 /**
  * Type definitions shared across the custom design canvas.
  *
- * The DesignNode tree (the agent's actual artistic output) lands in
- * commit 4 — for now an artboard's `design` is just an opaque container
- * we render as a placeholder.
+ * The full `DesignNode` discriminated union lives in `design-node.ts`;
+ * this file re-exports it as `DesignNodeRoot` for the artboard so the
+ * existing imports keep working.
  */
 
-import type { CSSProperties } from "react";
+import type { DesignNode } from "./design-node";
 
 export type DevicePreset =
   | "desktop"
@@ -48,18 +48,8 @@ export interface Artboard {
   background?: string;
 }
 
-/**
- * Root of an artboard's design tree. For now keep this loose; we narrow
- * to a strict `DesignNode` discriminated union in commit 4.
- */
-export interface DesignNodeRoot {
-  type: string;
-  style?: CSSProperties;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  children?: any[];
-  // Allow arbitrary extra props per type at this stage.
-  [key: string]: unknown;
-}
+/** Root of an artboard's design tree — any single `DesignNode`. */
+export type DesignNodeRoot = DesignNode;
 
 /**
  * Camera (viewport) — controls the visible region of world space.
