@@ -2,9 +2,11 @@ import { eq } from "drizzle-orm";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { listDesignAssetsForOwner } from "@/app/(app)/designs/asset-actions";
 import { listDesignComponentsForOwner } from "@/app/(app)/designs/component-actions";
 import {
   ComponentLibraryProvider,
+  type LibraryAsset,
   type LibraryComponent,
 } from "@/components/design/component-library-context";
 import { DesignRenderer } from "@/components/design/design-renderer";
@@ -40,14 +42,25 @@ export default async function SharedDesignPage({
     notFound();
   }
 
-  // Pull the design owner's component library so component-refs in the
-  // shared design expand correctly.
-  const libraryRows = await listDesignComponentsForOwner(design.ownerId);
-  const components: LibraryComponent[] = libraryRows.map((row) => ({
+  // Pull the design owner's component library + uploaded assets so
+  // component-refs and image src references in the shared design expand
+  // correctly without authenticating the visitor.
+  const [componentRows, assetRows] = await Promise.all([
+    listDesignComponentsForOwner(design.ownerId),
+    listDesignAssetsForOwner(design.ownerId),
+  ]);
+  const components: LibraryComponent[] = componentRows.map((row) => ({
     id: row.id,
     name: row.name,
     slug: row.slug,
     tree: row.tree as unknown as DesignNode,
+  }));
+  const assets: LibraryAsset[] = assetRows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    url: row.url,
+    mimeType: row.mimeType,
+    size: row.size,
   }));
 
   const snapshot = (design.snapshot as DesignSnapshot | null) ?? null;
@@ -57,7 +70,7 @@ export default async function SharedDesignPage({
   // pan/zoom/edit, just the actual designs at full size for read-only
   // viewing.
   return (
-    <ComponentLibraryProvider components={components}>
+    <ComponentLibraryProvider components={components} assets={assets}>
       <div className="min-h-screen bg-zinc-950 text-zinc-100">
         <header className="sticky top-0 z-10 flex h-12 items-center gap-2 border-b border-white/5 bg-zinc-950/80 px-3 backdrop-blur">
         <Link

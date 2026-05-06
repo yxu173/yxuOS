@@ -11,35 +11,48 @@ export interface LibraryComponent {
   tree: DesignNode;
 }
 
+export interface LibraryAsset {
+  id: string;
+  name: string;
+  url: string;
+  mimeType: string;
+  size: number;
+}
+
 interface ComponentLibraryContextValue {
-  /** Index by slug for O(1) lookup during render. */
+  /** Index components by slug for O(1) lookup during render. */
   bySlug: Map<string, LibraryComponent>;
-  list: LibraryComponent[];
+  components: LibraryComponent[];
+  assets: LibraryAsset[];
 }
 
 const ComponentLibraryContext = createContext<ComponentLibraryContextValue>({
   bySlug: new Map(),
-  list: [],
+  components: [],
+  assets: [],
 });
 
 /**
- * Provides the user's component library to the DesignRenderer (so
- * `component-ref` nodes can expand) and to the inspector / library tab
- * (so the UI can list / pick / remove).
+ * Provides the user's library (saved DesignNode components + uploaded
+ * image assets) to the DesignRenderer, the chat panel, and the library
+ * tab.
  */
 export function ComponentLibraryProvider({
   components,
+  assets,
   children,
 }: {
   components: LibraryComponent[];
+  assets: LibraryAsset[];
   children: ReactNode;
 }) {
   const value = useMemo<ComponentLibraryContextValue>(
     () => ({
       bySlug: new Map(components.map((c) => [c.slug, c])),
-      list: components,
+      components,
+      assets,
     }),
-    [components],
+    [components, assets],
   );
   return (
     <ComponentLibraryContext.Provider value={value}>

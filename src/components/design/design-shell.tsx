@@ -9,6 +9,7 @@ import { CanvasViewport } from "./canvas-viewport";
 import { useDesignCanvas, MAX_ZOOM, MIN_ZOOM } from "./canvas-store";
 import {
   ComponentLibraryProvider,
+  type LibraryAsset,
   type LibraryComponent,
 } from "./component-library-context";
 import {
@@ -31,6 +32,7 @@ export interface DesignShellProps {
   initialMessages: UIMessage[];
   designs: DesignSummary[];
   components: LibraryComponent[];
+  assets: LibraryAsset[];
 }
 
 export function DesignShell({
@@ -43,6 +45,7 @@ export function DesignShell({
   initialMessages,
   designs,
   components,
+  assets,
 }: DesignShellProps) {
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
@@ -95,7 +98,7 @@ export function DesignShell({
   }, []);
 
   return (
-    <ComponentLibraryProvider components={components}>
+    <ComponentLibraryProvider components={components} assets={assets}>
       <div className="fixed inset-0 flex flex-col bg-zinc-950 text-zinc-100">
       <WorkspaceTopBar
         homePath="/designs"

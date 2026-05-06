@@ -1,8 +1,12 @@
 "use client";
 
-import { Boxes, Library, MoreHorizontal, Trash2 } from "lucide-react";
-import { useTransition } from "react";
+import { Boxes, ImagePlus, Loader2, MoreHorizontal, Trash2 } from "lucide-react";
+import { useRef, useState, useTransition } from "react";
 
+import {
+  deleteDesignAsset,
+  uploadDesignAsset,
+} from "@/app/(app)/designs/asset-actions";
 import {
   deleteDesignComponent,
   renameDesignComponent,
@@ -34,43 +38,73 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useState } from "react";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 
 import { useComponentLibrary } from "./component-library-context";
 
 /**
- * Library tab in the right panel. Lists the user's saved components,
- * with rename / delete affordances. Component creation happens from the
- * Inspector ("Save selection as component") — no manual JSON entry yet.
+ * Library tab in the right panel. Two sub-tabs:
+ *
+ * - Components: saved DesignNode trees the agent can reuse via
+ *   `{ type: "component-ref", componentSlug }`.
+ * - Assets: uploaded images. The agent picks them up via the
+ *   `list_assets` tool and references their public URL inside `image`
+ *   nodes.
  */
 export function LibraryPanel() {
-  const { list } = useComponentLibrary();
+  const { components, assets } = useComponentLibrary();
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
-      <div className="flex items-center justify-between border-b border-white/5 px-3 py-1.5">
-        <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-          <Library className="size-3" />
-          {list.length} component{list.length === 1 ? "" : "s"}
-        </span>
-      </div>
-
-      <ScrollArea className="flex-1">
-        {list.length === 0 ? (
-          <EmptyState />
-        ) : (
-          <ul className="flex flex-col gap-1 p-2">
-            {list.map((component) => (
-              <LibraryRow key={component.id} component={component} />
-            ))}
-          </ul>
-        )}
-      </ScrollArea>
+      <Tabs defaultValue="components" className="flex h-full flex-col">
+        <TabsList className="m-2 grid w-auto grid-cols-2">
+          <TabsTrigger value="components">
+            Components ({components.length})
+          </TabsTrigger>
+          <TabsTrigger value="assets">Assets ({assets.length})</TabsTrigger>
+        </TabsList>
+        <TabsContent
+          value="components"
+          className="m-0 flex min-h-0 flex-1 flex-col overflow-hidden"
+        >
+          <ComponentsSection />
+        </TabsContent>
+        <TabsContent
+          value="assets"
+          className="m-0 flex min-h-0 flex-1 flex-col overflow-hidden"
+        >
+          <AssetsSection />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
 
-function EmptyState() {
+/* ─── Components sub-tab ────────────────────────────── */
+
+function ComponentsSection() {
+  const { components } = useComponentLibrary();
+  return (
+    <ScrollArea className="flex-1">
+      {components.length === 0 ? (
+        <ComponentsEmptyState />
+      ) : (
+        <ul className="flex flex-col gap-1 p-2">
+          {components.map((component) => (
+            <LibraryRow key={component.id} component={component} />
+          ))}
+        </ul>
+      )}
+    </ScrollArea>
+  );
+}
+
+function ComponentsEmptyState() {
   return (
     <div className="grid h-full place-items-center px-6 py-16 text-center text-xs text-zinc-500">
       <div className="flex flex-col items-center gap-3">
@@ -88,6 +122,183 @@ function EmptyState() {
         </div>
       </div>
     </div>
+  );
+}
+
+/* ─── Assets sub-tab ─────────────────────────────────── */
+
+function AssetsSection() {
+  const { assets } = useComponentLibrary();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  const onPickFiles = () => fileInputRef.current?.click();
+
+  const onFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setError(null);
+    startTransition(async () => {
+      for (const file of Array.from(files)) {
+        try {
+          const formData = new FormData();
+          formData.append("file", file);
+          await uploadDesignAsset(formData);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Upload failed");
+          break;
+        }
+      }
+    });
+  };
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex items-center justify-between gap-2 px-3 py-2">
+        <p className="text-[11px] text-zinc-500">
+          Upload images the agent can use in your designs.
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="gap-1.5"
+          onClick={onPickFiles}
+          disabled={pending}
+        >
+          {pending ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <ImagePlus className="size-3.5" />
+          )}
+          Upload
+        </Button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(event) => {
+            onFiles(event.target.files);
+            event.target.value = "";
+          }}
+        />
+      </div>
+
+      {error ? (
+        <p className="mx-3 mb-2 rounded-md border border-red-500/30 bg-red-500/10 px-2.5 py-1.5 text-[11px] text-red-300 [overflow-wrap:anywhere]">
+          {error}
+        </p>
+      ) : null}
+
+      <ScrollArea className="flex-1">
+        {assets.length === 0 ? (
+          <AssetsEmptyState />
+        ) : (
+          <ul className="grid grid-cols-2 gap-2 p-2">
+            {assets.map((asset) => (
+              <AssetTile key={asset.id} asset={asset} />
+            ))}
+          </ul>
+        )}
+      </ScrollArea>
+    </div>
+  );
+}
+
+function AssetsEmptyState() {
+  return (
+    <div className="grid h-full place-items-center px-6 py-16 text-center text-xs text-zinc-500">
+      <div className="flex flex-col items-center gap-3">
+        <ImagePlus className="size-8 text-zinc-600" />
+        <p className="text-zinc-300">No images uploaded yet.</p>
+        <p className="text-[11px] leading-relaxed">
+          Use the <span className="font-medium text-zinc-300">Upload</span>{" "}
+          button to add images. The agent can then drop them into designs
+          via{" "}
+          <code className="rounded bg-white/10 px-1 font-mono">
+            list_assets
+          </code>
+          .
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function AssetTile({
+  asset,
+}: {
+  asset: { id: string; name: string; url: string };
+}) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+
+  const submitDelete = () => {
+    startTransition(async () => {
+      try {
+        await deleteDesignAsset(asset.id);
+      } finally {
+        setConfirmOpen(false);
+      }
+    });
+  };
+
+  return (
+    <li className="group relative flex flex-col gap-1 rounded-md border border-white/5 bg-white/[0.02] p-1.5">
+      <div className="aspect-square w-full overflow-hidden rounded-sm bg-zinc-900">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={asset.url}
+          alt={asset.name}
+          className="h-full w-full object-cover"
+        />
+      </div>
+      <div className="flex items-center justify-between gap-1">
+        <span
+          className="truncate text-[11px] text-zinc-300"
+          title={asset.name}
+        >
+          {asset.name}
+        </span>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className="text-red-300 opacity-0 transition-opacity hover:bg-red-500/10 hover:text-red-200 group-hover:opacity-100"
+          onClick={() => setConfirmOpen(true)}
+          aria-label={`Delete ${asset.name}`}
+        >
+          <Trash2 className="size-3" />
+        </Button>
+      </div>
+
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this image?</AlertDialogTitle>
+            <AlertDialogDescription>
+              <span className="font-medium text-zinc-100">{asset.name}</span>{" "}
+              will be removed from your library and from blob storage.
+              Designs that reference its URL will show a broken image.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                submitDelete();
+              }}
+              disabled={pending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {pending ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </li>
   );
 }
 

@@ -28,6 +28,7 @@ import {
   executeAddArtboard,
   executeDeleteArtboard,
   executeGetArtboard,
+  executeListAssets,
   executeListComponents,
   executeQueryCanvas,
   executeUpdateArtboard,
@@ -46,6 +47,7 @@ const TOOL_LABELS: Record<string, string> = {
   delete_artboard: "Deleting artboard",
   get_artboard: "Reading artboard",
   list_components: "Reading component library",
+  list_assets: "Reading uploaded assets",
 };
 
 /**
@@ -157,7 +159,17 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
               break;
             }
             case "list_components": {
-              const output = executeListComponents(library.list);
+              const output = executeListComponents(library.components);
+              addToolOutput({
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                tool: toolCall.toolName as any,
+                toolCallId: toolCall.toolCallId,
+                output,
+              });
+              break;
+            }
+            case "list_assets": {
+              const output = executeListAssets(library.assets);
               addToolOutput({
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 tool: toolCall.toolName as any,
@@ -603,6 +615,8 @@ function describeToolResult(
       return "Read artboard";
     case "list_components":
       return "Read component library";
+    case "list_assets":
+      return "Read uploaded assets";
     default:
       return null;
   }

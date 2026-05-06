@@ -3,7 +3,10 @@
 import { nanoid } from "nanoid";
 
 import { useDesignCanvas } from "./canvas-store";
-import type { LibraryComponent } from "./component-library-context";
+import type {
+  LibraryAsset,
+  LibraryComponent,
+} from "./component-library-context";
 import type { DesignNode } from "./design-node";
 import { DEVICE_DIMENSIONS, type Artboard, type DevicePreset } from "./types";
 
@@ -220,4 +223,24 @@ function countNodes(node: DesignNode): number {
     for (const child of node.children) n += countNodes(child);
   }
   return n;
+}
+
+/* ─── list_assets ──────────────────────────────────────── */
+
+export interface ListAssetsOutput {
+  assets: Array<{
+    name: string;
+    url: string;
+    mimeType: string;
+  }>;
+}
+
+export function executeListAssets(assets: LibraryAsset[]): ListAssetsOutput {
+  return {
+    assets: assets.map((a) => ({
+      name: a.name,
+      url: a.url,
+      mimeType: a.mimeType,
+    })),
+  };
 }

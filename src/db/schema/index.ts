@@ -7,6 +7,7 @@
  */
 export * from "./auth";
 export * from "./boards";
+export * from "./design-assets";
 export * from "./design-components";
 export * from "./designs";
 export * from "./relations";

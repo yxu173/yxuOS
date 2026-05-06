@@ -2,6 +2,7 @@ import { relations } from "drizzle-orm";
 
 import { account, session, user } from "./auth";
 import { boards } from "./boards";
+import { designAssets } from "./design-assets";
 import { designComponents } from "./design-components";
 import { designs } from "./designs";
 
@@ -19,6 +20,14 @@ export const userRelations = relations(user, ({ many }) => ({
   boards: many(boards),
   designs: many(designs),
   designComponents: many(designComponents),
+  designAssets: many(designAssets),
+}));
+
+export const designAssetsRelations = relations(designAssets, ({ one }) => ({
+  owner: one(user, {
+    fields: [designAssets.ownerId],
+    references: [user.id],
+  }),
 }));
 
 export const designComponentsRelations = relations(

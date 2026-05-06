@@ -27,6 +27,7 @@
     "@mastra/memory": "^1.17.5",
     "@mastra/pg": "^1.10.0",
     "@neondatabase/serverless": "^1.1.0",
+    "@vercel/blob": "^2.3.3",
     "ai": "^6.0.175",
     "better-auth": "^1.6.9",
     "class-variance-authority": "^0.7.1",

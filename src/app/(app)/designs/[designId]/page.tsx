@@ -4,8 +4,12 @@ import { and, desc, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 
+import { listDesignAssetsForOwner } from "@/app/(app)/designs/asset-actions";
 import { listDesignComponentsForOwner } from "@/app/(app)/designs/component-actions";
-import type { LibraryComponent } from "@/components/design/component-library-context";
+import type {
+  LibraryAsset,
+  LibraryComponent,
+} from "@/components/design/component-library-context";
 import { DesignShell } from "@/components/design/design-shell";
 import type { DesignNode } from "@/components/design/design-node";
 import type { Artboard } from "@/components/design/types";
@@ -46,7 +50,7 @@ export default async function DesignPage({
     redirect("/sign-in");
   }
 
-  const [design, userDesigns, libraryRows] = await Promise.all([
+  const [design, userDesigns, componentRows, assetRows] = await Promise.all([
     db.query.designs.findFirst({
       where: and(
         eq(designs.id, designId),
@@ -70,6 +74,7 @@ export default async function DesignPage({
       },
     }),
     listDesignComponentsForOwner(session.user.id),
+    listDesignAssetsForOwner(session.user.id),
   ]);
 
   if (!design) {
@@ -83,11 +88,18 @@ export default async function DesignPage({
     session.user.id,
   );
 
-  const components: LibraryComponent[] = libraryRows.map((row) => ({
+  const components: LibraryComponent[] = componentRows.map((row) => ({
     id: row.id,
     name: row.name,
     slug: row.slug,
     tree: row.tree as unknown as DesignNode,
+  }));
+  const assets: LibraryAsset[] = assetRows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    url: row.url,
+    mimeType: row.mimeType,
+    size: row.size,
   }));
 
   return (
@@ -101,6 +113,7 @@ export default async function DesignPage({
       initialMessages={initialMessages}
       designs={userDesigns}
       components={components}
+      assets={assets}
     />
   );
 }

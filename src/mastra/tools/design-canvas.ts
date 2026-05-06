@@ -260,6 +260,22 @@ export const listComponentsTool = createTool({
   }),
 });
 
+export const listAssetsTool = createTool({
+  id: "list_assets",
+  description:
+    "List the user's uploaded image assets — logos, brand imagery, photos. Use this BEFORE composing a design so you can reference real imagery via { type: 'image', src: '<url>', alt: '...' } instead of dropping a placeholder rectangle. Output includes the file name and a public URL ready to use as the `src` of an image node.",
+  inputSchema: z.object({}),
+  outputSchema: z.object({
+    assets: z.array(
+      z.object({
+        name: z.string(),
+        url: z.string(),
+        mimeType: z.string(),
+      }),
+    ),
+  }),
+});
+
 export const designCanvasTools = {
   query_canvas: queryCanvasTool,
   add_artboard: addArtboardTool,
@@ -267,4 +283,5 @@ export const designCanvasTools = {
   delete_artboard: deleteArtboardTool,
   get_artboard: getArtboardTool,
   list_components: listComponentsTool,
+  list_assets: listAssetsTool,
 };

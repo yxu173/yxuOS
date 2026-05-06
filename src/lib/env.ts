@@ -52,6 +52,12 @@ const envSchema = z.object({
   // ─── Mastra ────────────────────────────────────────────
   MASTRA_TELEMETRY_DISABLED: z.preprocess(empty, z.string().optional()),
 
+  // ─── Vercel Blob (object storage for the design asset library) ─
+  // Required to upload images via the Library tab. Without it,
+  // `uploadDesignAsset` throws a clear error in the UI.
+  // Get one at https://vercel.com/dashboard → Storage → Blob.
+  BLOB_READ_WRITE_TOKEN: z.preprocess(empty, z.string().optional()),
+
   // ─── Integrations (Module 7) ───────────────────────────
   GITHUB_APP_ID: z.preprocess(empty, z.string().optional()),
   GITHUB_APP_PRIVATE_KEY: z.preprocess(empty, z.string().optional()),
