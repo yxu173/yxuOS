@@ -60,7 +60,7 @@ export function TldrawCanvas({ boardId, initialSnapshot }: TldrawCanvasProps) {
   };
 
   return (
-    <div className="fixed inset-0">
+    <div className="absolute inset-0">
       <Tldraw
         shapeUtils={customShapeUtils}
         snapshot={

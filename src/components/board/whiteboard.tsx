@@ -14,7 +14,7 @@ const TldrawCanvas = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="fixed inset-0 flex items-center justify-center bg-background text-sm text-muted-foreground">
+      <div className="absolute inset-0 flex items-center justify-center bg-background text-sm text-muted-foreground">
         Loading whiteboard…
       </div>
     ),
