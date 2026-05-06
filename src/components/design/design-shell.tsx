@@ -3,6 +3,8 @@
 import type { UIMessage } from "ai";
 import { useEffect, useState } from "react";
 
+import { WorkspaceTopBar } from "@/components/workspaces/workspace-top-bar";
+
 import { CanvasViewport } from "./canvas-viewport";
 import { useDesignCanvas, MAX_ZOOM, MIN_ZOOM } from "./canvas-store";
 import { DesignChat } from "./design-chat";
@@ -10,7 +12,8 @@ import {
   DesignLeftPanel,
   type DesignSummary,
 } from "./design-left-panel";
-import { DesignTopBar } from "./design-top-bar";
+import { DesignName } from "./design-name";
+import { DesignShareDialog } from "./design-share-dialog";
 import type { Artboard } from "./types";
 import { useDesignPersistence } from "./use-design-persistence";
 
@@ -87,12 +90,19 @@ export function DesignShell({
 
   return (
     <div className="fixed inset-0 flex flex-col bg-zinc-950 text-zinc-100">
-      <DesignTopBar
-        designId={designId}
-        designName={designName}
+      <WorkspaceTopBar
+        homePath="/designs"
+        homeLabel="Designs"
+        leftPanelLabel="designs"
+        nameSlot={<DesignName designId={designId} initialName={designName} />}
+        shareSlot={
+          <DesignShareDialog
+            designId={designId}
+            initialShareToken={shareToken}
+          />
+        }
         userName={userName}
         userEmail={userEmail}
-        shareToken={shareToken}
         leftPanelOpen={leftOpen}
         rightPanelOpen={rightOpen}
         onToggleLeftPanel={() => setLeftOpen((value) => !value)}

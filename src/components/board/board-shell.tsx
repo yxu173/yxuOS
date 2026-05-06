@@ -4,11 +4,13 @@ import type { UIMessage } from "ai";
 import { useEffect, useState } from "react";
 
 import { Whiteboard } from "@/components/board/whiteboard";
+import { WorkspaceTopBar } from "@/components/workspaces/workspace-top-bar";
 
+import { BoardName } from "./board-name";
 import { Chat } from "./chat";
 import { EditorRefProvider } from "./editor-context";
 import { LeftPanel, type BoardSummary } from "./left-panel";
-import { TopBar } from "./top-bar";
+import { ShareDialog } from "./share-dialog";
 
 export interface BoardShellProps {
   boardId: string;
@@ -53,12 +55,16 @@ export function BoardShell({
   return (
     <EditorRefProvider>
       <div className="fixed inset-0 flex flex-col bg-background">
-        <TopBar
-          boardId={boardId}
-          boardName={boardName}
+        <WorkspaceTopBar
+          homePath="/boards"
+          homeLabel="Boards"
+          leftPanelLabel="chats"
+          nameSlot={<BoardName boardId={boardId} initialName={boardName} />}
+          shareSlot={
+            <ShareDialog boardId={boardId} initialShareToken={shareToken} />
+          }
           userName={userName}
           userEmail={userEmail}
-          shareToken={shareToken}
           leftPanelOpen={leftOpen}
           rightPanelOpen={rightOpen}
           onToggleLeftPanel={() => setLeftOpen((value) => !value)}
