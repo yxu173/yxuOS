@@ -110,7 +110,7 @@ export function Chat({ boardId, initialMessages }: ChatProps) {
               break;
             }
             case "add_mermaid_card": {
-              const output = executeAddMermaidCard(
+              const output = await executeAddMermaidCard(
                 editor,
                 toolCall.input as Parameters<typeof executeAddMermaidCard>[1],
               );

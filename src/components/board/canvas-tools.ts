@@ -10,6 +10,8 @@ import {
   type TLShapeId,
 } from "tldraw";
 
+import { validateMermaid } from "./mermaid";
+
 /* ─── Types mirrored from src/mastra/tools/canvas.ts ─── */
 
 interface PointInput {
@@ -339,7 +341,7 @@ export function executeAddMarkdownCard(
   return { shapeId: id };
 }
 
-export function executeAddMermaidCard(
+export async function executeAddMermaidCard(
   editor: Editor,
   input: {
     x: number;
@@ -349,7 +351,12 @@ export function executeAddMermaidCard(
     kind: string;
     mermaid: string;
   },
-): { shapeId: string } {
+): Promise<{ shapeId: string }> {
+  // Validate the source FIRST. If parsing throws we propagate the error to
+  // the agent (state: "output-error") instead of silently dropping a broken
+  // card on the canvas — the agent can then retry with corrected syntax.
+  await validateMermaid(input.mermaid);
+
   const id = createShapeId();
   editor.createShape({
     id,

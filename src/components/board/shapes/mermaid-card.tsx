@@ -11,6 +11,8 @@ import {
   type TLBaseShape,
 } from "tldraw";
 
+import { renderMermaid } from "../mermaid";
+
 export type MermaidCardShape = TLBaseShape<
   "mermaid-card",
   {
@@ -64,23 +66,6 @@ export class MermaidCardShapeUtil extends BaseBoxShapeUtil<MermaidCardShape> {
   override indicator(shape: MermaidCardShape) {
     return <rect width={shape.props.w} height={shape.props.h} rx={12} ry={12} />;
   }
-}
-
-let mermaidInitialized = false;
-
-async function renderMermaid(id: string, source: string) {
-  const mermaid = (await import("mermaid")).default;
-  if (!mermaidInitialized) {
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: "dark",
-      securityLevel: "loose",
-      fontFamily: "ui-sans-serif, system-ui",
-    });
-    mermaidInitialized = true;
-  }
-  const { svg } = await mermaid.render(id, source);
-  return svg;
 }
 
 function MermaidCardComponent({ shape }: { shape: MermaidCardShape }) {

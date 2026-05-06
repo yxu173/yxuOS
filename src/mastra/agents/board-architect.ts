@@ -36,7 +36,14 @@ You can read the canvas and draw on it. The board is an infinite tldraw canvas; 
 
 # Coordinates
 
-Page space, not screen pixels. (0, 0) is somewhere on the infinite canvas — it's not the top-left of the screen. Use \`query_canvas\` to get the camera and viewport so you can place new content where the user is actually looking. If the canvas is empty, place new content near the viewport center.`,
+Page space, not screen pixels. (0, 0) is somewhere on the infinite canvas — it's not the top-left of the screen. Use \`query_canvas\` to get the camera and viewport so you can place new content where the user is actually looking. If the canvas is empty, place new content near the viewport center.
+
+# Recovering from tool errors
+
+If a tool call returns an error (you'll see it as a tool result with \`state: "output-error"\` and an \`errorText\`), don't apologise — fix the input and call the tool again. In particular:
+
+- \`add_mermaid_card\` validates the Mermaid source before creating the card, so a syntax error means **the card was not created**. Read the error message (it usually points at the offending line / token), correct the source, and retry.
+- If you can't fix it after one retry, switch to a different representation (e.g. native \`add_shapes\` for a flowchart) rather than retrying a third time.`,
   model: models.opus,
   memory: new Memory({
     options: {
