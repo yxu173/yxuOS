@@ -7,7 +7,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { nanoid } from "nanoid";
 
-import { user } from "./auth";
+import { organization, user } from "./auth";
 
 const newId = () => nanoid();
 
@@ -26,6 +26,10 @@ export const designAssets = pgTable(
     ownerId: text("owner_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    /** Owning team. Nullable during teams rollout — backfilled in phase 2. */
+    teamId: text("team_id").references(() => organization.id, {
+      onDelete: "cascade",
+    }),
     /** Display name (defaults to the original file name). */
     name: text("name").notNull(),
     /** Vercel Blob pathname — needed for `del()`. */
@@ -41,7 +45,10 @@ export const designAssets = pgTable(
       .$defaultFn(() => new Date())
       .notNull(),
   },
-  (t) => [index("design_assets_owner_idx").on(t.ownerId)],
+  (t) => [
+    index("design_assets_owner_idx").on(t.ownerId),
+    index("design_assets_team_idx").on(t.teamId),
+  ],
 );
 
 export type DesignAsset = typeof designAssets.$inferSelect;

@@ -1,7 +1,7 @@
 import { index, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 import { nanoid } from "nanoid";
 
-import { user } from "./auth";
+import { organization, user } from "./auth";
 
 const newId = () => nanoid();
 
@@ -19,6 +19,10 @@ export const designs = pgTable(
     ownerId: text("owner_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    /** Owning team. Nullable during teams rollout — backfilled in phase 2. */
+    teamId: text("team_id").references(() => organization.id, {
+      onDelete: "cascade",
+    }),
     threadId: text("thread_id").notNull().$defaultFn(newId),
     /**
      * Snapshot of the design canvas: list of artboards (each with position,
@@ -38,7 +42,10 @@ export const designs = pgTable(
       .$defaultFn(() => new Date())
       .notNull(),
   },
-  (t) => [index("designs_owner_idx").on(t.ownerId)],
+  (t) => [
+    index("designs_owner_idx").on(t.ownerId),
+    index("designs_team_idx").on(t.teamId),
+  ],
 );
 
 export type Design = typeof designs.$inferSelect;

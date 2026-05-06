@@ -1,7 +1,7 @@
 import { index, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 import { nanoid } from "nanoid";
 
-import { user } from "./auth";
+import { organization, user } from "./auth";
 
 const newId = () => nanoid();
 
@@ -21,6 +21,14 @@ export const boards = pgTable(
     ownerId: text("owner_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    /**
+     * Team (organization) that owns this board. Nullable during the
+     * teams rollout — phase 2 backfills personal teams for existing
+     * rows and then ALTERs the column to NOT NULL with FK.
+     */
+    teamId: text("team_id").references(() => organization.id, {
+      onDelete: "cascade",
+    }),
     threadId: text("thread_id").notNull().$defaultFn(newId),
     snapshot: jsonb("snapshot").$type<Record<string, unknown> | null>(),
     /**
@@ -35,7 +43,10 @@ export const boards = pgTable(
       .$defaultFn(() => new Date())
       .notNull(),
   },
-  (t) => [index("boards_owner_idx").on(t.ownerId)],
+  (t) => [
+    index("boards_owner_idx").on(t.ownerId),
+    index("boards_team_idx").on(t.teamId),
+  ],
 );
 
 export type Board = typeof boards.$inferSelect;

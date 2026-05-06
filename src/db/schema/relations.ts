@@ -1,6 +1,13 @@
 import { relations } from "drizzle-orm";
 
-import { account, session, user } from "./auth";
+import {
+  account,
+  invitation,
+  member,
+  organization,
+  session,
+  user,
+} from "./auth";
 import { boards } from "./boards";
 import { designAssets } from "./design-assets";
 import { designComponents } from "./design-components";
@@ -21,6 +28,36 @@ export const userRelations = relations(user, ({ many }) => ({
   designs: many(designs),
   designComponents: many(designComponents),
   designAssets: many(designAssets),
+  // Better Auth organization plugin
+  members: many(member),
+  invitations: many(invitation),
+}));
+
+export const organizationRelations = relations(organization, ({ many }) => ({
+  members: many(member),
+  invitations: many(invitation),
+}));
+
+export const memberRelations = relations(member, ({ one }) => ({
+  organization: one(organization, {
+    fields: [member.organizationId],
+    references: [organization.id],
+  }),
+  user: one(user, {
+    fields: [member.userId],
+    references: [user.id],
+  }),
+}));
+
+export const invitationRelations = relations(invitation, ({ one }) => ({
+  organization: one(organization, {
+    fields: [invitation.organizationId],
+    references: [organization.id],
+  }),
+  inviter: one(user, {
+    fields: [invitation.inviterId],
+    references: [user.id],
+  }),
 }));
 
 export const designAssetsRelations = relations(designAssets, ({ one }) => ({
