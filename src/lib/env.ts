@@ -39,6 +39,15 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.preprocess(empty, z.string().optional()),
   ANTHROPIC_API_KEY: z.preprocess(empty, z.string().optional()),
 
+  // Azure AI Foundry — Anthropic Messages-compatible endpoint.
+  // Base URL like `https://<resource>.services.ai.azure.com/anthropic`.
+  AZURE_ANTHROPIC_BASE_URL: z.preprocess(empty, z.string().url().optional()),
+  AZURE_ANTHROPIC_API_KEY: z.preprocess(empty, z.string().optional()),
+  AZURE_ANTHROPIC_MODEL: z.preprocess(
+    empty,
+    z.string().default("claude-opus-4-7-1"),
+  ),
+
   // ─── Mastra ────────────────────────────────────────────
   MASTRA_TELEMETRY_DISABLED: z.preprocess(empty, z.string().optional()),
 
