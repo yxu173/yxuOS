@@ -1,10 +1,19 @@
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
+import { nanoid } from "nanoid";
 
+import { Button } from "@/components/ui/button";
 import { auth } from "@/lib/auth";
 
+async function createBoard() {
+  "use server";
+  // Step 3 will replace this with a real DB insert. For now we just mint
+  // an id and let the canvas page handle it via local persistence.
+  const id = nanoid();
+  redirect(`/boards/${id}`);
+}
+
 export default async function BoardsIndexPage() {
-  // The (app) layout already gated the session, but we re-fetch here for the
-  // user's name. Next.js dedupes within the same request.
   const session = await auth.api.getSession({
     headers: await headers(),
   });
@@ -18,10 +27,16 @@ export default async function BoardsIndexPage() {
             Welcome back, {session?.user.name ?? "there"}.
           </p>
         </div>
+        <form action={createBoard}>
+          <Button type="submit">New board</Button>
+        </form>
       </header>
 
-      <section className="flex h-72 items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
-        Board list lands in step 5. The whiteboard itself comes in step 2.
+      <section className="flex h-72 flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-sm text-muted-foreground">
+        <p>No boards yet.</p>
+        <p className="text-xs">
+          The list lands in step 5 once boards persist to the database.
+        </p>
       </section>
     </main>
   );
