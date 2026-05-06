@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  createBindingId,
   createShapeId,
   renderPlaintextFromRichText,
   toRichText,
@@ -151,6 +152,13 @@ export function executeAddShapes(
   input: { shapes: ShapeInput[] },
 ): { createdShapeIds: string[] } {
   const ids: TLShapeId[] = [];
+  // Bindings to create AFTER all shapes — so an arrow can bind to a shape
+  // that's also part of this batch.
+  const bindings: Array<{
+    arrowId: TLShapeId;
+    terminal: "start" | "end";
+    targetShapeId: TLShapeId;
+  }> = [];
 
   editor.run(() => {
     for (const spec of input.shapes) {
@@ -246,6 +254,22 @@ export function executeAddShapes(
                 : {}),
             },
           });
+          // Queue arrow→shape bindings so dragging the bound shapes
+          // moves the arrow with them.
+          if (isShapeRef(spec.start)) {
+            bindings.push({
+              arrowId: id,
+              terminal: "start",
+              targetShapeId: spec.start.shapeId as TLShapeId,
+            });
+          }
+          if (isShapeRef(spec.end)) {
+            bindings.push({
+              arrowId: id,
+              terminal: "end",
+              targetShapeId: spec.end.shapeId as TLShapeId,
+            });
+          }
           break;
         }
         default: {
@@ -268,6 +292,28 @@ export function executeAddShapes(
           });
         }
       }
+    }
+
+    // Now wire up arrow→shape bindings. Skip any whose target shape
+    // doesn't exist in the editor (was dropped, never created, etc.).
+    const validBindings = bindings.filter((binding) =>
+      editor.getShape(binding.targetShapeId),
+    );
+    if (validBindings.length > 0) {
+      editor.createBindings(
+        validBindings.map((binding) => ({
+          id: createBindingId(),
+          type: "arrow",
+          fromId: binding.arrowId,
+          toId: binding.targetShapeId,
+          props: {
+            terminal: binding.terminal,
+            normalizedAnchor: { x: 0.5, y: 0.5 },
+            isExact: false,
+            isPrecise: false,
+          },
+        })),
+      );
     }
   });
 
