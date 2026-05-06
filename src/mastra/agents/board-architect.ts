@@ -1,4 +1,5 @@
 import { Agent } from "@mastra/core/agent";
+import { Memory } from "@mastra/memory";
 
 import { models } from "@/lib/ai";
 
@@ -7,8 +8,8 @@ import { models } from "@/lib/ai";
  * canvas and can describe systems, write reports, and (in step 7+)
  * call tools that drop shapes / markdown / mermaid onto the board.
  *
- * Memory + canvas tools come in later steps — keeping this minimal
- * for the chat-UI milestone.
+ * Memory persists per-board (thread = board.threadId) and per-user
+ * (resource = session.user.id) — wired up in the chat route handler.
  */
 export const boardArchitect = new Agent({
   id: "boardArchitect",
@@ -27,4 +28,10 @@ Your style:
 
 The user is the engineer; help them ship.`,
   model: models.opus,
+  memory: new Memory({
+    options: {
+      // Replay the last 30 messages back to the model so it has context.
+      lastMessages: 30,
+    },
+  }),
 });

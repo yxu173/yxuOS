@@ -1,5 +1,6 @@
 "use client";
 
+import type { UIMessage } from "ai";
 import { useState } from "react";
 
 import { Whiteboard } from "@/components/board/whiteboard";
@@ -14,6 +15,7 @@ export interface BoardShellProps {
   userName: string;
   initialSnapshot: Record<string, unknown> | null;
   boards: BoardSummary[];
+  initialMessages: UIMessage[];
 }
 
 export function BoardShell({
@@ -22,6 +24,7 @@ export function BoardShell({
   userName,
   initialSnapshot,
   boards,
+  initialMessages,
 }: BoardShellProps) {
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
@@ -46,7 +49,9 @@ export function BoardShell({
           <Whiteboard boardId={boardId} initialSnapshot={initialSnapshot} />
         </main>
 
-        {rightOpen ? <Chat boardId={boardId} /> : null}
+        {rightOpen ? (
+          <Chat boardId={boardId} initialMessages={initialMessages} />
+        ) : null}
       </div>
     </div>
   );

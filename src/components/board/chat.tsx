@@ -1,7 +1,7 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
+import { DefaultChatTransport, type UIMessage } from "ai";
 import { ArrowUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -14,14 +14,16 @@ import { cn } from "@/lib/utils";
 
 export interface ChatProps {
   boardId: string;
+  initialMessages?: UIMessage[];
 }
 
-export function Chat({ boardId }: ChatProps) {
+export function Chat({ boardId, initialMessages }: ChatProps) {
   const [input, setInput] = useState("");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const { messages, sendMessage, status, error } = useChat({
+    messages: initialMessages,
     transport: new DefaultChatTransport({
       api: `/api/chat/${boardId}`,
     }),

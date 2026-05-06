@@ -1,3 +1,5 @@
+import { toAISdkMessages } from "@mastra/ai-sdk/ui";
+import type { UIMessage } from "ai";
 import { and, desc, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
@@ -6,6 +8,23 @@ import { BoardShell } from "@/components/board/board-shell";
 import { db } from "@/db";
 import { boards } from "@/db/schema";
 import { auth } from "@/lib/auth";
+import { mastra } from "@/mastra";
+
+async function loadInitialMessages(
+  threadId: string,
+  resourceId: string,
+): Promise<UIMessage[]> {
+  try {
+    const memory = await mastra.getAgentById("boardArchitect").getMemory();
+    if (!memory) return [];
+
+    const result = await memory.recall({ threadId, resourceId });
+    return toAISdkMessages(result.messages, { version: "v6" });
+  } catch {
+    // First chat on a fresh board — no thread exists yet.
+    return [];
+  }
+}
 
 export default async function BoardPage({
   params,
@@ -28,6 +47,7 @@ export default async function BoardPage({
         id: true,
         name: true,
         snapshot: true,
+        threadId: true,
       },
     }),
     db.query.boards.findMany({
@@ -45,6 +65,11 @@ export default async function BoardPage({
     notFound();
   }
 
+  const initialMessages = await loadInitialMessages(
+    board.threadId,
+    session.user.id,
+  );
+
   return (
     <BoardShell
       boardId={board.id}
@@ -52,6 +77,7 @@ export default async function BoardPage({
       userName={session.user.name}
       initialSnapshot={board.snapshot ?? null}
       boards={userBoards}
+      initialMessages={initialMessages}
     />
   );
 }

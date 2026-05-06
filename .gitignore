@@ -55,6 +55,8 @@ drizzle/meta/
 .mastra/
 mastra.db
 mastra.db-journal
+mastra.db-shm
+mastra.db-wal
 
 # uploads / generated
 public/uploads/

@@ -37,7 +37,14 @@ export async function POST(
     version: "v6",
     mastra,
     agentId: "boardArchitect",
-    params: body,
+    params: {
+      ...body,
+      memory: {
+        ...(body?.memory ?? {}),
+        thread: board.threadId,
+        resource: session.user.id,
+      },
+    },
   });
 
   return createUIMessageStreamResponse({ stream });
