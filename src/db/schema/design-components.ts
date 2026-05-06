@@ -22,7 +22,7 @@ export const designComponents = pgTable(
     ownerId: text("owner_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    /** Owning team. Nullable during teams rollout — backfilled in phase 2. */
+    /** Owning team. Nullable until commit 3 lands the inserts; NOT NULL after migration 0006. */
     teamId: text("team_id").references(() => organization.id, {
       onDelete: "cascade",
     }),

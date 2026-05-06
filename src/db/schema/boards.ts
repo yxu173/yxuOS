@@ -22,9 +22,10 @@ export const boards = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     /**
-     * Team (organization) that owns this board. Nullable during the
-     * teams rollout — phase 2 backfills personal teams for existing
-     * rows and then ALTERs the column to NOT NULL with FK.
+     * Team (organization) that owns this board. Nullable until commit 3
+     * lands — the backfill script (`scripts/backfill-personal-teams.ts`)
+     * stamps existing rows; commit 3 wires every INSERT to set it then
+     * flips the column to NOT NULL via migration 0006.
      */
     teamId: text("team_id").references(() => organization.id, {
       onDelete: "cascade",
