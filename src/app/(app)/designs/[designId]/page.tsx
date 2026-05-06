@@ -2,9 +2,15 @@ import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 
+import { DesignShell } from "@/components/design/design-shell";
+import type { Artboard } from "@/components/design/types";
 import { db } from "@/db";
 import { designs } from "@/db/schema";
 import { auth } from "@/lib/auth";
+
+interface DesignSnapshot {
+  artboards?: Artboard[];
+}
 
 export default async function DesignPage({
   params,
@@ -25,19 +31,21 @@ export default async function DesignPage({
       eq(designs.id, designId),
       eq(designs.ownerId, session.user.id),
     ),
-    columns: { id: true, name: true },
+    columns: { id: true, name: true, snapshot: true },
   });
 
   if (!design) {
     notFound();
   }
 
+  const snapshot = (design.snapshot as DesignSnapshot | null) ?? null;
+  const initialArtboards = snapshot?.artboards ?? [];
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-3 p-8 text-center">
-      <h1 className="text-2xl font-semibold tracking-tight">{design.name}</h1>
-      <p className="text-sm text-muted-foreground">
-        Design canvas lands in commit 3. The agent ships in commit 7.
-      </p>
-    </main>
+    <DesignShell
+      designId={design.id}
+      designName={design.name}
+      initialArtboards={initialArtboards}
+    />
   );
 }
