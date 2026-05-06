@@ -3,12 +3,13 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
-import { BoardsGrid } from "@/components/boards/boards-grid";
+import { WorkspaceGrid } from "@/components/workspaces/workspace-grid";
+import { WorkspaceTabs } from "@/components/workspaces/workspace-tabs";
 import { db } from "@/db";
 import { boards } from "@/db/schema";
 import { auth } from "@/lib/auth";
 
-import { createBoard } from "./actions";
+import { createBoard, deleteBoard, renameBoard } from "./actions";
 
 export default async function BoardsIndexPage() {
   const session = await auth.api.getSession({
@@ -30,6 +31,8 @@ export default async function BoardsIndexPage() {
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-8 p-8">
+      <WorkspaceTabs active="boards" />
+
       <header className="flex items-baseline justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Boards</h1>
@@ -42,7 +45,15 @@ export default async function BoardsIndexPage() {
         </form>
       </header>
 
-      <BoardsGrid boards={userBoards} />
+      <WorkspaceGrid
+        items={userBoards}
+        hrefBase="/boards"
+        itemLabel="board"
+        itemLabelPlural="boards"
+        emptyHint='Hit "New board" to start whiteboarding.'
+        renameAction={renameBoard}
+        deleteAction={deleteBoard}
+      />
     </main>
   );
 }

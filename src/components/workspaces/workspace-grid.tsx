@@ -9,32 +9,41 @@ import {
   ToggleGroupItem,
 } from "@/components/ui/toggle-group";
 
-import { BoardCard } from "./board-card";
+import { WorkspaceCard, type WorkspaceItem } from "./workspace-card";
 
-export interface BoardsGridBoard {
-  id: string;
-  name: string;
+export interface WorkspaceGridItem extends WorkspaceItem {
   createdAt: Date;
-  updatedAt: Date;
 }
 
-export interface BoardsGridProps {
-  boards: BoardsGridBoard[];
+export interface WorkspaceGridProps {
+  items: WorkspaceGridItem[];
+  hrefBase: string;
+  itemLabel: string;
+  itemLabelPlural: string;
+  emptyHint?: string;
+  renameAction: (id: string, name: string) => Promise<void>;
+  deleteAction: (id: string) => Promise<void>;
 }
 
 type SortKey = "updated" | "created" | "name";
 
-export function BoardsGrid({ boards }: BoardsGridProps) {
+export function WorkspaceGrid({
+  items,
+  hrefBase,
+  itemLabel,
+  itemLabelPlural,
+  emptyHint,
+  renameAction,
+  deleteAction,
+}: WorkspaceGridProps) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortKey>("updated");
 
   const visible = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
     const filtered = trimmed
-      ? boards.filter((board) =>
-          board.name.toLowerCase().includes(trimmed),
-        )
-      : boards.slice();
+      ? items.filter((item) => item.name.toLowerCase().includes(trimmed))
+      : items.slice();
     filtered.sort((a, b) => {
       switch (sort) {
         case "created":
@@ -47,7 +56,7 @@ export function BoardsGrid({ boards }: BoardsGridProps) {
       }
     });
     return filtered;
-  }, [boards, query, sort]);
+  }, [items, query, sort]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -58,9 +67,9 @@ export function BoardsGrid({ boards }: BoardsGridProps) {
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search boards…"
+            placeholder={`Search ${itemLabelPlural}…`}
             className="pl-8"
-            aria-label="Search boards"
+            aria-label={`Search ${itemLabelPlural}`}
           />
         </div>
         <ToggleGroup
@@ -82,21 +91,29 @@ export function BoardsGrid({ boards }: BoardsGridProps) {
         <section className="flex h-72 flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-sm text-muted-foreground">
           {query.trim() ? (
             <>
-              <p>No boards match “{query}”.</p>
+              <p>No {itemLabelPlural} match “{query}”.</p>
               <p className="text-xs">Try a different search.</p>
             </>
           ) : (
             <>
-              <p>No boards yet.</p>
-              <p className="text-xs">Hit “New board” to start whiteboarding.</p>
+              <p>No {itemLabelPlural} yet.</p>
+              <p className="text-xs">
+                {emptyHint ?? `Hit "New ${itemLabel}" to start.`}
+              </p>
             </>
           )}
         </section>
       ) : (
         <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {visible.map((board) => (
-            <li key={board.id}>
-              <BoardCard board={board} />
+          {visible.map((item) => (
+            <li key={item.id}>
+              <WorkspaceCard
+                item={item}
+                hrefBase={hrefBase}
+                itemLabel={itemLabel}
+                renameAction={renameAction}
+                deleteAction={deleteAction}
+              />
             </li>
           ))}
         </ul>

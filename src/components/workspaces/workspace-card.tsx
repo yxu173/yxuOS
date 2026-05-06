@@ -4,7 +4,6 @@ import { MoreHorizontal, PencilLine, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useState, useTransition } from "react";
 
-import { deleteBoard, renameBoard } from "@/app/(app)/boards/actions";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,29 +40,45 @@ const dateFormatter = new Intl.DateTimeFormat("en", {
   minute: "2-digit",
 });
 
-export interface BoardCardProps {
-  board: {
-    id: string;
-    name: string;
-    updatedAt: Date;
-  };
+export interface WorkspaceItem {
+  id: string;
+  name: string;
+  updatedAt: Date;
 }
 
-export function BoardCard({ board }: BoardCardProps) {
+export interface WorkspaceCardProps {
+  item: WorkspaceItem;
+  /** URL base; the link target is `${hrefBase}/${item.id}`. */
+  hrefBase: string;
+  /** Singular label ("board", "design") for human-facing strings. */
+  itemLabel: string;
+  /** Server action that renames the item. */
+  renameAction: (id: string, name: string) => Promise<void>;
+  /** Server action that deletes the item. */
+  deleteAction: (id: string) => Promise<void>;
+}
+
+export function WorkspaceCard({
+  item,
+  hrefBase,
+  itemLabel,
+  renameAction,
+  deleteAction,
+}: WorkspaceCardProps) {
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [draft, setDraft] = useState(board.name);
+  const [draft, setDraft] = useState(item.name);
   const [pending, startTransition] = useTransition();
 
   const submitRename = () => {
     const trimmed = draft.trim();
-    if (!trimmed || trimmed === board.name) {
+    if (!trimmed || trimmed === item.name) {
       setRenameOpen(false);
       return;
     }
     startTransition(async () => {
       try {
-        await renameBoard(board.id, trimmed);
+        await renameAction(item.id, trimmed);
       } finally {
         setRenameOpen(false);
       }
@@ -73,7 +88,7 @@ export function BoardCard({ board }: BoardCardProps) {
   const submitDelete = () => {
     startTransition(async () => {
       try {
-        await deleteBoard(board.id);
+        await deleteAction(item.id);
       } finally {
         setDeleteOpen(false);
       }
@@ -84,16 +99,14 @@ export function BoardCard({ board }: BoardCardProps) {
     <>
       <div className="group relative">
         <Link
-          href={`/boards/${board.id}`}
+          href={`${hrefBase}/${item.id}`}
           className="block focus-visible:outline-none"
         >
           <Card className="h-32 transition-colors group-hover:border-foreground/30 group-focus-visible:border-foreground/40">
             <CardHeader>
-              <CardTitle className="truncate text-base">
-                {board.name}
-              </CardTitle>
+              <CardTitle className="truncate text-base">{item.name}</CardTitle>
               <p className="text-xs text-muted-foreground">
-                Updated {dateFormatter.format(board.updatedAt)}
+                Updated {dateFormatter.format(item.updatedAt)}
               </p>
             </CardHeader>
           </Card>
@@ -105,7 +118,7 @@ export function BoardCard({ board }: BoardCardProps) {
               <Button
                 variant="ghost"
                 size="icon-xs"
-                aria-label={`Actions for ${board.name}`}
+                aria-label={`Actions for ${item.name}`}
               >
                 <MoreHorizontal className="size-3.5" />
               </Button>
@@ -114,7 +127,7 @@ export function BoardCard({ board }: BoardCardProps) {
               <DropdownMenuItem
                 onSelect={(event) => {
                   event.preventDefault();
-                  setDraft(board.name);
+                  setDraft(item.name);
                   setRenameOpen(true);
                 }}
               >
@@ -139,9 +152,9 @@ export function BoardCard({ board }: BoardCardProps) {
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Rename board</DialogTitle>
+            <DialogTitle>Rename {itemLabel}</DialogTitle>
             <DialogDescription>
-              Give this whiteboard a new name.
+              Give this {itemLabel} a new name.
             </DialogDescription>
           </DialogHeader>
           <form
@@ -152,9 +165,9 @@ export function BoardCard({ board }: BoardCardProps) {
             className="flex flex-col gap-3"
           >
             <div className="grid gap-2">
-              <Label htmlFor={`rename-${board.id}`}>Name</Label>
+              <Label htmlFor={`rename-${item.id}`}>Name</Label>
               <Input
-                id={`rename-${board.id}`}
+                id={`rename-${item.id}`}
                 value={draft}
                 autoFocus
                 onChange={(event) => setDraft(event.target.value)}
@@ -181,9 +194,9 @@ export function BoardCard({ board }: BoardCardProps) {
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete this board?</AlertDialogTitle>
+            <AlertDialogTitle>Delete this {itemLabel}?</AlertDialogTitle>
             <AlertDialogDescription>
-              <span className="font-medium text-zinc-100">{board.name}</span>{" "}
+              <span className="font-medium text-zinc-100">{item.name}</span>{" "}
               and its chat history will be permanently removed. This
               can&apos;t be undone.
             </AlertDialogDescription>

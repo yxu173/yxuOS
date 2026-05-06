@@ -7,4 +7,5 @@
  */
 export * from "./auth";
 export * from "./boards";
+export * from "./designs";
 export * from "./relations";
