@@ -6,6 +6,7 @@ import "tldraw/tldraw.css";
 import { saveBoardSnapshot } from "@/app/(app)/boards/actions";
 
 import { DevShapeToolbar } from "./dev-shape-toolbar";
+import { useBoardEditorRef } from "./editor-context";
 import { customShapeUtils } from "./shapes";
 
 const SAVE_DEBOUNCE_MS = 1500;
@@ -26,8 +27,11 @@ export interface TldrawCanvasProps {
  *   tab navigate doesn't drop the last 1.5s of edits.
  */
 export function TldrawCanvas({ boardId, initialSnapshot }: TldrawCanvasProps) {
+  const editorRef = useBoardEditorRef();
+
   const handleMount = (editor: Editor) => {
     editor.user.updateUserPreferences({ colorScheme: "dark" });
+    editorRef.current = editor;
 
     let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -56,6 +60,9 @@ export function TldrawCanvas({ boardId, initialSnapshot }: TldrawCanvasProps) {
         flush();
       }
       unsubscribe();
+      if (editorRef.current === editor) {
+        editorRef.current = null;
+      }
     };
   };
 

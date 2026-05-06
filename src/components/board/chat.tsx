@@ -1,8 +1,18 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport, type UIMessage } from "ai";
-import { ArrowUp } from "lucide-react";
+import {
+  DefaultChatTransport,
+  lastAssistantMessageIsCompleteWithToolCalls,
+  type UIMessage,
+} from "ai";
+import {
+  ArrowUp,
+  CircleDashed,
+  Loader2,
+  Sparkles,
+  TriangleAlert,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -12,36 +22,143 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
+import {
+  executeAddMarkdownCard,
+  executeAddMermaidCard,
+  executeAddShapes,
+  executeQueryCanvas,
+} from "./canvas-tools";
+import { useBoardEditorRef } from "./editor-context";
+
 export interface ChatProps {
   boardId: string;
   initialMessages?: UIMessage[];
 }
 
+const TOOL_LABELS: Record<string, string> = {
+  query_canvas: "Reading canvas",
+  add_shapes: "Drawing shapes",
+  add_markdown_card: "Writing note",
+  add_mermaid_card: "Drawing diagram",
+};
+
 export function Chat({ boardId, initialMessages }: ChatProps) {
+  const editorRef = useBoardEditorRef();
   const [input, setInput] = useState("");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
-  const { messages, sendMessage, status, error } = useChat({
+  const { messages, sendMessage, status, error, addToolOutput } = useChat({
     messages: initialMessages,
     transport: new DefaultChatTransport({
       api: `/api/chat/${boardId}`,
     }),
+    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    async onToolCall({ toolCall }) {
+      // Skip dynamic tools — we only handle the canvas tools we registered.
+      if (toolCall.dynamic) return;
+
+      const editor = editorRef.current;
+      if (!editor) {
+        addToolOutput({
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          tool: toolCall.toolName as any,
+          toolCallId: toolCall.toolCallId,
+          state: "output-error",
+          errorText:
+            "Canvas isn't ready yet. Try again in a second once the whiteboard finishes loading.",
+        });
+        return;
+      }
+
+      try {
+        switch (toolCall.toolName) {
+          case "query_canvas": {
+            const output = executeQueryCanvas(editor);
+            addToolOutput({
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              tool: toolCall.toolName as any,
+              toolCallId: toolCall.toolCallId,
+              output,
+            });
+            break;
+          }
+          case "add_shapes": {
+            const output = executeAddShapes(
+              editor,
+              toolCall.input as Parameters<typeof executeAddShapes>[1],
+            );
+            addToolOutput({
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              tool: toolCall.toolName as any,
+              toolCallId: toolCall.toolCallId,
+              output,
+            });
+            break;
+          }
+          case "add_markdown_card": {
+            const output = executeAddMarkdownCard(
+              editor,
+              toolCall.input as Parameters<typeof executeAddMarkdownCard>[1],
+            );
+            addToolOutput({
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              tool: toolCall.toolName as any,
+              toolCallId: toolCall.toolCallId,
+              output,
+            });
+            break;
+          }
+          case "add_mermaid_card": {
+            const output = executeAddMermaidCard(
+              editor,
+              toolCall.input as Parameters<typeof executeAddMermaidCard>[1],
+            );
+            addToolOutput({
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              tool: toolCall.toolName as any,
+              toolCallId: toolCall.toolCallId,
+              output,
+            });
+            break;
+          }
+          default: {
+            addToolOutput({
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              tool: toolCall.toolName as any,
+              toolCallId: toolCall.toolCallId,
+              state: "output-error",
+              errorText: `Unknown tool: ${toolCall.toolName}`,
+            });
+          }
+        }
+      } catch (err) {
+        addToolOutput({
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          tool: toolCall.toolName as any,
+          toolCallId: toolCall.toolCallId,
+          state: "output-error",
+          errorText: err instanceof Error ? err.message : "Tool failed",
+        });
+      }
+    },
   });
 
-  // Keep the composer focused on mount so users can just start typing.
   useEffect(() => {
     composerRef.current?.focus();
   }, []);
 
-  // Scroll to bottom when a new message lands or while streaming.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    messagesEndRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "end",
+    });
   }, [messages]);
 
   const submit = () => {
     const text = input.trim();
-    if (!text || status === "streaming" || status === "submitted") return;
+    if (!text) return;
+    if (status === "streaming" || status === "submitted") return;
     sendMessage({ text });
     setInput("");
   };
@@ -60,7 +177,9 @@ export function Chat({ boardId, initialMessages }: ChatProps) {
           Chat
         </h2>
         <span className="text-[10px] uppercase tracking-wide text-zinc-600">
-          {status === "streaming" ? "thinking…" : "ready"}
+          {status === "streaming" || status === "submitted"
+            ? "thinking…"
+            : "ready"}
         </span>
       </div>
 
@@ -68,8 +187,8 @@ export function Chat({ boardId, initialMessages }: ChatProps) {
         <div className="flex flex-col gap-3 px-3 py-3">
           {messages.length === 0 ? (
             <p className="px-1 py-12 text-center text-xs text-zinc-500">
-              Ask the agent to explain a system, draft a description, or
-              outline an architecture.
+              Ask the agent to draw a system, write a description, or sketch
+              an architecture.
             </p>
           ) : (
             messages.map((message) => (
@@ -116,25 +235,14 @@ export function Chat({ boardId, initialMessages }: ChatProps) {
   );
 }
 
-interface ChatMessage {
-  id: string;
-  role: "user" | "assistant" | "system";
-  parts: Array<
-    | { type: "text"; text: string }
-    | { type: string; [key: string]: unknown }
-  >;
-}
-
-function MessageRow({ message }: { message: ChatMessage }) {
+function MessageRow({ message }: { message: UIMessage }) {
   const isUser = message.role === "user";
   return (
     <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
       <div
         className={cn(
-          "max-w-[88%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed",
-          isUser
-            ? "bg-zinc-100 text-zinc-900"
-            : "bg-white/5 text-zinc-100",
+          "max-w-[88%] space-y-2 rounded-2xl px-3.5 py-2 text-sm leading-relaxed",
+          isUser ? "bg-zinc-100 text-zinc-900" : "bg-white/5 text-zinc-100",
         )}
       >
         {message.parts.map((part, index) => {
@@ -144,20 +252,108 @@ function MessageRow({ message }: { message: ChatMessage }) {
                 key={index}
                 className={cn(
                   "prose prose-sm max-w-none",
-                  isUser
-                    ? "prose-invert-off"
-                    : "prose-invert",
+                  isUser ? "prose-invert-off" : "prose-invert",
                 )}
               >
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {(part as { text: string }).text}
+                  {part.text}
                 </ReactMarkdown>
               </div>
             );
           }
+
+          if (part.type.startsWith("tool-")) {
+            return <ToolPart key={index} part={part} />;
+          }
+
           return null;
         })}
       </div>
     </div>
   );
+}
+
+interface ToolUIPartLike {
+  type: string;
+  state?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  input?: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  output?: any;
+  errorText?: string;
+}
+
+function ToolPart({ part }: { part: ToolUIPartLike }) {
+  const toolName = part.type.replace(/^tool-/, "");
+  const label = TOOL_LABELS[toolName] ?? toolName;
+
+  let icon = <Sparkles className="size-3.5" />;
+  let body: React.ReactNode = label;
+  let tone =
+    "border-white/10 bg-white/5 text-zinc-300";
+
+  switch (part.state) {
+    case "input-streaming":
+    case "input-available":
+      icon = <Loader2 className="size-3.5 animate-spin" />;
+      body = `${label}…`;
+      tone = "border-white/10 bg-white/5 text-zinc-300";
+      break;
+    case "output-available":
+      icon = <CircleDashed className="size-3.5" />;
+      body = describeToolResult(toolName, part.input, part.output) ?? label;
+      tone = "border-emerald-500/20 bg-emerald-500/10 text-emerald-200";
+      break;
+    case "output-error":
+      icon = <TriangleAlert className="size-3.5" />;
+      body = part.errorText ?? `${label} failed`;
+      tone = "border-red-500/30 bg-red-500/10 text-red-200";
+      break;
+    default:
+      break;
+  }
+
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs",
+        tone,
+      )}
+      role="status"
+    >
+      {icon}
+      <span className="truncate">{body}</span>
+    </div>
+  );
+}
+
+function describeToolResult(
+  toolName: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  input: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  output: any,
+): string | null {
+  switch (toolName) {
+    case "query_canvas":
+      return output && Array.isArray(output.shapes)
+        ? `Read canvas (${output.shapes.length} shape${
+            output.shapes.length === 1 ? "" : "s"
+          })`
+        : "Read canvas";
+    case "add_shapes":
+      return output && Array.isArray(output.createdShapeIds)
+        ? `Drew ${output.createdShapeIds.length} shape${
+            output.createdShapeIds.length === 1 ? "" : "s"
+          }`
+        : "Drew shapes";
+    case "add_markdown_card":
+      return "Wrote a markdown card";
+    case "add_mermaid_card":
+      return input && typeof input.kind === "string"
+        ? `Drew a ${input.kind} diagram`
+        : "Drew a diagram";
+    default:
+      return null;
+  }
 }

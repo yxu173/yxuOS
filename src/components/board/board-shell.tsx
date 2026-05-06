@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Whiteboard } from "@/components/board/whiteboard";
 
 import { Chat } from "./chat";
+import { EditorRefProvider } from "./editor-context";
 import { LeftPanel, type BoardSummary } from "./left-panel";
 import { TopBar } from "./top-bar";
 
@@ -30,29 +31,31 @@ export function BoardShell({
   const [rightOpen, setRightOpen] = useState(true);
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-background">
-      <TopBar
-        boardName={boardName}
-        userName={userName}
-        leftPanelOpen={leftOpen}
-        rightPanelOpen={rightOpen}
-        onToggleLeftPanel={() => setLeftOpen((value) => !value)}
-        onToggleRightPanel={() => setRightOpen((value) => !value)}
-      />
+    <EditorRefProvider>
+      <div className="fixed inset-0 flex flex-col bg-background">
+        <TopBar
+          boardName={boardName}
+          userName={userName}
+          leftPanelOpen={leftOpen}
+          rightPanelOpen={rightOpen}
+          onToggleLeftPanel={() => setLeftOpen((value) => !value)}
+          onToggleRightPanel={() => setRightOpen((value) => !value)}
+        />
 
-      <div className="flex min-h-0 flex-1">
-        {leftOpen ? (
-          <LeftPanel boards={boards} activeBoardId={boardId} />
-        ) : null}
+        <div className="flex min-h-0 flex-1">
+          {leftOpen ? (
+            <LeftPanel boards={boards} activeBoardId={boardId} />
+          ) : null}
 
-        <main className="relative flex-1 overflow-hidden">
-          <Whiteboard boardId={boardId} initialSnapshot={initialSnapshot} />
-        </main>
+          <main className="relative flex-1 overflow-hidden">
+            <Whiteboard boardId={boardId} initialSnapshot={initialSnapshot} />
+          </main>
 
-        {rightOpen ? (
-          <Chat boardId={boardId} initialMessages={initialMessages} />
-        ) : null}
+          {rightOpen ? (
+            <Chat boardId={boardId} initialMessages={initialMessages} />
+          ) : null}
+        </div>
       </div>
-    </div>
+    </EditorRefProvider>
   );
 }
