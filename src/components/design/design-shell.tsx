@@ -1,9 +1,11 @@
 "use client";
 
+import type { UIMessage } from "ai";
 import { useState } from "react";
 
 import { CanvasViewport } from "./canvas-viewport";
 import { useDesignCanvas } from "./canvas-store";
+import { DesignChat } from "./design-chat";
 import type { Artboard } from "./types";
 import { useDesignPersistence } from "./use-design-persistence";
 
@@ -11,19 +13,21 @@ export interface DesignShellProps {
   designId: string;
   designName: string;
   initialArtboards: Artboard[];
+  initialMessages: UIMessage[];
 }
 
 /**
  * Page-level wrapper for the design canvas.
  *
- * The store is hydrated *during* the first render via a `useState` lazy
- * initializer so the viewport never paints with an empty list. Top bar /
- * left history panel / right chat panel land in commit 6.
+ * Top bar with proper rename / share / panel toggles + left panel for the
+ * designs history land in commit 8 (polish). Right panel = design chat is
+ * here from commit 6.
  */
 export function DesignShell({
   designId,
   designName,
   initialArtboards,
+  initialMessages,
 }: DesignShellProps) {
   // Lazy initializer: runs once before the first render. Side-effect into
   // the zustand store so CanvasViewport sees the artboards on its very
@@ -46,9 +50,12 @@ export function DesignShell({
           design canvas
         </span>
       </header>
-      <main className="relative flex-1">
-        <CanvasViewport />
-      </main>
+      <div className="flex min-h-0 flex-1">
+        <main className="relative flex-1 overflow-hidden">
+          <CanvasViewport />
+        </main>
+        <DesignChat designId={designId} initialMessages={initialMessages} />
+      </div>
     </div>
   );
 }

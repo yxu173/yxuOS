@@ -4,6 +4,7 @@ import { PostgresStore } from "@mastra/pg";
 import { env } from "@/lib/env";
 
 import { boardArchitect } from "./agents/board-architect";
+import { designArchitect } from "./agents/design-architect";
 
 /**
  * Single Mastra instance shared by every server component / route handler.
@@ -19,5 +20,5 @@ export const mastra = new Mastra({
     connectionString: env.DATABASE_URL,
     schemaName: "mastra",
   }),
-  agents: { boardArchitect },
+  agents: { boardArchitect, designArchitect },
 });
