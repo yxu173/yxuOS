@@ -3,6 +3,7 @@
 import { nanoid } from "nanoid";
 
 import { useDesignCanvas } from "./canvas-store";
+import type { LibraryComponent } from "./component-library-context";
 import type { DesignNode } from "./design-node";
 import { DEVICE_DIMENSIONS, type Artboard, type DevicePreset } from "./types";
 
@@ -187,4 +188,36 @@ export function executeGetArtboard(input: {
     h: found.h,
     design: found.design,
   };
+}
+
+/* ─── list_components ───────────────────────────────────── */
+
+export interface ListComponentsOutput {
+  components: Array<{
+    slug: string;
+    name: string;
+    rootType: string;
+    nodeCount: number;
+  }>;
+}
+
+export function executeListComponents(
+  components: LibraryComponent[],
+): ListComponentsOutput {
+  return {
+    components: components.map((c) => ({
+      slug: c.slug,
+      name: c.name,
+      rootType: c.tree.type,
+      nodeCount: countNodes(c.tree),
+    })),
+  };
+}
+
+function countNodes(node: DesignNode): number {
+  let n = 1;
+  if ("children" in node && Array.isArray(node.children)) {
+    for (const child of node.children) n += countNodes(child);
+  }
+  return n;
 }

@@ -4,7 +4,10 @@ import { and, desc, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 
+import { listDesignComponentsForOwner } from "@/app/(app)/designs/component-actions";
+import type { LibraryComponent } from "@/components/design/component-library-context";
 import { DesignShell } from "@/components/design/design-shell";
+import type { DesignNode } from "@/components/design/design-node";
 import type { Artboard } from "@/components/design/types";
 import { db } from "@/db";
 import { designs } from "@/db/schema";
@@ -43,7 +46,7 @@ export default async function DesignPage({
     redirect("/sign-in");
   }
 
-  const [design, userDesigns] = await Promise.all([
+  const [design, userDesigns, libraryRows] = await Promise.all([
     db.query.designs.findFirst({
       where: and(
         eq(designs.id, designId),
@@ -66,6 +69,7 @@ export default async function DesignPage({
         updatedAt: true,
       },
     }),
+    listDesignComponentsForOwner(session.user.id),
   ]);
 
   if (!design) {
@@ -79,6 +83,13 @@ export default async function DesignPage({
     session.user.id,
   );
 
+  const components: LibraryComponent[] = libraryRows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    tree: row.tree as unknown as DesignNode,
+  }));
+
   return (
     <DesignShell
       designId={design.id}
@@ -89,6 +100,7 @@ export default async function DesignPage({
       initialArtboards={initialArtboards}
       initialMessages={initialMessages}
       designs={userDesigns}
+      components={components}
     />
   );
 }

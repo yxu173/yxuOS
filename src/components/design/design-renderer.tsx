@@ -4,9 +4,14 @@ import * as LucideIcons from "lucide-react";
 import { type LucideIcon } from "lucide-react";
 import { createElement, type CSSProperties, type JSX } from "react";
 
+import {
+  useComponentLibrary,
+  type LibraryComponent,
+} from "./component-library-context";
 import type {
   ButtonNode,
   CardNode,
+  ComponentRefNode,
   DesignNode,
   DividerNode,
   IconNode,
@@ -21,6 +26,7 @@ import { useDesignRendererContext } from "./design-renderer-context";
 interface RenderContext {
   selectedNodeId: string | null;
   onNodeClick: ((nodeId: string) => void) | null;
+  library: Map<string, LibraryComponent>;
 }
 
 interface InteractiveProps {
@@ -71,9 +77,15 @@ export function DesignRenderer({ node }: { node: DesignNode | null }) {
 }
 
 function NodeRenderer({ node }: { node: DesignNode }): JSX.Element {
-  // Read the renderer context exactly once per NodeRenderer instance so
-  // the type-switch below isn't full of conditional hook calls.
-  const ctx = useDesignRendererContext();
+  // Read the renderer + library contexts exactly once per NodeRenderer
+  // instance so the type-switch below isn't full of conditional hook
+  // calls.
+  const rendererCtx = useDesignRendererContext();
+  const library = useComponentLibrary();
+  const ctx: RenderContext = {
+    ...rendererCtx,
+    library: library.bySlug,
+  };
 
   switch (node.type) {
     case "div":
@@ -118,6 +130,8 @@ function NodeRenderer({ node }: { node: DesignNode }): JSX.Element {
       return <LinkRenderer node={node} ctx={ctx} />;
     case "divider":
       return <DividerRenderer node={node} ctx={ctx} />;
+    case "component-ref":
+      return <ComponentRefRenderer node={node} ctx={ctx} />;
     default: {
       // Exhaustiveness check.
       const _never: never = node;
@@ -385,6 +399,42 @@ function FrameRenderer({
       {(node.children ?? []).map((child, index) => (
         <NodeRenderer key={index} node={child} />
       ))}
+    </div>
+  );
+}
+
+function ComponentRefRenderer({
+  node,
+  ctx,
+}: {
+  node: ComponentRefNode;
+  ctx: RenderContext;
+}) {
+  const component = ctx.library.get(node.componentSlug);
+  if (!component) {
+    return (
+      <div
+        {...interactiveProps(node, ctx, {
+          padding: "12px 16px",
+          background: "rgba(244, 63, 94, 0.08)",
+          color: "#dc2626",
+          border: "1px dashed #fecaca",
+          borderRadius: 6,
+          fontSize: 12,
+          fontFamily: "ui-monospace, SFMono-Regular, monospace",
+        })}
+      >
+        Missing component: {node.componentSlug}
+      </div>
+    );
+  }
+  // Wrap the expansion in a div with display: contents so the wrapper
+  // doesn't disrupt the parent's layout, plus carries the ref's
+  // selection / click handling. Style overrides on the ref apply via
+  // interactiveProps' default merge.
+  return (
+    <div {...interactiveProps(node, ctx, { display: "contents" })}>
+      <NodeRenderer node={component.tree} />
     </div>
   );
 }

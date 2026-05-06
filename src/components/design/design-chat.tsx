@@ -26,9 +26,11 @@ import {
   executeAddArtboard,
   executeDeleteArtboard,
   executeGetArtboard,
+  executeListComponents,
   executeQueryCanvas,
   executeUpdateArtboard,
 } from "./canvas-tools";
+import { useComponentLibrary } from "./component-library-context";
 
 export interface DesignChatProps {
   designId: string;
@@ -41,6 +43,7 @@ const TOOL_LABELS: Record<string, string> = {
   update_artboard: "Updating artboard",
   delete_artboard: "Deleting artboard",
   get_artboard: "Reading artboard",
+  list_components: "Reading component library",
 };
 
 /**
@@ -55,6 +58,7 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
   const [input, setInput] = useState("");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const library = useComponentLibrary();
 
   const { messages, sendMessage, status, error, addToolOutput, stop } =
     useChat({
@@ -128,6 +132,16 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
               const output = executeGetArtboard(
                 toolCall.input as Parameters<typeof executeGetArtboard>[0],
               );
+              addToolOutput({
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                tool: toolCall.toolName as any,
+                toolCallId: toolCall.toolCallId,
+                output,
+              });
+              break;
+            }
+            case "list_components": {
+              const output = executeListComponents(library.list);
               addToolOutput({
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 tool: toolCall.toolName as any,
@@ -383,6 +397,8 @@ function describeToolResult(
       return "Removed artboard";
     case "get_artboard":
       return "Read artboard";
+    case "list_components":
+      return "Read component library";
     default:
       return null;
   }

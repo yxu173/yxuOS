@@ -8,6 +8,10 @@ import { WorkspaceTopBar } from "@/components/workspaces/workspace-top-bar";
 import { CanvasViewport } from "./canvas-viewport";
 import { useDesignCanvas, MAX_ZOOM, MIN_ZOOM } from "./canvas-store";
 import {
+  ComponentLibraryProvider,
+  type LibraryComponent,
+} from "./component-library-context";
+import {
   DesignLeftPanel,
   type DesignSummary,
 } from "./design-left-panel";
@@ -26,6 +30,7 @@ export interface DesignShellProps {
   initialArtboards: Artboard[];
   initialMessages: UIMessage[];
   designs: DesignSummary[];
+  components: LibraryComponent[];
 }
 
 export function DesignShell({
@@ -37,6 +42,7 @@ export function DesignShell({
   initialArtboards,
   initialMessages,
   designs,
+  components,
 }: DesignShellProps) {
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
@@ -89,7 +95,8 @@ export function DesignShell({
   }, []);
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-zinc-950 text-zinc-100">
+    <ComponentLibraryProvider components={components}>
+      <div className="fixed inset-0 flex flex-col bg-zinc-950 text-zinc-100">
       <WorkspaceTopBar
         homePath="/designs"
         homeLabel="Designs"
@@ -122,7 +129,8 @@ export function DesignShell({
           />
         ) : null}
       </div>
-    </div>
+      </div>
+    </ComponentLibraryProvider>
   );
 }
 

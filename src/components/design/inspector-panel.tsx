@@ -1,9 +1,18 @@
 "use client";
 
-import { ChevronLeft, Trash2 } from "lucide-react";
-import type { CSSProperties } from "react";
+import { Boxes, ChevronLeft, Trash2 } from "lucide-react";
+import { useState, useTransition, type CSSProperties } from "react";
 
+import { createDesignComponent } from "@/app/(app)/designs/component-actions";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -120,7 +129,7 @@ interface NodeInspectorProps {
   onDeselect: () => void;
 }
 
-function NodeInspector({ node, onPatch }: NodeInspectorProps) {
+function NodeInspector({ node, artboardId, onPatch }: NodeInspectorProps) {
   return (
     <div className="flex flex-col gap-5 px-3 py-4">
       {/* Type / id header */}
@@ -142,8 +151,147 @@ function NodeInspector({ node, onPatch }: NodeInspectorProps) {
 
       <ContentFields node={node} onPatch={onPatch} />
       <StyleFields node={node} onPatch={onPatch} />
+      <SaveAsComponent node={node} artboardId={artboardId} />
     </div>
   );
+}
+
+/* ─── Save selection as a reusable component ─── */
+
+function SaveAsComponent({
+  node,
+  artboardId,
+}: {
+  node: DesignNode;
+  artboardId: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [pending, startTransition] = useTransition();
+  const updateNode = useDesignCanvas((state) => state.updateNodeInArtboard);
+
+  // Component-refs can't be re-saved as components — there's nothing to save.
+  if (node.type === "component-ref") return null;
+
+  const submit = () => {
+    const trimmed = name.trim();
+    const nodeId = node.id;
+    if (!trimmed || !nodeId) return;
+    startTransition(async () => {
+      try {
+        // Strip the node's id from the saved tree so each instance gets
+        // fresh ids when the renderer expands the component (otherwise
+        // multiple instances would share an id and selection would be
+        // ambiguous).
+        const tree = stripIds(node);
+        const { slug } = await createDesignComponent({
+          name: trimmed,
+          tree: tree as unknown as Record<string, unknown>,
+        });
+        // Replace the selected node with a component-ref so future edits
+        // to the component propagate everywhere it's used.
+        updateNode(artboardId, nodeId, {
+          type: "component-ref",
+          componentSlug: slug,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any);
+        setOpen(false);
+      } catch (error) {
+        console.error("Failed to save component:", error);
+      }
+    });
+  };
+
+  return (
+    <>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="gap-2 self-start"
+        onClick={() => {
+          setName(deriveDefaultName(node));
+          setOpen(true);
+        }}
+      >
+        <Boxes className="size-3.5" />
+        Save as component
+      </Button>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Save as component</DialogTitle>
+            <DialogDescription>
+              Add this element to your library. Future designs (and the
+              design agent) can reference it by name. Editing the component
+              once will update every design that uses it.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              submit();
+            }}
+            className="flex flex-col gap-3"
+          >
+            <div className="grid gap-2">
+              <Label htmlFor="component-name">Component name</Label>
+              <Input
+                id="component-name"
+                value={name}
+                autoFocus
+                placeholder="e.g. Stride logo"
+                onChange={(event) => setName(event.target.value)}
+                disabled={pending}
+              />
+              <p className="text-[10px] text-zinc-500">
+                A url-safe slug will be derived from the name automatically.
+              </p>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setOpen(false)}
+                disabled={pending}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={pending || !name.trim()}>
+                {pending ? "Saving…" : "Save"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function deriveDefaultName(node: DesignNode): string {
+  if ("text" in node && typeof node.text === "string" && node.text.trim()) {
+    return node.text.trim().slice(0, 40);
+  }
+  if ("label" in node && typeof node.label === "string" && node.label.trim()) {
+    return node.label.trim().slice(0, 40);
+  }
+  return node.type;
+}
+
+function stripIds(node: DesignNode): DesignNode {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { id: _id, ...rest } = node;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const next = rest as any;
+  if (
+    "children" in node &&
+    Array.isArray(node.children) &&
+    node.children.length > 0
+  ) {
+    next.children = node.children.map(stripIds);
+  }
+  return next as DesignNode;
 }
 
 /* ─── Content fields per type ─── */

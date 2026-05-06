@@ -32,6 +32,15 @@ const baseNode = {
 const designNodeSchema: z.ZodTypeAny = z.lazy(() =>
   z.discriminatedUnion("type", [
     z.object({
+      type: z.literal("component-ref"),
+      ...baseNode,
+      componentSlug: z
+        .string()
+        .describe(
+          "Slug of a component in the user's library (returned by list_components). Renderer expands it inline.",
+        ),
+    }),
+    z.object({
       type: z.literal("div"),
       ...baseNode,
       children: z.array(designNodeSchema).optional(),
@@ -106,6 +115,15 @@ const designNodeSchema: z.ZodTypeAny = z.lazy(() =>
       type: z.literal("divider"),
       ...baseNode,
       orientation: z.enum(["horizontal", "vertical"]).optional(),
+    }),
+    z.object({
+      type: z.literal("component-ref"),
+      ...baseNode,
+      componentSlug: z
+        .string()
+        .describe(
+          "Slug of a reusable component from the user's design system. Call list_components first to see what's available.",
+        ),
     }),
   ]),
 );
@@ -225,10 +243,28 @@ export const getArtboardTool = createTool({
   }),
 });
 
+export const listComponentsTool = createTool({
+  id: "list_components",
+  description:
+    "List the user's saved design-system components. Use this BEFORE composing a new design so you know what reusable pieces (logos, brand buttons, signature sections) already exist. Reference any of them in your design tree as { type: 'component-ref', componentSlug: '<slug>' } — the renderer expands them inline. Editing a component once propagates to every design that uses it.",
+  inputSchema: z.object({}),
+  outputSchema: z.object({
+    components: z.array(
+      z.object({
+        slug: z.string(),
+        name: z.string(),
+        rootType: z.string(),
+        nodeCount: z.number(),
+      }),
+    ),
+  }),
+});
+
 export const designCanvasTools = {
   query_canvas: queryCanvasTool,
   add_artboard: addArtboardTool,
   update_artboard: updateArtboardTool,
   delete_artboard: deleteArtboardTool,
   get_artboard: getArtboardTool,
+  list_components: listComponentsTool,
 };

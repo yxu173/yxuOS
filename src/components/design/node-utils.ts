@@ -36,6 +36,9 @@ function hasChildren(
     node.type === "card" ||
     node.type === "frame"
   );
+  // `component-ref` is treated as a leaf — its expansion happens at
+  // render time, not in the persisted tree, so we don't recurse into
+  // any expanded children here.
 }
 
 /* ─── tree traversal ──────────────────────────────────── */

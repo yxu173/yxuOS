@@ -115,6 +115,20 @@ export interface FrameNode extends BaseNode {
   children?: DesignNode[];
 }
 
+/**
+ * Reference to a reusable component from the user's design system.
+ *
+ * Renders by looking the slug up in the component library and expanding
+ * the referenced tree at render time. `style` overlays on the expanded
+ * root so a single component can be re-used with size / colour overrides
+ * (e.g. a "Logo" component used at different sizes).
+ */
+export interface ComponentRefNode extends BaseNode {
+  type: "component-ref";
+  /** Slug of the component to expand (e.g. "stride-logo"). */
+  componentSlug: string;
+}
+
 export type DesignNode =
   | DivNode
   | TextNode
@@ -127,4 +141,5 @@ export type DesignNode =
   | CardNode
   | NavNode
   | SectionNode
-  | FrameNode;
+  | FrameNode
+  | ComponentRefNode;
