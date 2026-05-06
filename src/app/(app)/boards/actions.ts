@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { nanoid } from "nanoid";
 
 import { db } from "@/db";
 import { boards } from "@/db/schema";
@@ -92,4 +93,47 @@ export async function deleteBoard(boardId: string) {
     .where(and(eq(boards.id, boardId), eq(boards.ownerId, session.user.id)));
 
   revalidatePath("/boards");
+}
+
+/**
+ * Enable a public read-only share link for a board, returning the token.
+ * Idempotent — calling twice returns the existing token.
+ */
+export async function enableBoardShare(boardId: string): Promise<string> {
+  const session = await requireSession();
+
+  const existing = await db.query.boards.findFirst({
+    where: and(eq(boards.id, boardId), eq(boards.ownerId, session.user.id)),
+    columns: { shareToken: true },
+  });
+  if (!existing) {
+    throw new Error("Board not found");
+  }
+  if (existing.shareToken) return existing.shareToken;
+
+  // 24 chars of url-safe entropy is plenty for an unguessable share id.
+  const token = nanoid(24);
+
+  await db
+    .update(boards)
+    .set({ shareToken: token, updatedAt: new Date() })
+    .where(and(eq(boards.id, boardId), eq(boards.ownerId, session.user.id)));
+
+  revalidatePath(`/boards/${boardId}`);
+  return token;
+}
+
+/**
+ * Disable the share link by clearing the token. Existing /share/<token>
+ * URLs immediately stop working.
+ */
+export async function disableBoardShare(boardId: string) {
+  const session = await requireSession();
+
+  await db
+    .update(boards)
+    .set({ shareToken: null, updatedAt: new Date() })
+    .where(and(eq(boards.id, boardId), eq(boards.ownerId, session.user.id)));
+
+  revalidatePath(`/boards/${boardId}`);
 }

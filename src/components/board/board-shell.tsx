@@ -15,6 +15,7 @@ export interface BoardShellProps {
   boardName: string;
   userName: string;
   userEmail?: string;
+  shareToken: string | null;
   initialSnapshot: Record<string, unknown> | null;
   boards: BoardSummary[];
   initialMessages: UIMessage[];
@@ -25,6 +26,7 @@ export function BoardShell({
   boardName,
   userName,
   userEmail,
+  shareToken,
   initialSnapshot,
   boards,
   initialMessages,
@@ -56,6 +58,7 @@ export function BoardShell({
           boardName={boardName}
           userName={userName}
           userEmail={userEmail}
+          shareToken={shareToken}
           leftPanelOpen={leftOpen}
           rightPanelOpen={rightOpen}
           onToggleLeftPanel={() => setLeftOpen((value) => !value)}

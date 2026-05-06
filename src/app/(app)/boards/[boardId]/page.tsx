@@ -48,6 +48,7 @@ export default async function BoardPage({
         name: true,
         snapshot: true,
         threadId: true,
+        shareToken: true,
       },
     }),
     db.query.boards.findMany({
@@ -76,6 +77,7 @@ export default async function BoardPage({
       boardName={board.name}
       userName={session.user.name}
       userEmail={session.user.email}
+      shareToken={board.shareToken}
       initialSnapshot={board.snapshot ?? null}
       boards={userBoards}
       initialMessages={initialMessages}

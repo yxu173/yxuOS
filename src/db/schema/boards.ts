@@ -23,6 +23,11 @@ export const boards = pgTable(
       .references(() => user.id, { onDelete: "cascade" }),
     threadId: text("thread_id").notNull().$defaultFn(newId),
     snapshot: jsonb("snapshot").$type<Record<string, unknown> | null>(),
+    /**
+     * Public share token. When set, anyone with the URL `/share/<token>` can
+     * view this board read-only (no chat, no editing). Null disables sharing.
+     */
+    shareToken: text("share_token").unique(),
     createdAt: timestamp("created_at")
       .$defaultFn(() => new Date())
       .notNull(),

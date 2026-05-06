@@ -11,6 +11,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
 import { BoardName } from "./board-name";
+import { ShareDialog } from "./share-dialog";
 import { UserMenu } from "./user-menu";
 
 export interface TopBarProps {
@@ -18,6 +19,7 @@ export interface TopBarProps {
   boardName: string;
   userName: string;
   userEmail?: string;
+  shareToken: string | null;
   leftPanelOpen: boolean;
   rightPanelOpen: boolean;
   onToggleLeftPanel: () => void;
@@ -29,6 +31,7 @@ export function TopBar({
   boardName,
   userName,
   userEmail,
+  shareToken,
   leftPanelOpen,
   rightPanelOpen,
   onToggleLeftPanel,
@@ -62,6 +65,7 @@ export function TopBar({
       <BoardName boardId={boardId} initialName={boardName} />
 
       <div className="ml-auto flex items-center gap-1.5">
+        <ShareDialog boardId={boardId} initialShareToken={shareToken} />
         <Button
           variant="ghost"
           size="icon-sm"
