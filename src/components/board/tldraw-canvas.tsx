@@ -1,32 +1,69 @@
 "use client";
 
-import { Tldraw, type Editor } from "tldraw";
+import { Tldraw, type Editor, type TLStoreSnapshot } from "tldraw";
 import "tldraw/tldraw.css";
+
+import { saveBoardSnapshot } from "@/app/(app)/boards/actions";
+
+const SAVE_DEBOUNCE_MS = 1500;
 
 export interface TldrawCanvasProps {
   boardId: string;
+  initialSnapshot: Record<string, unknown> | null;
 }
 
 /**
  * Real <Tldraw> mount.
  *
- * - `persistenceKey` keeps the per-board canvas in IndexedDB until step 3
- *   replaces it with server-side snapshot persistence.
- * - We force dark mode via user preferences on mount so the canvas matches
- *   the rest of the app's dark chrome.
- * - `<Tldraw>` ships its own toolbar / menu / colour pickers — that's the
- *   "manual draw" surface. The Made-with-tldraw watermark is the free-tier
- *   licence requirement.
+ * - `snapshot` prop pre-populates the store from the row we read on the
+ *   server. Supplying it here is cheaper than calling `loadStoreSnapshot`
+ *   in `onMount` (no flash of empty canvas).
+ * - We listen to user-driven document changes and debounce a server-action
+ *   save back to Postgres. On unmount we flush whatever is pending so the
+ *   tab navigate doesn't drop the last 1.5s of edits.
  */
-export function TldrawCanvas({ boardId }: TldrawCanvasProps) {
+export function TldrawCanvas({ boardId, initialSnapshot }: TldrawCanvasProps) {
   const handleMount = (editor: Editor) => {
     editor.user.updateUserPreferences({ colorScheme: "dark" });
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const flush = () => {
+      const snapshot = editor.store.getStoreSnapshot();
+      saveBoardSnapshot(
+        boardId,
+        snapshot as unknown as Record<string, unknown>,
+      ).catch((error) => {
+        console.error("Failed to save board:", error);
+      });
+    };
+
+    const unsubscribe = editor.store.listen(
+      () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(flush, SAVE_DEBOUNCE_MS);
+      },
+      { source: "user", scope: "document" },
+    );
+
+    return () => {
+      if (timer) {
+        clearTimeout(timer);
+        // Last-chance save before the editor goes away.
+        flush();
+      }
+      unsubscribe();
+    };
   };
 
   return (
     <div className="fixed inset-0">
       <Tldraw
-        persistenceKey={`yxuos-board-${boardId}`}
+        snapshot={
+          initialSnapshot
+            ? (initialSnapshot as unknown as TLStoreSnapshot)
+            : undefined
+        }
         onMount={handleMount}
       />
     </div>
