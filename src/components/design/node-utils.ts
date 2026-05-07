@@ -114,20 +114,52 @@ export interface NodePatch {
    * you want).
    */
   style?: Record<string, string | number | null>;
-  /** Replace `text` (text nodes). */
+
+  // Type-specific replacement fields. Each one is silently skipped if
+  // it doesn't apply to the target's `type` (so the agent can fire a
+  // patch_nodes with a mixed-type id list and only the matching nodes
+  // are updated). The merger in `mergePatch` does the routing.
+
+  /** Replace `text` on `text` nodes. */
   text?: string;
-  /** Replace `label` (button / link nodes). */
+  /** Replace `label` on `button` / `link` nodes. */
   label?: string;
-  /** Replace `src` (image nodes). */
+  /** Replace `src` on `image` nodes. */
   src?: string;
-  /** Replace `alt` (image nodes). */
+  /** Replace `alt` on `image` nodes. */
   alt?: string;
-  /** Replace `href` (link nodes). */
+  /** Replace `href` on `link` nodes. */
   href?: string;
-  /** Replace `placeholder` (input nodes). */
+  /** Replace `placeholder` on `input` nodes. */
   placeholder?: string;
-  /** Replace `title` (frame nodes). */
+  /** Replace `title` on `frame` nodes. */
   title?: string;
+
+  /** `image`: placeholder fill color when no `src` is set. */
+  placeholderColor?: string;
+  /** `image`: lucide icon name shown in the placeholder. */
+  placeholderIcon?: string;
+
+  /** `icon`: lucide name in kebab-case (e.g. "arrow-right"). */
+  iconName?: string;
+  /** `icon`: pixel size. */
+  iconSize?: number;
+  /** `icon`: stroke / fill color override. */
+  iconColor?: string;
+
+  /** `button`: visual variant. */
+  buttonVariant?: "primary" | "secondary" | "ghost" | "outline";
+  /** `button`: height variant. */
+  buttonSize?: "sm" | "md" | "lg";
+
+  /** `text`: semantic tag (`h1`/`p`/etc.) — also adjusts default sizing. */
+  tag?: "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "span" | "label";
+
+  /** `input`: input mode. */
+  inputType?: "text" | "email" | "password" | "search" | "number" | "tel";
+
+  /** `divider`: orientation. */
+  orientation?: "horizontal" | "vertical";
 }
 
 /**
@@ -171,11 +203,62 @@ function mergePatch(node: DesignNode, patch: NodePatch): DesignNode {
       ) as DesignNode["style"])
     : existingStyle;
 
-  const { style: _styleFromPatch, ...rest } = patch;
-  void _styleFromPatch;
+  // Route type-specific patch fields to real node props. Anything
+  // that doesn't match the node's type is dropped silently — that's
+  // intentional so `patch_nodes` can fire a mixed-type id list with
+  // a single patch and have only the relevant nodes change.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const updates: Record<string, any> = {};
+
+  switch (node.type) {
+    case "text":
+      if (patch.text !== undefined) updates.text = patch.text;
+      if (patch.tag !== undefined) updates.tag = patch.tag;
+      break;
+    case "button":
+      if (patch.label !== undefined) updates.label = patch.label;
+      if (patch.buttonVariant !== undefined) updates.variant = patch.buttonVariant;
+      if (patch.buttonSize !== undefined) updates.size = patch.buttonSize;
+      break;
+    case "link":
+      if (patch.label !== undefined) updates.label = patch.label;
+      if (patch.href !== undefined) updates.href = patch.href;
+      break;
+    case "image":
+      if (patch.src !== undefined) updates.src = patch.src;
+      if (patch.alt !== undefined) updates.alt = patch.alt;
+      if (patch.placeholderColor !== undefined)
+        updates.placeholderColor = patch.placeholderColor;
+      if (patch.placeholderIcon !== undefined)
+        updates.placeholderIcon = patch.placeholderIcon;
+      break;
+    case "input":
+      if (patch.placeholder !== undefined)
+        updates.placeholder = patch.placeholder;
+      if (patch.label !== undefined) updates.label = patch.label;
+      if (patch.inputType !== undefined) updates.inputType = patch.inputType;
+      break;
+    case "icon":
+      if (patch.iconName !== undefined) updates.name = patch.iconName;
+      if (patch.iconSize !== undefined) updates.size = patch.iconSize;
+      if (patch.iconColor !== undefined) updates.color = patch.iconColor;
+      break;
+    case "frame":
+      if (patch.title !== undefined) updates.title = patch.title;
+      break;
+    case "divider":
+      if (patch.orientation !== undefined)
+        updates.orientation = patch.orientation;
+      break;
+    // Containers (div / section / nav / card) and component-ref have
+    // no replaceable leaf fields — only `style` applies.
+    default:
+      break;
+  }
+
   return {
     ...node,
-    ...rest,
+    ...updates,
     ...(mergedStyle ? { style: mergedStyle } : {}),
   } as DesignNode;
 }

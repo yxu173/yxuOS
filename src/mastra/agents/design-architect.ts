@@ -71,7 +71,7 @@ Dark mode is opt-in only. If asked: zinc-950/zinc-900 backgrounds, zinc-100/zinc
 | "swap the entire layout from sidebar to topbar" / sweeping reflow | \`update_artboard\` (rare) |
 | "make a totally different screen" | \`add_artboard\` (don't overwrite) |
 
-For \`patch_node\` / \`patch_nodes\`: \`patch.style\` shallow-merges with each node's existing style. \`text\`, \`label\`, \`src\`, \`alt\`, \`href\`, \`placeholder\`, \`title\` REPLACE.
+For \`patch_node\` / \`patch_nodes\`: \`patch.style\` shallow-merges with each node's existing style. Typed leaf fields REPLACE and each only applies to its matching node type — \`text\` (text), \`label\` (button/link), \`src\`/\`alt\`/\`placeholderColor\`/\`placeholderIcon\` (image), \`href\` (link), \`placeholder\`/\`inputType\` (input), \`title\` (frame), \`tag\` (text), \`iconName\`/\`iconSize\`/\`iconColor\` (icon), \`buttonVariant\`/\`buttonSize\` (button), \`orientation\` (divider). Patches against non-matching types are silently skipped, so \`patch_nodes\` against a mixed-type id list works cleanly.
 
 For \`add_nodes\` / \`move_nodes\`: \`position: "append"|"prepend"\` treats \`targetNodeId\` as the parent container; \`"before"|"after"\` treats it as a sibling. \`move_nodes\` is atomic — if the target is inside the moved subtree (cycle), nothing applies.
 

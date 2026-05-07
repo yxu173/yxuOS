@@ -413,10 +413,82 @@ export const extractComponentTool = createTool({
 
 /* ─── patch_node ───────────────────────────────────────── */
 
+/**
+ * Shared patch shape between `patch_node` and `patch_nodes`. Each
+ * field applies only to the matching node type — patches against
+ * non-matching types are silently skipped so a single patch can
+ * target a mixed-type id list cleanly.
+ */
+const nodePatchSchema = z
+  .object({
+    style: cssSchema,
+    text: z.string().optional().describe("`text` nodes — new text content."),
+    label: z
+      .string()
+      .optional()
+      .describe("`button`/`link` nodes — new label text."),
+    src: z.string().optional().describe("`image` nodes — new src URL."),
+    alt: z.string().optional().describe("`image` nodes — new alt text."),
+    href: z.string().optional().describe("`link` nodes — new href."),
+    placeholder: z
+      .string()
+      .optional()
+      .describe("`input` nodes — new placeholder text."),
+    title: z
+      .string()
+      .optional()
+      .describe("`frame` nodes — new title above the frame."),
+    placeholderColor: z
+      .string()
+      .optional()
+      .describe(
+        "`image` nodes — placeholder fill color when no `src` is set (CSS color: `#10b981`, `zinc`, `rgb(...)`).",
+      ),
+    placeholderIcon: z
+      .string()
+      .optional()
+      .describe("`image` nodes — lucide icon name shown in the placeholder."),
+    iconName: z
+      .string()
+      .optional()
+      .describe("`icon` nodes — lucide name in kebab-case (e.g. `arrow-right`)."),
+    iconSize: z
+      .number()
+      .optional()
+      .describe("`icon` nodes — pixel size."),
+    iconColor: z
+      .string()
+      .optional()
+      .describe("`icon` nodes — stroke / fill color."),
+    buttonVariant: z
+      .enum(["primary", "secondary", "ghost", "outline"])
+      .optional()
+      .describe("`button` nodes — visual variant."),
+    buttonSize: z
+      .enum(["sm", "md", "lg"])
+      .optional()
+      .describe("`button` nodes — height (sm=32px, md=40px, lg=48px)."),
+    tag: z
+      .enum(["h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "label"])
+      .optional()
+      .describe("`text` nodes — semantic tag, also adjusts default size."),
+    inputType: z
+      .enum(["text", "email", "password", "search", "number", "tel"])
+      .optional()
+      .describe("`input` nodes — html input type."),
+    orientation: z
+      .enum(["horizontal", "vertical"])
+      .optional()
+      .describe("`divider` nodes — orientation."),
+  })
+  .describe(
+    "Partial update. `style` is shallow-merged. All other fields replace, but each only applies to its matching node type — patches against non-matching types are silently skipped.",
+  );
+
 export const patchNodeTool = createTool({
   id: "patch_node",
   description:
-    "Surgically patch ONE DesignNode inside an artboard. This is much cheaper and more reliable than re-sending the whole tree via `update_artboard` — use it for 'make the hero darker', 'change the CTA copy to Get started', 'swap the accent to emerald', and any other tweak that touches a single node. Target the node by `nodeId` (returned by `get_artboard`, `find_nodes`, or in `query_canvas` as `selectedNodeId`). The `patch.style` is shallow-merged into the node's existing style so other style props are preserved; non-style fields (text, label, src, alt, href, placeholder, title) replace.",
+    "Surgically patch ONE DesignNode inside an artboard. Much cheaper and more reliable than re-sending the whole tree via `update_artboard` — use it for 'make the hero darker', 'change the CTA copy', 'swap to outline button', 'use a different lucide icon', and any other tweak that touches a single node. Target the node by `nodeId` (from `get_artboard`, `find_nodes`, or `query_canvas`'s `selectedNodeId`). `patch.style` shallow-merges; the typed leaf fields (label/buttonVariant/iconName/etc.) replace and only apply when the node's type matches.",
   inputSchema: z.object({
     artboardId: z.string(),
     nodeId: z
@@ -424,41 +496,7 @@ export const patchNodeTool = createTool({
       .describe(
         "The DesignNode `id`. Get one from `get_artboard`, `find_nodes`, or from `query_canvas`'s `selectedNodeId`.",
       ),
-    patch: z
-      .object({
-        style: cssSchema,
-        text: z
-          .string()
-          .optional()
-          .describe("New text content for `text` nodes."),
-        label: z
-          .string()
-          .optional()
-          .describe("New label for `button` / `link` nodes."),
-        src: z
-          .string()
-          .optional()
-          .describe("New `src` URL for `image` nodes."),
-        alt: z
-          .string()
-          .optional()
-          .describe("New alt text for `image` nodes."),
-        href: z
-          .string()
-          .optional()
-          .describe("New href for `link` nodes."),
-        placeholder: z
-          .string()
-          .optional()
-          .describe("New placeholder for `input` nodes."),
-        title: z
-          .string()
-          .optional()
-          .describe("New title for `frame` nodes."),
-      })
-      .describe(
-        "Partial update. `style` is shallow-merged with the existing style; the other fields replace.",
-      ),
+    patch: nodePatchSchema,
     idempotencyKey: idempotencyKeyField,
   }),
   outputSchema: toolResultSchema(
@@ -589,27 +627,14 @@ export const moveNodesTool = createTool({
 export const patchNodesTool = createTool({
   id: "patch_nodes",
   description:
-    "Apply the SAME patch to many nodes in one call. Cheap way to do 'make every h2 zinc-300', 'set every primary button to indigo', 'increase all card padding to 32'. Same patch semantics as `patch_node` (style is shallow-merged, other fields replace) — but applied to every nodeId in the list. Returns the ids that were actually patched. Missing ids are surfaced in `warnings` instead of failing the whole call.",
+    "Apply the SAME patch to many nodes in one call. Cheap way to do 'make every h2 zinc-300', 'set every primary button to indigo', 'increase all card padding to 32'. Same patch semantics as `patch_node` — every typed leaf field is applied only to nodes of the matching type, so passing a mixed list (e.g. all selected ids) works cleanly. Returns the ids that were actually patched. Missing ids surface in `warnings`.",
   inputSchema: z.object({
     artboardId: z.string(),
     nodeIds: z
       .array(z.string())
       .min(1)
       .describe("Ids of the nodes to patch."),
-    patch: z
-      .object({
-        style: cssSchema,
-        text: z.string().optional(),
-        label: z.string().optional(),
-        src: z.string().optional(),
-        alt: z.string().optional(),
-        href: z.string().optional(),
-        placeholder: z.string().optional(),
-        title: z.string().optional(),
-      })
-      .describe(
-        "Same shape as patch_node's patch. style is shallow-merged with each existing style; text/label/src/alt/href/placeholder/title replace.",
-      ),
+    patch: nodePatchSchema,
     idempotencyKey: idempotencyKeyField,
   }),
   outputSchema: toolResultSchema(
