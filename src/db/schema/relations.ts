@@ -15,6 +15,7 @@ import { boards } from "./boards";
 import { comments } from "./comments";
 import { designAssets } from "./design-assets";
 import { designComponents } from "./design-components";
+import { designFolders } from "./design-folders";
 import { designs } from "./designs";
 import { projects } from "./projects";
 import { tasks } from "./tasks";
@@ -66,6 +67,7 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   designAssets: many(designAssets),
   attachments: many(attachments),
   boardFolders: many(boardFolders),
+  designFolders: many(designFolders),
 }));
 
 export const boardFoldersRelations = relations(
@@ -82,6 +84,25 @@ export const boardFoldersRelations = relations(
     }),
     children: many(boardFolders, { relationName: "board_folder_parent" }),
     boards: many(boards),
+  }),
+);
+
+export const designFoldersRelations = relations(
+  designFolders,
+  ({ one, many }) => ({
+    project: one(projects, {
+      fields: [designFolders.projectId],
+      references: [projects.id],
+    }),
+    parent: one(designFolders, {
+      fields: [designFolders.parentFolderId],
+      references: [designFolders.id],
+      relationName: "design_folder_parent",
+    }),
+    children: many(designFolders, {
+      relationName: "design_folder_parent",
+    }),
+    designs: many(designs),
   }),
 );
 
@@ -235,5 +256,9 @@ export const designsRelations = relations(designs, ({ one }) => ({
   project: one(projects, {
     fields: [designs.projectId],
     references: [projects.id],
+  }),
+  folder: one(designFolders, {
+    fields: [designs.folderId],
+    references: [designFolders.id],
   }),
 }));

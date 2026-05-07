@@ -13,6 +13,7 @@ export * from "./boards";
 export * from "./comments";
 export * from "./design-assets";
 export * from "./design-components";
+export * from "./design-folders";
 export * from "./designs";
 export * from "./projects";
 export * from "./tasks";
