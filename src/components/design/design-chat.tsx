@@ -6,20 +6,15 @@ import {
   lastAssistantMessageIsCompleteWithToolCalls,
   type UIMessage,
 } from "ai";
-import {
-  ArrowUp,
-  CheckCircle2,
-  Loader2,
-  Paperclip,
-  Sparkles,
-  Square,
-  TriangleAlert,
-  X,
-} from "lucide-react";
+import { ArrowUp, Paperclip, Sparkles, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { ChatMarkdown } from "@/components/board/chat-markdown";
 import { ScrollToBottomPill } from "@/components/chat/scroll-to-bottom-pill";
+import {
+  ToolPart,
+  type ToolUIPartLike,
+} from "@/components/chat/tool-part";
 import { useChatAutoScroll } from "@/components/chat/use-chat-auto-scroll";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -527,7 +522,14 @@ function MessageRow({
             return <FilePart key={index} part={part} />;
           }
           if (part.type.startsWith("tool-")) {
-            return <ToolPart key={index} part={part} />;
+            return (
+              <ToolPart
+                key={index}
+                part={part as ToolUIPartLike}
+                labels={TOOL_LABELS}
+                describe={describeToolResult}
+              />
+            );
           }
           return null;
         })}
@@ -570,58 +572,6 @@ function FilePart({ part }: { part: FileUIPartLike }) {
     >
       {part.filename ?? "Attachment"}
     </a>
-  );
-}
-
-interface ToolUIPartLike {
-  type: string;
-  state?: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  input?: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  output?: any;
-  errorText?: string;
-}
-
-function ToolPart({ part }: { part: ToolUIPartLike }) {
-  const toolName = part.type.replace(/^tool-/, "");
-  const label = TOOL_LABELS[toolName] ?? toolName;
-
-  let icon = <Sparkles className="size-3.5" />;
-  let body: React.ReactNode = label;
-  let tone = "border-white/10 bg-white/5 text-zinc-300";
-
-  switch (part.state) {
-    case "input-streaming":
-    case "input-available":
-      icon = <Loader2 className="size-3.5 animate-spin" />;
-      body = `${label}…`;
-      break;
-    case "output-available":
-      icon = <CheckCircle2 className="size-3.5" />;
-      body = describeToolResult(toolName, part.input) ?? label;
-      tone = "border-emerald-500/20 bg-emerald-500/10 text-emerald-200";
-      break;
-    case "output-error":
-      icon = <TriangleAlert className="size-3.5" />;
-      body = part.errorText ?? `${label} failed`;
-      tone = "border-red-500/30 bg-red-500/10 text-red-200";
-      break;
-    default:
-      break;
-  }
-
-  return (
-    <div
-      className={cn(
-        "flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs",
-        tone,
-      )}
-      role="status"
-    >
-      {icon}
-      <span className="truncate">{body}</span>
-    </div>
   );
 }
 
