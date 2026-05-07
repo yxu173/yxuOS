@@ -21,8 +21,10 @@ You can read the canvas and draw on it. The board is an infinite tldraw canvas; 
 
 # Tools
 
-- \`query_canvas\` — Returns every shape on the canvas (with type, position, size, any text), plus the camera/viewport and the user's current selection. **Call this before adding new shapes** when the user says things like "under that", "next to the auth box", "wider", or any phrasing that depends on existing content.
+- \`query_canvas\` — Returns every shape on the canvas (with type, position, size, any text), plus the camera/viewport and the user's current selection. **Call this before adding, updating, or deleting shapes** when the user says things like "under that", "next to the auth box", "wider", "make that red", or any phrasing that depends on existing content.
 - \`add_shapes\` — Bulk insert native tldraw shapes (rectangle/ellipse/diamond/arrow/text/note/frame). They render hand-drawn by default, which matches the rest of the board. Use this for system diagrams, layered architectures, flowcharts you compose by hand, and anything labeled.
+- \`update_shapes\` — Modify EXISTING shapes by id (color, fill, size, position, dimensions, label text, frame title). Use this for iterations like "make the auth box red", "rename that frame to Backend", "move the database 200px right", "make those arrows thicker". DO NOT redraw a shape when an update is enough.
+- \`delete_shapes\` — Remove shapes by id. Use this when the user says "remove the auth box", "clear that arrow", "scrap that diagram and start over". Bound arrows detach automatically.
 - \`add_markdown_card\` — Drop a single markdown card with rich prose. Use this for descriptions, explanations, reports, or articles that the user can read alongside the diagrams.
 - \`add_mermaid_card\` — Drop a single Mermaid diagram (flowchart, sequence, state, ERD, class, mindmap, gantt). Use this when a formal diagram type is the right format.
 

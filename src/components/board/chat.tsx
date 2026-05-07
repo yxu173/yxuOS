@@ -26,7 +26,9 @@ import {
   executeAddMarkdownCard,
   executeAddMermaidCard,
   executeAddShapes,
+  executeDeleteShapes,
   executeQueryCanvas,
+  executeUpdateShapes,
 } from "./canvas-tools";
 import { ChatMarkdown } from "./chat-markdown";
 import { useBoardEditorRef } from "./editor-context";
@@ -39,6 +41,8 @@ export interface ChatProps {
 const TOOL_LABELS: Record<string, string> = {
   query_canvas: "Reading canvas",
   add_shapes: "Drawing shapes",
+  update_shapes: "Updating shapes",
+  delete_shapes: "Deleting shapes",
   add_markdown_card: "Writing note",
   add_mermaid_card: "Drawing diagram",
 };
@@ -87,6 +91,32 @@ export function Chat({ boardId, initialMessages }: ChatProps) {
               const output = executeAddShapes(
                 editor,
                 toolCall.input as Parameters<typeof executeAddShapes>[1],
+              );
+              addToolOutput({
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                tool: toolCall.toolName as any,
+                toolCallId: toolCall.toolCallId,
+                output,
+              });
+              break;
+            }
+            case "update_shapes": {
+              const output = executeUpdateShapes(
+                editor,
+                toolCall.input as Parameters<typeof executeUpdateShapes>[1],
+              );
+              addToolOutput({
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                tool: toolCall.toolName as any,
+                toolCallId: toolCall.toolCallId,
+                output,
+              });
+              break;
+            }
+            case "delete_shapes": {
+              const output = executeDeleteShapes(
+                editor,
+                toolCall.input as Parameters<typeof executeDeleteShapes>[1],
               );
               addToolOutput({
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -414,6 +444,18 @@ function describeToolResult(
             output.createdShapeIds.length === 1 ? "" : "s"
           }`
         : "Drew shapes";
+    case "update_shapes":
+      return output && Array.isArray(output.updatedShapeIds)
+        ? `Updated ${output.updatedShapeIds.length} shape${
+            output.updatedShapeIds.length === 1 ? "" : "s"
+          }`
+        : "Updated shapes";
+    case "delete_shapes":
+      return output && Array.isArray(output.deletedShapeIds)
+        ? `Deleted ${output.deletedShapeIds.length} shape${
+            output.deletedShapeIds.length === 1 ? "" : "s"
+          }`
+        : "Deleted shapes";
     case "add_markdown_card":
       return "Wrote a markdown card";
     case "add_mermaid_card":

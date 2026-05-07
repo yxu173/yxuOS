@@ -199,9 +199,81 @@ export const addMermaidCardTool = createTool({
   }),
 });
 
+/* ─── update_shapes ─────────────────────────────────────── */
+
+const shapeUpdateSchema = z.object({
+  id: z
+    .string()
+    .describe(
+      "tldraw shape id, returned by `query_canvas` or `add_shapes` (looks like `shape:abc...`).",
+    ),
+  x: z.number().optional().describe("Move to this page-space X."),
+  y: z.number().optional().describe("Move to this page-space Y."),
+  w: z.number().optional().describe("New width (geo / frame / note)."),
+  h: z.number().optional().describe("New height (geo / frame / note)."),
+  text: z
+    .string()
+    .optional()
+    .describe(
+      "Replace the shape's label / text / sticky-note body / frame title. Markdown / mermaid cards take their content via the dedicated add_* tools, not here.",
+    ),
+  color: z
+    .enum([
+      "black",
+      "grey",
+      "blue",
+      "green",
+      "red",
+      "violet",
+      "orange",
+      "yellow",
+      "light-blue",
+      "light-green",
+      "light-red",
+      "light-violet",
+    ])
+    .optional(),
+  fill: z.enum(["none", "semi", "solid", "pattern"]).optional(),
+  size: z.enum(["s", "m", "l", "xl"]).optional(),
+});
+
+export const updateShapesTool = createTool({
+  id: "update_shapes",
+  description:
+    "Modify properties of EXISTING tldraw shapes. Use this for iterations like 'make the auth box red', 'rename that frame to Backend', 'move the database 200px right', 'make those arrows thicker'. Provide only the fields that change; everything else is preserved. Target shapes by their `id` (from `query_canvas` or the output of `add_shapes`). Don't recreate shapes when an update is enough.",
+  inputSchema: z.object({
+    shapes: z
+      .array(shapeUpdateSchema)
+      .min(1)
+      .describe("Array of shape updates to apply in one batch."),
+  }),
+  outputSchema: z.object({
+    updatedShapeIds: z.array(z.string()),
+  }),
+});
+
+/* ─── delete_shapes ─────────────────────────────────────── */
+
+export const deleteShapesTool = createTool({
+  id: "delete_shapes",
+  description:
+    "Remove one or more shapes from the whiteboard by id. Use this when the user says 'remove the auth box', 'clear that arrow', or wants to undo a previous addition. Bound arrows pointing at a deleted shape are detached automatically by tldraw.",
+  inputSchema: z.object({
+    shapeIds: z
+      .array(z.string())
+      .min(1)
+      .describe("tldraw shape ids to delete (from `query_canvas` etc.)."),
+  }),
+  outputSchema: z.object({
+    deletedShapeIds: z.array(z.string()),
+  }),
+});
+
 export const canvasTools = {
   query_canvas: queryCanvasTool,
   add_shapes: addShapesTool,
+  update_shapes: updateShapesTool,
+  delete_shapes: deleteShapesTool,
   add_markdown_card: addMarkdownCardTool,
   add_mermaid_card: addMermaidCardTool,
 };

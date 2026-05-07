@@ -372,3 +372,140 @@ export async function executeAddMermaidCard(
   });
   return { shapeId: id };
 }
+
+/* ─── update_shapes ──────────────────────────────────── */
+
+interface ShapeUpdateInput {
+  id: string;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  text?: string;
+  color?: string;
+  fill?: string;
+  size?: string;
+}
+
+/**
+ * Builds the `props` partial appropriate for the shape's type. Each
+ * tldraw shape only accepts a subset of props (e.g. an arrow doesn't have
+ * `w`/`h`), so we filter per-type to avoid validation errors.
+ */
+function buildPropsPatch(
+  type: string,
+  spec: ShapeUpdateInput,
+): Record<string, unknown> {
+  const props: Record<string, unknown> = {};
+
+  switch (type) {
+    case "geo":
+      if (spec.w !== undefined) props.w = spec.w;
+      if (spec.h !== undefined) props.h = spec.h;
+      if (spec.color) props.color = spec.color;
+      if (spec.fill) props.fill = spec.fill;
+      if (spec.size) props.size = spec.size;
+      if (spec.text !== undefined) props.richText = toRichText(spec.text);
+      break;
+    case "text":
+      if (spec.color) props.color = spec.color;
+      if (spec.size) props.size = spec.size;
+      if (spec.text !== undefined) props.richText = toRichText(spec.text);
+      break;
+    case "note":
+      if (spec.color) props.color = spec.color;
+      if (spec.size) props.size = spec.size;
+      if (spec.text !== undefined) props.richText = toRichText(spec.text);
+      break;
+    case "frame":
+      if (spec.w !== undefined) props.w = spec.w;
+      if (spec.h !== undefined) props.h = spec.h;
+      if (spec.text !== undefined) props.name = spec.text;
+      break;
+    case "arrow":
+      if (spec.color) props.color = spec.color;
+      if (spec.size) props.size = spec.size;
+      if (spec.text !== undefined) props.richText = toRichText(spec.text);
+      break;
+    default:
+      // Unknown / custom shape — pass through anything that fits the
+      // common width/height pattern; the editor will reject anything else.
+      if (spec.w !== undefined) props.w = spec.w;
+      if (spec.h !== undefined) props.h = spec.h;
+      if (spec.text !== undefined) props.text = spec.text;
+      break;
+  }
+
+  return props;
+}
+
+export function executeUpdateShapes(
+  editor: Editor,
+  input: { shapes: ShapeUpdateInput[] },
+): { updatedShapeIds: string[] } {
+  const updated: string[] = [];
+  const missing: string[] = [];
+
+  editor.run(() => {
+    for (const spec of input.shapes) {
+      const shape = editor.getShape(spec.id as TLShapeId);
+      if (!shape) {
+        missing.push(spec.id);
+        continue;
+      }
+      const propsPatch = buildPropsPatch(shape.type, spec);
+      const update: {
+        id: TLShapeId;
+        type: string;
+        x?: number;
+        y?: number;
+        props?: Record<string, unknown>;
+      } = {
+        id: shape.id,
+        type: shape.type,
+      };
+      if (spec.x !== undefined) update.x = spec.x;
+      if (spec.y !== undefined) update.y = spec.y;
+      if (Object.keys(propsPatch).length > 0) update.props = propsPatch;
+      // Only call updateShape if there's something to actually change.
+      if (
+        update.x !== undefined ||
+        update.y !== undefined ||
+        update.props !== undefined
+      ) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        editor.updateShape(update as any);
+        updated.push(shape.id);
+      }
+    }
+  });
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Couldn't find ${missing.length} shape${
+        missing.length === 1 ? "" : "s"
+      } (${missing.slice(0, 3).join(", ")}${
+        missing.length > 3 ? "…" : ""
+      }). Call query_canvas to see current ids.`,
+    );
+  }
+
+  return { updatedShapeIds: updated };
+}
+
+/* ─── delete_shapes ─────────────────────────────────── */
+
+export function executeDeleteShapes(
+  editor: Editor,
+  input: { shapeIds: string[] },
+): { deletedShapeIds: string[] } {
+  const ids = input.shapeIds.map((id) => id as TLShapeId);
+  const existing = ids.filter((id) => Boolean(editor.getShape(id)));
+  if (existing.length === 0) {
+    throw new Error(
+      "None of those shape ids exist on the canvas. Call query_canvas to refresh.",
+    );
+  }
+  editor.deleteShapes(existing);
+  return { deletedShapeIds: existing };
+}
