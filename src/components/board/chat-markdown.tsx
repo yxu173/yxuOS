@@ -10,8 +10,15 @@ import { cn } from "@/lib/utils";
  *
  * - Every block element gets explicit Tailwind styling — we don't depend on
  *   `@tailwindcss/typography`'s `prose`.
+ * - Inline elements (strong, em, a, code) inherit color from the parent
+ *   message bubble so they always read against the right background — the
+ *   user's bubble is light-on-dark text, the agent's is dark-on-light, and
+ *   inheriting avoids a hard-coded `text-zinc-100` blending into the wrong
+ *   surface.
  * - Long unbreakable strings (URLs, code identifiers) wrap via
- *   `[overflow-wrap:anywhere]` on the root.
+ *   `break-words` on the root. We deliberately avoid
+ *   `overflow-wrap: anywhere`, which can shred normal prose into one
+ *   character per line in a narrow column.
  * - Code, pre, and tables get horizontal scroll instead of breaking the
  *   layout.
  */
@@ -41,18 +48,20 @@ const COMPONENTS: Components = {
     <p className="my-1.5 leading-relaxed first:mt-0 last:mb-0">{children}</p>
   ),
   ul: ({ children }) => (
-    <ul className="my-1.5 ml-4 list-disc space-y-0.5 first:mt-0 last:mb-0 marker:text-zinc-500">
+    <ul className="my-1.5 ml-5 list-disc space-y-0.5 first:mt-0 last:mb-0 marker:text-current/60">
       {children}
     </ul>
   ),
   ol: ({ children }) => (
-    <ol className="my-1.5 ml-4 list-decimal space-y-0.5 first:mt-0 last:mb-0 marker:text-zinc-500">
+    <ol className="my-1.5 ml-5 list-decimal space-y-0.5 first:mt-0 last:mb-0 marker:text-current/60">
       {children}
     </ol>
   ),
-  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+  li: ({ children }) => (
+    <li className="pl-0.5 leading-relaxed [&>p]:my-0">{children}</li>
+  ),
   blockquote: ({ children }) => (
-    <blockquote className="my-2 border-l-2 border-white/15 pl-3 italic text-zinc-400">
+    <blockquote className="my-2 border-l-2 border-current/15 pl-3 italic opacity-80">
       {children}
     </blockquote>
   ),
@@ -60,53 +69,61 @@ const COMPONENTS: Components = {
     const isBlock = Boolean(className);
     if (!isBlock) {
       return (
-        <code className="rounded bg-white/10 px-1 py-0.5 font-mono text-[0.85em] text-zinc-100">
+        <code className="rounded bg-current/10 px-1 py-0.5 font-mono text-[0.85em] text-inherit">
           {children}
         </code>
       );
     }
     return (
-      <code className={cn("font-mono text-xs", className)}>{children}</code>
+      <code className={cn("font-mono text-xs text-inherit", className)}>
+        {children}
+      </code>
     );
   },
   pre: ({ children }) => (
-    <pre className="my-2 overflow-x-auto rounded-md bg-zinc-900/80 p-3 text-xs leading-relaxed">
+    <pre className="my-2 overflow-x-auto rounded-md bg-zinc-900/80 p-3 text-xs leading-relaxed text-zinc-100">
       {children}
     </pre>
   ),
   table: ({ children }) => (
-    <div className="my-2 overflow-x-auto rounded-md border border-white/10">
+    <div className="my-2 overflow-x-auto rounded-md border border-current/10">
       <table className="w-full border-collapse text-xs">{children}</table>
     </div>
   ),
   thead: ({ children }) => (
-    <thead className="bg-white/5 text-left">{children}</thead>
+    <thead className="bg-current/5 text-left">{children}</thead>
   ),
   tbody: ({ children }) => <tbody>{children}</tbody>,
   tr: ({ children }) => (
-    <tr className="border-b border-white/5 last:border-b-0">{children}</tr>
+    <tr className="border-b border-current/5 last:border-b-0">{children}</tr>
   ),
   th: ({ children }) => (
-    <th className="px-2 py-1 font-medium text-zinc-200">{children}</th>
+    <th className="px-2 py-1 font-medium">{children}</th>
   ),
   td: ({ children }) => (
-    <td className="px-2 py-1 align-top text-zinc-300">{children}</td>
+    <td className="px-2 py-1 align-top opacity-90">{children}</td>
   ),
   a: ({ href, children }) => (
     <a
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-blue-300 underline underline-offset-2 hover:text-blue-200"
+      className="font-medium underline underline-offset-2 hover:opacity-80"
     >
       {children}
     </a>
   ),
-  hr: () => <hr className="my-3 border-white/10" />,
+  hr: () => <hr className="my-3 border-current/10" />,
   strong: ({ children }) => (
-    <strong className="font-semibold text-zinc-100">{children}</strong>
+    // Browser default for <strong> is bold (700). We force `text-inherit`
+    // so the bold prefix never disappears against an unexpected bubble
+    // background, and `font-bold` so it visibly contrasts even when the
+    // surrounding font has a soft regular weight.
+    <strong className="font-bold text-inherit">{children}</strong>
   ),
-  em: ({ children }) => <em className="italic">{children}</em>,
+  em: ({ children }) => (
+    <em className="italic text-inherit">{children}</em>
+  ),
 };
 
 export function ChatMarkdown({
@@ -118,10 +135,7 @@ export function ChatMarkdown({
 }) {
   return (
     <div
-      className={cn(
-        "min-w-0 text-sm [overflow-wrap:anywhere] [&_*]:min-w-0",
-        className,
-      )}
+      className={cn("min-w-0 break-words text-sm leading-relaxed", className)}
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={COMPONENTS}>
         {children}
