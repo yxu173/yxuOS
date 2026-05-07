@@ -18,6 +18,7 @@ import { designComponents } from "./design-components";
 import { designFolders } from "./design-folders";
 import { designs } from "./designs";
 import { projects } from "./projects";
+import { taskBoards } from "./task-boards";
 import { tasks } from "./tasks";
 
 /**
@@ -68,6 +69,15 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   attachments: many(attachments),
   boardFolders: many(boardFolders),
   designFolders: many(designFolders),
+  taskBoards: many(taskBoards),
+}));
+
+export const taskBoardsRelations = relations(taskBoards, ({ one, many }) => ({
+  project: one(projects, {
+    fields: [taskBoards.projectId],
+    references: [projects.id],
+  }),
+  tasks: many(tasks),
 }));
 
 export const boardFoldersRelations = relations(
@@ -129,6 +139,10 @@ export const tasksRelations = relations(tasks, ({ one, many }) => ({
   project: one(projects, {
     fields: [tasks.projectId],
     references: [projects.id],
+  }),
+  taskBoard: one(taskBoards, {
+    fields: [tasks.taskBoardId],
+    references: [taskBoards.id],
   }),
   creator: one(user, {
     fields: [tasks.creatorId],

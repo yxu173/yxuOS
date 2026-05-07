@@ -4,10 +4,49 @@ import { and, asc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 
 import { db } from "@/db";
-import { projects } from "@/db/schema";
+import { projects, taskBoards } from "@/db/schema";
 
 const DEFAULT_PROJECT_SLUG = "workspace";
 const DEFAULT_PROJECT_NAME = "Workspace";
+
+const DEFAULT_TASK_BOARD_NAME = "All tasks";
+
+/**
+ * Returns the project's first task board, creating a default
+ * "All tasks" board lazily if the project has none. Same idempotent
+ * pattern as `ensureDefaultProject`.
+ */
+export async function ensureDefaultTaskBoard(
+  projectId: string,
+): Promise<{ id: string; name: string }> {
+  const existing = await db.query.taskBoards.findFirst({
+    where: eq(taskBoards.projectId, projectId),
+    orderBy: asc(taskBoards.createdAt),
+    columns: { id: true, name: true },
+  });
+  if (existing) return existing;
+
+  const id = nanoid();
+  const now = new Date();
+  try {
+    await db.insert(taskBoards).values({
+      id,
+      projectId,
+      name: DEFAULT_TASK_BOARD_NAME,
+      createdAt: now,
+      updatedAt: now,
+    });
+    return { id, name: DEFAULT_TASK_BOARD_NAME };
+  } catch {
+    const racedRow = await db.query.taskBoards.findFirst({
+      where: eq(taskBoards.projectId, projectId),
+      orderBy: asc(taskBoards.createdAt),
+      columns: { id: true, name: true },
+    });
+    if (!racedRow) throw new Error("Failed to ensure default task board");
+    return racedRow;
+  }
+}
 
 export interface ProjectListItem {
   id: string;
@@ -105,6 +144,10 @@ export async function createProject(
     createdAt: now,
     updatedAt: now,
   });
+
+  // Drop a default task board immediately so the tasks page renders
+  // cleanly (no "no boards yet" fallback) the moment the user lands.
+  await ensureDefaultTaskBoard(id);
 
   await logActivity({
     teamId,
@@ -232,6 +275,9 @@ export async function ensureDefaultProject(teamId: string): Promise<{
       createdAt: now,
       updatedAt: now,
     });
+    // New projects always come with a default task board so the tasks
+    // page is never empty-of-boards.
+    await ensureDefaultTaskBoard(id);
     return { id, slug: DEFAULT_PROJECT_SLUG, name: DEFAULT_PROJECT_NAME };
   } catch {
     // A concurrent insert raced and won. Re-read and return.

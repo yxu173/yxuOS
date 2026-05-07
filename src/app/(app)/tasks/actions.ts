@@ -11,6 +11,7 @@ import {
   requireActiveProject,
   requireActiveTeam,
 } from "@/lib/permissions";
+import { ensureDefaultTaskBoard } from "@/lib/projects";
 import {
   isValidPriority,
   isValidStatus,
@@ -64,6 +65,8 @@ export interface CreateTaskInput {
   assigneeId?: string | null;
   parentTaskId?: string | null;
   dueDate?: Date | null;
+  /** Optional explicit task board. Falls back to the project's default board. */
+  taskBoardId?: string | null;
   /** When true, redirect to /tasks/{id} after creating. */
   redirectAfter?: boolean;
 }
@@ -78,6 +81,24 @@ export async function createTask(
     projectId,
     projectSlug: resolvedSlug,
   } = await requireActiveProject(projectSlug ?? null);
+
+  // Inherit the parent's task board for sub-tasks; otherwise fall back to
+  // either the explicit taskBoardId or the project's default board.
+  let resolvedTaskBoardId: string | null = input.taskBoardId ?? null;
+  if (input.parentTaskId && !resolvedTaskBoardId) {
+    const parent = await db.query.tasks.findFirst({
+      where: and(
+        eq(tasks.id, input.parentTaskId),
+        eq(tasks.teamId, teamId),
+      ),
+      columns: { taskBoardId: true },
+    });
+    resolvedTaskBoardId = parent?.taskBoardId ?? null;
+  }
+  if (!resolvedTaskBoardId) {
+    const defaultBoard = await ensureDefaultTaskBoard(projectId);
+    resolvedTaskBoardId = defaultBoard.id;
+  }
 
   const title = input.title.trim().slice(0, MAX_TITLE);
   if (!title) throw new Error("Task title is required");
@@ -117,6 +138,7 @@ export async function createTask(
     .values({
       teamId,
       projectId,
+      taskBoardId: resolvedTaskBoardId,
       creatorId: session.user.id,
       assigneeId: input.assigneeId ?? null,
       parentTaskId: input.parentTaskId ?? null,
@@ -327,10 +349,12 @@ export interface TaskListRow {
 export async function listTopLevelTasks(
   teamId: string,
   projectId?: string,
+  taskBoardId?: string,
 ): Promise<TaskListRow[]> {
-  const baseScope = projectId
-    ? and(eq(tasks.teamId, teamId), eq(tasks.projectId, projectId))
-    : eq(tasks.teamId, teamId);
+  const scopeFilters = [eq(tasks.teamId, teamId)];
+  if (projectId) scopeFilters.push(eq(tasks.projectId, projectId));
+  if (taskBoardId) scopeFilters.push(eq(tasks.taskBoardId, taskBoardId));
+  const baseScope = and(...scopeFilters)!;
 
   const rows = await db.query.tasks.findMany({
     where: and(baseScope, isNull(tasks.parentTaskId)),

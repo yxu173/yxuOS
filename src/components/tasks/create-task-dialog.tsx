@@ -54,6 +54,8 @@ export interface CreateTaskDialogProps {
   inline?: boolean;
   /** Project the task lands in. Defaults to the team's default project when unset. */
   projectSlug?: string;
+  /** Specific task board the new task should be filed in. Falls back to project default. */
+  taskBoardId?: string | null;
 }
 
 const UNASSIGNED = "__unassigned__";
@@ -71,6 +73,7 @@ export function CreateTaskDialog({
   triggerLabel,
   inline = false,
   projectSlug,
+  taskBoardId,
 }: CreateTaskDialogProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -119,6 +122,7 @@ export function CreateTaskDialog({
             assigneeId: assigneeId === UNASSIGNED ? null : assigneeId,
             parentTaskId: parentTaskId ?? null,
             dueDate,
+            taskBoardId: taskBoardId ?? null,
           },
           projectSlug,
         );

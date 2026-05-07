@@ -16,5 +16,6 @@ export * from "./design-components";
 export * from "./design-folders";
 export * from "./designs";
 export * from "./projects";
+export * from "./task-boards";
 export * from "./tasks";
 export * from "./relations";

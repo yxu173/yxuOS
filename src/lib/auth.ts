@@ -85,13 +85,21 @@ export const auth = betterAuth({
             createdAt: now,
           });
           // Drop a default "Workspace" project under the new team so the
-          // user lands somewhere the moment they sign in. Subsequent
+          // user lands somewhere the moment they sign in, plus a default
+          // task board so the tasks page is non-empty. Subsequent
           // projects are created from the in-app switcher.
           await db.insert(schema.projects).values({
             id: projectId,
             teamId: orgId,
             name: "Workspace",
             slug: "workspace",
+            createdAt: now,
+            updatedAt: now,
+          });
+          await db.insert(schema.taskBoards).values({
+            id: nanoid(),
+            projectId,
+            name: "All tasks",
             createdAt: now,
             updatedAt: now,
           });

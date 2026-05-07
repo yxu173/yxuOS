@@ -9,6 +9,7 @@ import { nanoid } from "nanoid";
 
 import { organization, user } from "./auth";
 import { projects } from "./projects";
+import { taskBoards } from "./task-boards";
 
 const newId = () => nanoid();
 
@@ -38,6 +39,14 @@ export const tasks = pgTable(
     projectId: text("project_id").references(() => projects.id, {
       onDelete: "cascade",
     }),
+    /**
+     * Task board the task lives in. Nullable until the Phase 4 backfill
+     * stamps existing rows. SET NULL on board delete so a deleted board
+     * just unparents its tasks rather than nuking them.
+     */
+    taskBoardId: text("task_board_id").references(() => taskBoards.id, {
+      onDelete: "set null",
+    }),
     creatorId: text("creator_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
@@ -64,6 +73,7 @@ export const tasks = pgTable(
     index("tasks_team_idx").on(t.teamId),
     index("tasks_team_status_idx").on(t.teamId, t.status),
     index("tasks_project_idx").on(t.projectId),
+    index("tasks_task_board_idx").on(t.taskBoardId),
     index("tasks_assignee_idx").on(t.assigneeId),
     index("tasks_parent_idx").on(t.parentTaskId),
     index("tasks_creator_idx").on(t.creatorId),
