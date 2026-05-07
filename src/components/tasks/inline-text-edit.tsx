@@ -4,8 +4,8 @@ import { Pencil } from "lucide-react";
 import { useEffect, useRef, useState, useTransition } from "react";
 
 import { updateTask } from "@/app/(app)/tasks/actions";
-import { MarkdownEditor } from "@/components/markdown/markdown-editor";
-import { MarkdownProse } from "@/components/markdown/markdown-prose";
+import { RichTextEditor } from "@/components/markdown/rich-text-editor";
+import { RichTextRender } from "@/components/markdown/rich-text-render";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -144,23 +144,26 @@ export function InlineTaskDescription({
 
   if (editing) {
     return (
-      <div className="flex flex-col gap-2">
-        <MarkdownEditor
+      <div
+        className="flex flex-col gap-2"
+        onKeyDownCapture={(event) => {
+          // Save / cancel shortcuts at the wrapper level — TipTap's
+          // editor would otherwise eat ⌘⏎ for its own purposes.
+          if (event.key === "Escape") {
+            event.preventDefault();
+            cancel();
+            return;
+          }
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+            event.preventDefault();
+            save();
+          }
+        }}
+      >
+        <RichTextEditor
           value={value}
           onChange={setValue}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              cancel();
-              return;
-            }
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-              event.preventDefault();
-              save();
-            }
-          }}
           autoFocus
-          rows={6}
           placeholder="Acceptance criteria, links, paste a screenshot…"
         />
         <div className="flex items-center justify-end gap-2">
@@ -209,10 +212,10 @@ export function InlineTaskDescription({
         aria-label="Edit description"
       >
         {hasContent ? (
-          <MarkdownProse>{value}</MarkdownProse>
+          <RichTextRender body={value} />
         ) : (
           <p className="text-sm">
-            Add a description — markdown and pasted images are supported.
+            Add a description — formatting and pasted images are supported.
           </p>
         )}
       </button>

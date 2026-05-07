@@ -164,3 +164,138 @@
 .chat-scroll::-webkit-scrollbar-thumb:hover {
   background-color: rgb(255 255 255 / 0.25);
 }
+
+/*
+ * TipTap editor / read-only render styles.
+ *
+ * The editor element gets `class="prose-tiptap"` from RichTextEditor (and
+ * the read-only renderer), so anything that hangs off `.prose-tiptap` here
+ * applies in both modes. Tailwind doesn't generate styles for content
+ * coming out of the editor (it's runtime HTML), which is why we hand-roll
+ * the typography here.
+ */
+.prose-tiptap {
+  color: rgb(228 228 231); /* zinc-200 */
+  line-height: 1.6;
+  font-size: 14px;
+}
+
+.prose-tiptap > * + * {
+  margin-top: 0.75rem;
+}
+
+.prose-tiptap p {
+  min-height: 1lh;
+}
+
+.prose-tiptap p.is-editor-empty:first-child::before {
+  color: rgb(113 113 122); /* zinc-500 */
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+.prose-tiptap h1,
+.prose-tiptap h2,
+.prose-tiptap h3 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: rgb(244 244 245); /* zinc-100 */
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.prose-tiptap h1 {
+  font-size: 1.25rem;
+}
+.prose-tiptap h2 {
+  font-size: 1.125rem;
+}
+.prose-tiptap h3 {
+  font-size: 1rem;
+}
+
+.prose-tiptap a {
+  color: rgb(125 211 252); /* sky-300 */
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-tiptap a:hover {
+  color: rgb(186 230 253); /* sky-200 */
+}
+
+.prose-tiptap ul,
+.prose-tiptap ol {
+  padding-left: 1.25rem;
+}
+.prose-tiptap ul {
+  list-style: disc;
+}
+.prose-tiptap ol {
+  list-style: decimal;
+}
+.prose-tiptap li {
+  margin: 0.25rem 0;
+}
+.prose-tiptap li > p {
+  margin: 0;
+}
+.prose-tiptap li::marker {
+  color: rgb(113 113 122 / 0.7); /* zinc-500 @ 70% */
+}
+
+.prose-tiptap blockquote {
+  border-left: 2px solid rgb(255 255 255 / 0.15);
+  padding-left: 0.75rem;
+  font-style: italic;
+  color: rgb(212 212 216); /* zinc-300 */
+}
+
+.prose-tiptap code {
+  background: rgb(255 255 255 / 0.08);
+  padding: 0.05rem 0.3rem;
+  border-radius: 0.25rem;
+  font-size: 0.85em;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.prose-tiptap pre {
+  background: rgb(24 24 27 / 0.8); /* zinc-900/80 */
+  color: rgb(244 244 245);
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  font-size: 0.8em;
+  overflow-x: auto;
+}
+.prose-tiptap pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+
+.prose-tiptap strong {
+  font-weight: 700;
+  color: inherit;
+}
+.prose-tiptap em {
+  font-style: italic;
+}
+.prose-tiptap s {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.prose-tiptap img {
+  display: block;
+  max-width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  margin: 0.75rem 0;
+}
+
+.prose-tiptap hr {
+  border: none;
+  border-top: 1px solid rgb(255 255 255 / 0.1);
+  margin: 1rem 0;
+}

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 
 import { createTask } from "@/app/(app)/tasks/actions";
-import { MarkdownEditor } from "@/components/markdown/markdown-editor";
+import { RichTextEditor } from "@/components/markdown/rich-text-editor";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -184,22 +184,26 @@ export function CreateTaskDialog({
             />
           </div>
 
-          {/* Description — markdown editor with image upload */}
-          <div className="px-5 pb-1 pt-2">
-            <MarkdownEditor
+          {/* Description — WYSIWYG rich text editor with inline image upload */}
+          <div
+            className="px-5 pb-1 pt-2"
+            onKeyDownCapture={(event) => {
+              // ⌘⏎ submits the form regardless of where the focus is — TipTap
+              // would otherwise capture the keypress.
+              if (
+                (event.metaKey || event.ctrlKey) &&
+                event.key === "Enter"
+              ) {
+                event.preventDefault();
+                submit();
+              }
+            }}
+          >
+            <RichTextEditor
               value={description}
               onChange={setDescription}
-              rows={6}
-              placeholder="Add a description… markdown supported, paste / drop images."
-              onKeyDown={(event) => {
-                if (
-                  (event.metaKey || event.ctrlKey) &&
-                  event.key === "Enter"
-                ) {
-                  event.preventDefault();
-                  submit();
-                }
-              }}
+              placeholder="Add a description… paste / drop images to drop them inline."
+              maxBodyHeight={320}
             />
           </div>
 
