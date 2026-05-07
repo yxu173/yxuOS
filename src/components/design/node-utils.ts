@@ -94,3 +94,78 @@ export function deleteNodeInTree(
   }
   return node;
 }
+
+/* ─── surgical patch (agent / inspector) ──────────────── */
+
+export interface NodePatch {
+  /**
+   * Shallow merge into the node's existing `style`. Set a key to `null`
+   * to remove that style property (rare; usually a fresh value is what
+   * you want).
+   */
+  style?: Record<string, string | number | null>;
+  /** Replace `text` (text nodes). */
+  text?: string;
+  /** Replace `label` (button / link nodes). */
+  label?: string;
+  /** Replace `src` (image nodes). */
+  src?: string;
+  /** Replace `alt` (image nodes). */
+  alt?: string;
+  /** Replace `href` (link nodes). */
+  href?: string;
+  /** Replace `placeholder` (input nodes). */
+  placeholder?: string;
+  /** Replace `title` (frame nodes). */
+  title?: string;
+}
+
+/**
+ * Apply a partial update to a single node deep in the tree, returning a
+ * new tree (immutable). The `style` key is shallow-merged so the agent
+ * can change one CSS prop without having to re-emit the whole style
+ * object. Other keys replace.
+ *
+ * Returns `null` if the target id is not in the tree — callers should
+ * surface that as a tool error.
+ */
+export function patchNodeInTree(
+  root: DesignNode,
+  targetId: string,
+  patch: NodePatch,
+): DesignNode | null {
+  if (root.id === targetId) return mergePatch(root, patch);
+
+  if (hasChildren(root) && root.children) {
+    for (let i = 0; i < root.children.length; i++) {
+      const patched = patchNodeInTree(root.children[i], targetId, patch);
+      if (patched) {
+        const nextChildren = root.children.slice();
+        nextChildren[i] = patched;
+        return { ...root, children: nextChildren } as DesignNode;
+      }
+    }
+  }
+  return null;
+}
+
+function mergePatch(node: DesignNode, patch: NodePatch): DesignNode {
+  const existingStyle =
+    "style" in node && node.style ? node.style : undefined;
+  const mergedStyle = patch.style
+    ? (Object.fromEntries(
+        Object.entries({ ...existingStyle, ...patch.style }).filter(
+          // `null` (or `undefined`) clears the key — drop it entirely.
+          ([, v]) => v !== null && v !== undefined,
+        ),
+      ) as DesignNode["style"])
+    : existingStyle;
+
+  const { style: _styleFromPatch, ...rest } = patch;
+  void _styleFromPatch;
+  return {
+    ...node,
+    ...rest,
+    ...(mergedStyle ? { style: mergedStyle } : {}),
+  } as DesignNode;
+}

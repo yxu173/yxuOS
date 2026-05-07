@@ -31,6 +31,7 @@ import {
   executeGetArtboard,
   executeListAssets,
   executeListComponents,
+  executePatchNode,
   executeQueryCanvas,
   executeUpdateArtboard,
 } from "./canvas-tools";
@@ -47,6 +48,7 @@ const TOOL_LABELS: Record<string, string> = {
   update_artboard: "Updating artboard",
   delete_artboard: "Deleting artboard",
   get_artboard: "Reading artboard",
+  patch_node: "Patching element",
   list_components: "Reading component library",
   list_assets: "Reading uploaded assets",
 };
@@ -149,6 +151,18 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
             case "get_artboard": {
               const output = executeGetArtboard(
                 toolCall.input as Parameters<typeof executeGetArtboard>[0],
+              );
+              addToolOutput({
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                tool: toolCall.toolName as any,
+                toolCallId: toolCall.toolCallId,
+                output,
+              });
+              break;
+            }
+            case "patch_node": {
+              const output = executePatchNode(
+                toolCall.input as Parameters<typeof executePatchNode>[0],
               );
               addToolOutput({
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -640,6 +654,10 @@ function describeToolResult(
       return "Removed artboard";
     case "get_artboard":
       return "Read artboard";
+    case "patch_node": {
+      const fields = input?.patch ? describePatchFields(input.patch) : null;
+      return fields ? `Patched element · ${fields}` : "Patched element";
+    }
     case "list_components":
       return "Read component library";
     case "list_assets":
@@ -647,4 +665,20 @@ function describeToolResult(
     default:
       return null;
   }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function describePatchFields(patch: any): string | null {
+  if (!patch || typeof patch !== "object") return null;
+  const parts: string[] = [];
+  if (patch.style && typeof patch.style === "object") {
+    const keys = Object.keys(patch.style);
+    if (keys.length > 0) {
+      parts.push(keys.length === 1 ? keys[0] : `${keys.length} style props`);
+    }
+  }
+  for (const k of ["text", "label", "src", "alt", "href", "placeholder", "title"]) {
+    if (typeof patch[k] === "string") parts.push(k);
+  }
+  return parts.length > 0 ? parts.join(", ") : null;
 }

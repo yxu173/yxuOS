@@ -141,7 +141,7 @@ const devicePresetSchema = z
 export const queryCanvasTool = createTool({
   id: "query_canvas",
   description:
-    "List existing artboards on the design canvas with their position, dimensions, name, device preset, and a one-line summary of any design tree they contain. Call this BEFORE add_artboard if you need to position relative to existing screens (e.g. 'put the mobile version next to the desktop one').",
+    "List existing artboards on the design canvas with their position, dimensions, name, device preset, and a one-line summary of any design tree they contain. Call this BEFORE add_artboard if you need to position relative to existing screens (e.g. 'put the mobile version next to the desktop one'). Also returns `selectedNodeId` — the DesignNode the user has selected inside an artboard, if any. When a node is selected and the user says 'make this red' / 'change this copy', target that exact id with `patch_node`.",
   inputSchema: z.object({}),
   outputSchema: z.object({
     artboards: z.array(
@@ -158,6 +158,9 @@ export const queryCanvasTool = createTool({
       }),
     ),
     selectedArtboardIds: z.array(z.string()),
+    selectedNodeId: z.string().nullable().describe(
+      "ID of the DesignNode the user clicked on inside an artboard, if any. Use this to target the user's current focus with `patch_node` when they say things like 'make this red' or 'change this copy'.",
+    ),
   }),
 });
 
@@ -227,7 +230,7 @@ export const deleteArtboardTool = createTool({
 export const getArtboardTool = createTool({
   id: "get_artboard",
   description:
-    "Read the full DesignNode tree of an artboard. Use this when the user asks for a small patch ('make the CTA emerald instead of indigo') so you can return a precise update via update_artboard rather than regenerating the whole tree.",
+    "Read the full DesignNode tree of an artboard. Every node in the returned tree has a stable `id` you can target with `patch_node`. Call this once when the user asks for a small tweak so you know which `id` to patch — afterwards, prefer `patch_node` over `update_artboard` for surgical edits.",
   inputSchema: z.object({
     artboardId: z.string(),
   }),
@@ -240,6 +243,59 @@ export const getArtboardTool = createTool({
     w: z.number(),
     h: z.number(),
     design: z.unknown().nullable(),
+  }),
+});
+
+export const patchNodeTool = createTool({
+  id: "patch_node",
+  description:
+    "Surgically patch ONE DesignNode inside an artboard. This is much cheaper and more reliable than re-sending the whole tree via `update_artboard` — use it for 'make the hero darker', 'change the CTA copy to Get started', 'swap the accent to emerald', and any other tweak that touches a single node. Target the node by `nodeId` (returned by `get_artboard` or in `query_canvas` as `selectedNodeId`). The `patch.style` is shallow-merged into the node's existing style so other style props are preserved; non-style fields (text, label, src, alt, href, placeholder, title) replace.",
+  inputSchema: z.object({
+    artboardId: z.string(),
+    nodeId: z
+      .string()
+      .describe(
+        "The DesignNode `id`. Get one from `get_artboard` or from `query_canvas`'s `selectedNodeId`.",
+      ),
+    patch: z
+      .object({
+        style: cssSchema,
+        text: z
+          .string()
+          .optional()
+          .describe("New text content for `text` nodes."),
+        label: z
+          .string()
+          .optional()
+          .describe("New label for `button` / `link` nodes."),
+        src: z
+          .string()
+          .optional()
+          .describe("New `src` URL for `image` nodes."),
+        alt: z
+          .string()
+          .optional()
+          .describe("New alt text for `image` nodes."),
+        href: z
+          .string()
+          .optional()
+          .describe("New href for `link` nodes."),
+        placeholder: z
+          .string()
+          .optional()
+          .describe("New placeholder for `input` nodes."),
+        title: z
+          .string()
+          .optional()
+          .describe("New title for `frame` nodes."),
+      })
+      .describe(
+        "Partial update. `style` is shallow-merged with the existing style; the other fields replace.",
+      ),
+  }),
+  outputSchema: z.object({
+    artboardId: z.string(),
+    nodeId: z.string(),
   }),
 });
 
@@ -282,6 +338,7 @@ export const designCanvasTools = {
   update_artboard: updateArtboardTool,
   delete_artboard: deleteArtboardTool,
   get_artboard: getArtboardTool,
+  patch_node: patchNodeTool,
   list_components: listComponentsTool,
   list_assets: listAssetsTool,
 };

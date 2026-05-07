@@ -8,6 +8,7 @@ import type {
   LibraryComponent,
 } from "./component-library-context";
 import type { DesignNode } from "./design-node";
+import { type NodePatch, patchNodeInTree } from "./node-utils";
 import { DEVICE_DIMENSIONS, type Artboard, type DevicePreset } from "./types";
 
 /**
@@ -32,6 +33,7 @@ export interface QueryCanvasOutput {
     rootNodeType?: string;
   }>;
   selectedArtboardIds: string[];
+  selectedNodeId: string | null;
 }
 
 export function executeQueryCanvas(): QueryCanvasOutput {
@@ -49,6 +51,7 @@ export function executeQueryCanvas(): QueryCanvasOutput {
       rootNodeType: a.design?.type,
     })),
     selectedArtboardIds: state.selection,
+    selectedNodeId: state.selectedNodeId,
   };
 }
 
@@ -191,6 +194,38 @@ export function executeGetArtboard(input: {
     h: found.h,
     design: found.design,
   };
+}
+
+/* ─── patch_node ────────────────────────────────────────── */
+
+export interface PatchNodeInput {
+  artboardId: string;
+  nodeId: string;
+  patch: NodePatch;
+}
+
+export function executePatchNode(input: PatchNodeInput): {
+  artboardId: string;
+  nodeId: string;
+} {
+  const state = useDesignCanvas.getState();
+  const ab = state.artboards.find((a) => a.id === input.artboardId);
+  if (!ab) {
+    throw new Error(`Artboard "${input.artboardId}" not found.`);
+  }
+  if (!ab.design) {
+    throw new Error(
+      `Artboard "${ab.name}" is empty — nothing to patch. Use add_artboard or update_artboard with a full design tree first.`,
+    );
+  }
+  const nextTree = patchNodeInTree(ab.design, input.nodeId, input.patch);
+  if (!nextTree) {
+    throw new Error(
+      `Node "${input.nodeId}" not found in artboard "${ab.name}". Call get_artboard to see the current node ids.`,
+    );
+  }
+  state.updateArtboard(input.artboardId, { design: nextTree });
+  return { artboardId: input.artboardId, nodeId: input.nodeId };
 }
 
 /* ─── list_components ───────────────────────────────────── */
