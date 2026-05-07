@@ -1,5 +1,6 @@
 import { relations } from "drizzle-orm";
 
+import { activityLog } from "./activity-log";
 import {
   account,
   invitation,
@@ -9,6 +10,7 @@ import {
   user,
 } from "./auth";
 import { boards } from "./boards";
+import { comments } from "./comments";
 import { designAssets } from "./design-assets";
 import { designComponents } from "./design-components";
 import { designs } from "./designs";
@@ -28,6 +30,8 @@ export const userRelations = relations(user, ({ many }) => ({
   designs: many(designs),
   designComponents: many(designComponents),
   designAssets: many(designAssets),
+  comments: many(comments),
+  activityRows: many(activityLog),
   // Better Auth organization plugin
   members: many(member),
   invitations: many(invitation),
@@ -36,6 +40,30 @@ export const userRelations = relations(user, ({ many }) => ({
 export const organizationRelations = relations(organization, ({ many }) => ({
   members: many(member),
   invitations: many(invitation),
+  comments: many(comments),
+  activityRows: many(activityLog),
+}));
+
+export const commentsRelations = relations(comments, ({ one }) => ({
+  author: one(user, {
+    fields: [comments.authorId],
+    references: [user.id],
+  }),
+  team: one(organization, {
+    fields: [comments.teamId],
+    references: [organization.id],
+  }),
+}));
+
+export const activityLogRelations = relations(activityLog, ({ one }) => ({
+  actor: one(user, {
+    fields: [activityLog.actorId],
+    references: [user.id],
+  }),
+  team: one(organization, {
+    fields: [activityLog.teamId],
+    references: [organization.id],
+  }),
 }));
 
 export const memberRelations = relations(member, ({ one }) => ({

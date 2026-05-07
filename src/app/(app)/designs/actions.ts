@@ -7,6 +7,7 @@ import { nanoid } from "nanoid";
 
 import { db } from "@/db";
 import { designs } from "@/db/schema";
+import { logActivity } from "@/lib/activity";
 import { requireActiveTeam } from "@/lib/permissions";
 
 export async function createDesign() {
@@ -18,7 +19,16 @@ export async function createDesign() {
       ownerId: session.user.id,
       teamId,
     })
-    .returning({ id: designs.id });
+    .returning({ id: designs.id, name: designs.name });
+
+  await logActivity({
+    teamId,
+    actorId: session.user.id,
+    verb: "created",
+    subjectType: "design",
+    subjectId: design.id,
+    subjectName: design.name,
+  });
 
   revalidatePath("/designs");
   redirect(`/designs/${design.id}`);
@@ -45,7 +55,7 @@ export async function saveDesignSnapshot(
 }
 
 export async function renameDesign(designId: string, name: string) {
-  const { teamId } = await requireActiveTeam();
+  const { session, teamId } = await requireActiveTeam();
 
   const trimmed = name.trim().slice(0, 200);
   if (!trimmed) {
@@ -57,16 +67,41 @@ export async function renameDesign(designId: string, name: string) {
     .set({ name: trimmed, updatedAt: new Date() })
     .where(and(eq(designs.id, designId), eq(designs.teamId, teamId)));
 
+  await logActivity({
+    teamId,
+    actorId: session.user.id,
+    verb: "renamed",
+    subjectType: "design",
+    subjectId: designId,
+    subjectName: trimmed,
+  });
+
   revalidatePath("/designs");
   revalidatePath(`/designs/${designId}`);
 }
 
 export async function deleteDesign(designId: string) {
-  const { teamId } = await requireActiveTeam();
+  const { session, teamId } = await requireActiveTeam();
+
+  const existing = await db.query.designs.findFirst({
+    where: and(eq(designs.id, designId), eq(designs.teamId, teamId)),
+    columns: { name: true },
+  });
 
   await db
     .delete(designs)
     .where(and(eq(designs.id, designId), eq(designs.teamId, teamId)));
+
+  if (existing) {
+    await logActivity({
+      teamId,
+      actorId: session.user.id,
+      verb: "deleted",
+      subjectType: "design",
+      subjectId: designId,
+      subjectName: existing.name,
+    });
+  }
 
   revalidatePath("/designs");
 }

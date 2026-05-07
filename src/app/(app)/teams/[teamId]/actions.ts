@@ -6,6 +6,7 @@ import { nanoid } from "nanoid";
 
 import { db } from "@/db";
 import { member, organization, user } from "@/db/schema";
+import { logActivity } from "@/lib/activity";
 import { requireMembership, type TeamRole } from "@/lib/permissions";
 
 const ASSIGNABLE_ROLES = new Set<TeamRole>(["owner", "admin", "member"]);
@@ -32,7 +33,7 @@ export async function addMemberByUsername(
 ): Promise<{ memberId: string; userName: string }> {
   // Admins and owners can add members. Owners can add anyone in any role;
   // admins can add members only.
-  const { role: actorRole } = await requireMembership(teamId, "admin");
+  const { role: actorRole, session } = await requireMembership(teamId, "admin");
 
   const role: TeamRole = ASSIGNABLE_ROLES.has(rawRole) ? rawRole : "member";
   if (actorRole !== "owner" && role !== "member") {
@@ -73,6 +74,16 @@ export async function addMemberByUsername(
       createdAt: new Date(),
     })
     .returning({ id: member.id });
+
+  await logActivity({
+    teamId,
+    actorId: session.user.id,
+    verb: "added_member",
+    subjectType: "member",
+    subjectId: target.id,
+    subjectName: target.name,
+    metadata: { role, username },
+  });
 
   revalidatePath(`/teams/${teamId}`);
   return { memberId: created.id, userName: target.name };
@@ -117,9 +128,26 @@ export async function removeTeamMember(teamId: string, memberId: string) {
     }
   }
 
+  // Look up the target's name once so the activity feed snapshots a
+  // friendly label even after the member row is gone.
+  const targetUser = await db.query.user.findFirst({
+    where: eq(user.id, target.userId),
+    columns: { id: true, name: true },
+  });
+
   await db
     .delete(member)
     .where(and(eq(member.id, memberId), eq(member.organizationId, teamId)));
+
+  await logActivity({
+    teamId,
+    actorId: session.user.id,
+    verb: "removed_member",
+    subjectType: "member",
+    subjectId: target.userId,
+    subjectName: targetUser?.name ?? null,
+    metadata: { role: targetRole },
+  });
 
   revalidatePath(`/teams/${teamId}`);
 }
@@ -175,7 +203,7 @@ export async function updateMemberRole(
 const MAX_TEAM_NAME = 60;
 
 export async function renameTeam(teamId: string, rawName: string) {
-  await requireMembership(teamId, "owner");
+  const { session } = await requireMembership(teamId, "owner");
 
   const team = await db.query.organization.findFirst({
     where: eq(organization.id, teamId),
@@ -193,6 +221,15 @@ export async function renameTeam(teamId: string, rawName: string) {
     .update(organization)
     .set({ name: trimmed })
     .where(eq(organization.id, teamId));
+
+  await logActivity({
+    teamId,
+    actorId: session.user.id,
+    verb: "renamed_team",
+    subjectType: "team",
+    subjectId: teamId,
+    subjectName: trimmed,
+  });
 
   revalidatePath(`/teams/${teamId}`);
   revalidatePath("/boards");
@@ -264,6 +301,15 @@ export async function leaveTeam(teamId: string) {
   await db
     .delete(member)
     .where(and(eq(member.id, memberId), eq(member.organizationId, teamId)));
+
+  await logActivity({
+    teamId,
+    actorId: session.user.id,
+    verb: "left",
+    subjectType: "member",
+    subjectId: session.user.id,
+    subjectName: session.user.name,
+  });
 
   // Touch a path the user can still see post-leave.
   revalidatePath("/boards");

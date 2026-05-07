@@ -7,6 +7,7 @@ import { nanoid } from "nanoid";
 
 import { db } from "@/db";
 import { boards } from "@/db/schema";
+import { logActivity } from "@/lib/activity";
 import { requireActiveTeam } from "@/lib/permissions";
 
 /**
@@ -23,7 +24,16 @@ export async function createBoard() {
       ownerId: session.user.id,
       teamId,
     })
-    .returning({ id: boards.id });
+    .returning({ id: boards.id, name: boards.name });
+
+  await logActivity({
+    teamId,
+    actorId: session.user.id,
+    verb: "created",
+    subjectType: "board",
+    subjectId: board.id,
+    subjectName: board.name,
+  });
 
   revalidatePath("/boards");
   redirect(`/boards/${board.id}`);
@@ -54,7 +64,7 @@ export async function saveBoardSnapshot(
 }
 
 export async function renameBoard(boardId: string, name: string) {
-  const { teamId } = await requireActiveTeam();
+  const { session, teamId } = await requireActiveTeam();
 
   const trimmed = name.trim().slice(0, 200);
   if (!trimmed) {
@@ -66,16 +76,42 @@ export async function renameBoard(boardId: string, name: string) {
     .set({ name: trimmed, updatedAt: new Date() })
     .where(and(eq(boards.id, boardId), eq(boards.teamId, teamId)));
 
+  await logActivity({
+    teamId,
+    actorId: session.user.id,
+    verb: "renamed",
+    subjectType: "board",
+    subjectId: boardId,
+    subjectName: trimmed,
+  });
+
   revalidatePath("/boards");
   revalidatePath(`/boards/${boardId}`);
 }
 
 export async function deleteBoard(boardId: string) {
-  const { teamId } = await requireActiveTeam();
+  const { session, teamId } = await requireActiveTeam();
+
+  // Snapshot the name before deleting so the activity feed reads cleanly.
+  const existing = await db.query.boards.findFirst({
+    where: and(eq(boards.id, boardId), eq(boards.teamId, teamId)),
+    columns: { name: true },
+  });
 
   await db
     .delete(boards)
     .where(and(eq(boards.id, boardId), eq(boards.teamId, teamId)));
+
+  if (existing) {
+    await logActivity({
+      teamId,
+      actorId: session.user.id,
+      verb: "deleted",
+      subjectType: "board",
+      subjectId: boardId,
+      subjectName: existing.name,
+    });
+  }
 
   revalidatePath("/boards");
 }
