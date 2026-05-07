@@ -508,17 +508,187 @@ export const listAssetsTool = createTool({
   ),
 });
 
+/* ─── Granular node CRUD ────────────────────────────────── */
+
+const insertPositionSchema = z
+  .enum(["append", "prepend", "before", "after"])
+  .describe(
+    "Where to put the new nodes relative to `targetNodeId`. `append`/`prepend` treat target as the parent container; `before`/`after` treat target as a sibling.",
+  );
+
+export const addNodesTool = createTool({
+  id: "add_nodes",
+  description:
+    "Insert one or more DesignNodes into an existing artboard at a specific spot. MUCH cheaper than re-emitting the whole tree via `update_artboard` — use this for 'add another testimonial card after this one', 'add a footer at the end of the page', 'prepend a banner to the hero section'. The target's role depends on `position`: with `append` or `prepend`, target is the parent container the new nodes get added to; with `before` or `after`, target is a sibling and the new nodes become its previous / next siblings inside the same parent. The inserted subtrees are validated structurally (depth / node count / text length / forbidden styles) and every node ends up with a stable `id` you can target later.",
+  inputSchema: z.object({
+    artboardId: z.string(),
+    targetNodeId: z
+      .string()
+      .describe(
+        "Either the parent container's id (when `position` is append/prepend) or a sibling's id (when before/after).",
+      ),
+    position: insertPositionSchema,
+    nodes: z
+      .array(designNodeSchema)
+      .min(1)
+      .describe(
+        "One or more DesignNodes to insert. Order is preserved. Provide ids if you want to refer to specific inserted nodes later, otherwise fresh ids are assigned.",
+      ),
+    idempotencyKey: idempotencyKeyField,
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      artboardId: z.string(),
+      insertedNodeIds: z.array(z.string()),
+    }),
+  ),
+});
+
+export const deleteNodesTool = createTool({
+  id: "delete_nodes",
+  description:
+    "Remove one or more nodes (and their entire subtrees) from an artboard in a single call. Use this for 'remove the testimonials section', 'drop the secondary CTA', 'clear out the duplicate cards'. Refuses to delete the artboard root — use `delete_artboard` for that. Returns the ids that were actually deleted (missing ids are silently skipped so partial states are safe).",
+  inputSchema: z.object({
+    artboardId: z.string(),
+    nodeIds: z
+      .array(z.string())
+      .min(1)
+      .describe("Ids of the nodes to delete."),
+    idempotencyKey: idempotencyKeyField,
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      artboardId: z.string(),
+      deletedNodeIds: z.array(z.string()),
+    }),
+  ),
+});
+
+export const moveNodesTool = createTool({
+  id: "move_nodes",
+  description:
+    "Reparent or reorder one or more nodes within the same artboard. Atomic: if any part of the move is invalid (target inside the moved subtree, missing nodes, anchoring on a moved node), nothing is applied. Use this for 'move the email signup above the features', 'put the FAQ below the pricing', 'group these cards into the sidebar'. Same `targetNodeId` + `position` semantics as `add_nodes`.",
+  inputSchema: z.object({
+    artboardId: z.string(),
+    nodeIds: z
+      .array(z.string())
+      .min(1)
+      .describe("Ids of the nodes to move. Order is preserved."),
+    targetNodeId: z.string(),
+    position: insertPositionSchema,
+    idempotencyKey: idempotencyKeyField,
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      artboardId: z.string(),
+      movedNodeIds: z.array(z.string()),
+    }),
+  ),
+});
+
+export const patchNodesTool = createTool({
+  id: "patch_nodes",
+  description:
+    "Apply the SAME patch to many nodes in one call. Cheap way to do 'make every h2 zinc-300', 'set every primary button to indigo', 'increase all card padding to 32'. Same patch semantics as `patch_node` (style is shallow-merged, other fields replace) — but applied to every nodeId in the list. Returns the ids that were actually patched. Missing ids are surfaced in `warnings` instead of failing the whole call.",
+  inputSchema: z.object({
+    artboardId: z.string(),
+    nodeIds: z
+      .array(z.string())
+      .min(1)
+      .describe("Ids of the nodes to patch."),
+    patch: z
+      .object({
+        style: cssSchema,
+        text: z.string().optional(),
+        label: z.string().optional(),
+        src: z.string().optional(),
+        alt: z.string().optional(),
+        href: z.string().optional(),
+        placeholder: z.string().optional(),
+        title: z.string().optional(),
+      })
+      .describe(
+        "Same shape as patch_node's patch. style is shallow-merged with each existing style; text/label/src/alt/href/placeholder/title replace.",
+      ),
+    idempotencyKey: idempotencyKeyField,
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      artboardId: z.string(),
+      patchedNodeIds: z.array(z.string()),
+    }),
+  ),
+});
+
+/* ─── duplicate_artboard ───────────────────────────────── */
+
+export const duplicateArtboardTool = createTool({
+  id: "duplicate_artboard",
+  description:
+    "Clone an entire artboard (its full DesignNode tree, with fresh ids) and place the copy next to the original. Use for 'make a mobile version of this' (then `update_artboard` the clone's width/height + apply mobile-specific tweaks via `patch_node`s), 'duplicate this onboarding step so I can iterate on a variant', or any 'copy this whole screen and let me fork it'. By default the new artboard is positioned to the right of the source with an 80-px gap; pass explicit `x`/`y` to override.",
+  inputSchema: z.object({
+    artboardId: z.string(),
+    name: z
+      .string()
+      .optional()
+      .describe(
+        "Name for the new artboard. Defaults to '<original name> (copy)'.",
+      ),
+    x: z.number().optional(),
+    y: z.number().optional(),
+    idempotencyKey: idempotencyKeyField,
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      artboardId: z.string(),
+      sourceArtboardId: z.string(),
+    }),
+  ),
+});
+
+/* ─── update_component ─────────────────────────────────── */
+
+export const updateComponentTool = createTool({
+  id: "update_component",
+  description:
+    "Edit a saved component's tree in place. Every artboard that uses `{ type: 'component-ref', componentSlug }` for this slug renders the new tree on the next paint, so this is how you propagate a brand change once and have it land everywhere. Look up the slug via `list_components`. The new tree is validated structurally before commit.",
+  inputSchema: z.object({
+    componentSlug: z
+      .string()
+      .describe("Slug of the component to edit (from `list_components`)."),
+    name: z
+      .string()
+      .optional()
+      .describe("Optional new name. Slug doesn't change."),
+    tree: designNodeSchema.describe(
+      "Full replacement DesignNode tree for the component.",
+    ),
+    idempotencyKey: idempotencyKeyField,
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      componentSlug: z.string(),
+    }),
+  ),
+});
+
 export const designCanvasTools = {
   query_canvas: queryCanvasTool,
   add_artboard: addArtboardTool,
   update_artboard: updateArtboardTool,
   delete_artboard: deleteArtboardTool,
+  duplicate_artboard: duplicateArtboardTool,
   get_artboard: getArtboardTool,
   find_nodes: findNodesTool,
   patch_node: patchNodeTool,
+  patch_nodes: patchNodesTool,
+  add_nodes: addNodesTool,
+  delete_nodes: deleteNodesTool,
+  move_nodes: moveNodesTool,
   duplicate_node: duplicateNodeTool,
   apply_theme: applyThemeTool,
   extract_component: extractComponentTool,
+  update_component: updateComponentTool,
   list_components: listComponentsTool,
   list_assets: listAssetsTool,
 };
