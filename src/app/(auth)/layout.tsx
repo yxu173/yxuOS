@@ -12,9 +12,9 @@ export default async function AuthLayout({
     headers: await headers(),
   });
 
-  // Already signed in — bounce to the app.
+  // Already signed in — bounce to the app home.
   if (session) {
-    redirect("/boards");
+    redirect("/");
   }
 
   return (

@@ -37,7 +37,7 @@ export default function SignInPage() {
       return;
     }
 
-    router.push("/boards");
+    router.push("/");
     router.refresh();
   };
 
@@ -45,7 +45,7 @@ export default function SignInPage() {
     <Card className="w-full max-w-sm">
       <CardHeader>
         <CardTitle>Sign in to yxuOS</CardTitle>
-        <CardDescription>Continue to your boards.</CardDescription>
+        <CardDescription>Continue to your team workspace.</CardDescription>
       </CardHeader>
       <form onSubmit={onSubmit}>
         <CardContent className="flex flex-col gap-4">

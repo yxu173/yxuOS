@@ -1,5 +1,11 @@
 import { desc, eq } from "drizzle-orm";
-import { ArrowRight, LayoutDashboard, Palette } from "lucide-react";
+import {
+  ArrowRight,
+  LayoutDashboard,
+  Palette,
+  Sparkles,
+  Users,
+} from "lucide-react";
 import { headers } from "next/headers";
 import Link from "next/link";
 
@@ -215,20 +221,83 @@ function EmptyState() {
 
 function SignedOutLanding() {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-6 p-8">
-      <h1 className="text-4xl font-semibold tracking-tight">yxuOS</h1>
-      <p className="max-w-md text-center text-muted-foreground">
-        AI-powered whiteboards and design surfaces for thinking through
-        systems with your team.
-      </p>
-      <div className="flex gap-3">
-        <Button asChild>
-          <Link href="/sign-in">Sign in</Link>
-        </Button>
-        <Button asChild variant="outline">
-          <Link href="/sign-up">Create account</Link>
-        </Button>
-      </div>
+    <main className="mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-16 p-8">
+      <header className="flex items-center justify-between pt-4">
+        <span className="text-sm font-medium text-zinc-200">yxuOS</span>
+        <div className="flex items-center gap-2">
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/sign-in">Sign in</Link>
+          </Button>
+          <Button asChild size="sm">
+            <Link href="/sign-up">Get started</Link>
+          </Button>
+        </div>
+      </header>
+
+      <section className="flex flex-col items-center gap-6 pt-12 text-center">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-zinc-300">
+          <Sparkles className="size-3" />
+          AI-powered development collaboration
+        </span>
+        <h1 className="max-w-3xl text-balance text-5xl font-semibold tracking-tight md:text-6xl">
+          Whiteboards, designs, and an agent that{" "}
+          <span className="text-zinc-400">drafts with you.</span>
+        </h1>
+        <p className="max-w-xl text-balance text-base text-muted-foreground">
+          One workspace for system diagrams, UI mockups, and the AI tools that
+          help your team move from idea to spec without switching apps.
+        </p>
+        <div className="flex items-center gap-3 pt-2">
+          <Button asChild size="lg">
+            <Link href="/sign-up" className="gap-1.5">
+              Create your team <ArrowRight className="size-4" />
+            </Link>
+          </Button>
+          <Button asChild size="lg" variant="outline">
+            <Link href="/sign-in">Sign in</Link>
+          </Button>
+        </div>
+      </section>
+
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <FeatureCard
+          icon={LayoutDashboard}
+          title="Boards"
+          description="tldraw whiteboards with an agent that drops Mermaid diagrams, sticky notes, and shapes on demand."
+        />
+        <FeatureCard
+          icon={Palette}
+          title="Designs"
+          description="A custom artboard canvas with a design agent that produces real-looking UI mockups, components, and assets."
+        />
+        <FeatureCard
+          icon={Users}
+          title="Teams"
+          description="Shared workspaces. Add teammates by username — every board, design, and component is owned by the team."
+        />
+      </section>
+
+      <footer className="mt-auto border-t border-white/5 pt-6 text-xs text-muted-foreground">
+        Built with Next.js, Mastra, and Claude. yxuOS &copy; {new Date().getFullYear()}.
+      </footer>
     </main>
+  );
+}
+
+function FeatureCard({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: typeof LayoutDashboard;
+  title: string;
+  description: string;
+}) {
+  return (
+    <article className="flex flex-col gap-2 rounded-lg border border-white/5 bg-white/[0.02] p-5">
+      <Icon className="size-5 text-zinc-300" />
+      <h3 className="text-base font-medium text-zinc-100">{title}</h3>
+      <p className="text-sm text-muted-foreground">{description}</p>
+    </article>
   );
 }

@@ -86,7 +86,7 @@ export default function SignUpPage() {
       return;
     }
 
-    router.push("/boards");
+    router.push("/");
     router.refresh();
   };
 
@@ -113,7 +113,9 @@ export default function SignUpPage() {
     <Card className="w-full max-w-sm">
       <CardHeader>
         <CardTitle>Create your yxuOS account</CardTitle>
-        <CardDescription>Start a new board in seconds.</CardDescription>
+        <CardDescription>
+          Boards, designs, and AI agents — set up in seconds.
+        </CardDescription>
       </CardHeader>
       <form onSubmit={onSubmit}>
         <CardContent className="flex flex-col gap-4">
