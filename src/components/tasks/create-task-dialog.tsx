@@ -1,6 +1,14 @@
 "use client";
 
-import { Check, Plus, UserPlus } from "lucide-react";
+import {
+  Calendar,
+  CalendarX2,
+  Check,
+  ChevronRight,
+  Plus,
+  Sparkles,
+  UserPlus,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 
@@ -49,10 +57,11 @@ export interface CreateTaskDialogProps {
 const UNASSIGNED = "__unassigned__";
 
 /**
- * Linear-style create-task overlay. Big title input is the focus; the
- * description supports markdown + image upload via the shared
- * `MarkdownEditor`. Status / priority / assignee live as inline pills at
- * the bottom — clicking each opens its picker.
+ * Modern create-task overlay: a tight three-band layout (header → content
+ * → footer) with the title input owning the heading slot, a flat
+ * WYSIWYG editor in the middle, and the property pills + actions
+ * pinned to the bottom edge. Visual cues match the rest of the app —
+ * subtle white-on-zinc surfaces, soft borders, no heavy chrome.
  */
 export function CreateTaskDialog({
   members,
@@ -68,6 +77,7 @@ export function CreateTaskDialog({
   const [status, setStatus] = useState<TaskStatus>("todo");
   const [priority, setPriority] = useState<TaskPriority>("medium");
   const [assigneeId, setAssigneeId] = useState<string>(UNASSIGNED);
+  const [dueDate, setDueDate] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   const titleRef = useRef<HTMLInputElement | null>(null);
 
@@ -83,6 +93,7 @@ export function CreateTaskDialog({
     setStatus("todo");
     setPriority("medium");
     setAssigneeId(UNASSIGNED);
+    setDueDate(null);
     setError(null);
   };
 
@@ -103,6 +114,7 @@ export function CreateTaskDialog({
           priority,
           assigneeId: assigneeId === UNASSIGNED ? null : assigneeId,
           parentTaskId: parentTaskId ?? null,
+          dueDate,
         });
         setOpen(false);
         reset();
@@ -135,16 +147,29 @@ export function CreateTaskDialog({
       </DialogTrigger>
       <DialogContent
         showCloseButton={false}
-        className="flex max-w-2xl flex-col gap-0 p-0 sm:max-w-2xl"
+        className="flex max-w-2xl flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl"
       >
-        <form onSubmit={submit} className="flex flex-col">
-          {/* Crumb / context line — also serves as the dialog's accessible
-              title. The visual styling is intentionally muted because the
-              big title input below is the real focus, but the heading
-              still needs to exist for screen readers. */}
-          <header className="flex items-center justify-between border-b border-white/5 px-5 py-3">
-            <DialogTitle className="text-xs font-normal uppercase tracking-wide text-zinc-500">
-              {parentTaskId ? "New sub-task" : "New task"}
+        <form
+          onSubmit={submit}
+          className="flex flex-col"
+          onKeyDownCapture={(event) => {
+            if (
+              (event.metaKey || event.ctrlKey) &&
+              event.key === "Enter"
+            ) {
+              event.preventDefault();
+              submit();
+            }
+          }}
+        >
+          {/* Tiny breadcrumb header — replaces the previous all-caps strip
+              with something that fits the rest of the chrome. */}
+          <div className="flex items-center justify-between gap-3 px-6 pt-5 pb-1">
+            <DialogTitle className="flex items-center gap-1.5 text-xs font-medium text-zinc-400">
+              <Sparkles className="size-3 text-zinc-500" />
+              {parentTaskId ? "Sub-task" : "New task"}
+              <ChevronRight className="size-3 text-zinc-700" />
+              <span className="text-zinc-500">draft</span>
             </DialogTitle>
             <span className="text-[10px] text-zinc-500">
               <kbd className="rounded border border-white/10 bg-white/5 px-1 py-px font-mono text-[10px] text-zinc-300">
@@ -155,15 +180,15 @@ export function CreateTaskDialog({
               </kbd>
               {" to create"}
             </span>
-          </header>
+          </div>
           <DialogDescription className="sr-only">
             {parentTaskId
               ? "Add a sub-task. Sub-tasks roll up to their parent and have their own status, priority, and assignee."
               : "Create a task scoped to the active team. Add details now or fill them in later."}
           </DialogDescription>
 
-          {/* Title — borderless, big */}
-          <div className="px-5 pt-4">
+          {/* Title — borderless, large; doubles as the visual heading. */}
+          <div className="px-6 pt-2">
             <input
               ref={titleRef}
               value={title}
@@ -171,72 +196,56 @@ export function CreateTaskDialog({
               placeholder="Task title"
               maxLength={200}
               required
-              onKeyDown={(event) => {
-                if (
-                  (event.metaKey || event.ctrlKey) &&
-                  event.key === "Enter"
-                ) {
-                  event.preventDefault();
-                  submit();
-                }
-              }}
-              className="w-full bg-transparent text-lg font-semibold tracking-tight text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
+              className="w-full bg-transparent text-2xl font-semibold tracking-tight text-zinc-50 placeholder:text-zinc-700 focus:outline-none"
             />
           </div>
 
-          {/* Description — WYSIWYG rich text editor with inline image upload */}
-          <div
-            className="px-5 pb-1 pt-2"
-            onKeyDownCapture={(event) => {
-              // ⌘⏎ submits the form regardless of where the focus is — TipTap
-              // would otherwise capture the keypress.
-              if (
-                (event.metaKey || event.ctrlKey) &&
-                event.key === "Enter"
-              ) {
-                event.preventDefault();
-                submit();
-              }
-            }}
-          >
+          {/* Description — WYSIWYG editor, takes the rest of the body. */}
+          <div className="flex flex-col gap-3 px-6 pt-3 pb-4">
             <RichTextEditor
               value={description}
               onChange={setDescription}
-              placeholder="Add a description… paste / drop images to drop them inline."
+              placeholder="Add a description… paste or drop images to drop them inline."
               maxBodyHeight={320}
             />
           </div>
 
-          {/* Inline property pills */}
-          <div className="flex flex-wrap items-center gap-1.5 border-t border-white/5 px-5 py-3">
-            <StatusDropdown status={status} onChange={setStatus} />
-            <PriorityDropdown
-              priority={priority}
-              onChange={setPriority}
-            />
-            <AssigneeDropdown
+          {/* Property pills row */}
+          <div className="flex flex-wrap items-center gap-1.5 border-t border-white/5 bg-white/[0.015] px-6 py-3">
+            <StatusPill status={status} onChange={setStatus} />
+            <PriorityPill priority={priority} onChange={setPriority} />
+            <AssigneePill
               assignee={assignedMember}
               members={members}
               onChange={(next) =>
                 setAssigneeId(next?.userId ?? UNASSIGNED)
               }
             />
+            <DueDatePill dueDate={dueDate} onChange={setDueDate} />
           </div>
 
           {error ? (
-            <p className="px-5 pb-2 text-sm text-destructive">{error}</p>
+            <p className="border-t border-red-500/20 bg-red-500/5 px-6 py-2 text-sm text-red-300">
+              {error}
+            </p>
           ) : null}
 
-          <footer className="flex items-center justify-end gap-2 border-t border-white/5 bg-white/[0.02] px-5 py-3">
+          <footer className="flex items-center justify-end gap-2 border-t border-white/5 bg-zinc-950/40 px-6 py-3">
             <Button
               type="button"
               variant="ghost"
+              size="sm"
               onClick={() => setOpen(false)}
               disabled={pending}
+              className="text-zinc-400 hover:text-zinc-200"
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={pending || !title.trim()}>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={pending || !title.trim()}
+            >
               {pending
                 ? "Creating…"
                 : parentTaskId
@@ -250,9 +259,12 @@ export function CreateTaskDialog({
   );
 }
 
-/* ─── local-only pickers (don't hit the server while we're still in the create form) ─── */
+/* ─── pill primitives ─────────────────────────────── */
 
-function StatusDropdown({
+const PILL_CLASS =
+  "inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-xs text-zinc-200 transition-colors hover:border-white/15 hover:bg-white/[0.08]";
+
+function StatusPill({
   status,
   onChange,
 }: {
@@ -262,10 +274,7 @@ function StatusDropdown({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-white/10"
-        >
+        <button type="button" className={PILL_CLASS}>
           <StatusIcon status={status} />
           {TASK_STATUS_LABELS[status]}
         </button>
@@ -294,7 +303,46 @@ function StatusDropdown({
   );
 }
 
-function AssigneeDropdown({
+function PriorityPill({
+  priority,
+  onChange,
+}: {
+  priority: TaskPriority;
+  onChange: (next: TaskPriority) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button type="button" className={PILL_CLASS}>
+          <PriorityIcon priority={priority} />
+          {TASK_PRIORITY_LABELS[priority]}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-44">
+        <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-zinc-500">
+          Priority
+        </DropdownMenuLabel>
+        {[...TASK_PRIORITIES].reverse().map((option) => (
+          <DropdownMenuItem
+            key={option}
+            onSelect={() => onChange(option)}
+            className="justify-between"
+          >
+            <span className="flex items-center gap-2">
+              <PriorityIcon priority={option} />
+              {TASK_PRIORITY_LABELS[option]}
+            </span>
+            {option === priority ? (
+              <Check className="size-3.5 text-zinc-300" />
+            ) : null}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function AssigneePill({
   assignee,
   members,
   onChange,
@@ -306,10 +354,7 @@ function AssigneeDropdown({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-white/10"
-        >
+        <button type="button" className={PILL_CLASS}>
           {assignee ? (
             <span className="grid size-4 shrink-0 place-items-center rounded-full bg-zinc-800 text-[8px] font-semibold text-zinc-200">
               {initials(assignee.name)}
@@ -364,6 +409,67 @@ function AssigneeDropdown({
   );
 }
 
+const DUE_FMT = new Intl.DateTimeFormat("en", {
+  month: "short",
+  day: "numeric",
+});
+
+function toInputValue(date: Date | null): string {
+  if (!date) return "";
+  const yyyy = date.getFullYear();
+  const mm = `${date.getMonth() + 1}`.padStart(2, "0");
+  const dd = `${date.getDate()}`.padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function DueDatePill({
+  dueDate,
+  onChange,
+}: {
+  dueDate: Date | null;
+  onChange: (next: Date | null) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  return (
+    <span className={cn("relative", PILL_CLASS, "p-0")}>
+      <button
+        type="button"
+        onClick={() => inputRef.current?.showPicker?.()}
+        className="inline-flex items-center gap-1.5 px-2 py-1"
+      >
+        <Calendar className="size-3.5 text-zinc-500" />
+        {dueDate ? DUE_FMT.format(dueDate) : "No due date"}
+      </button>
+      {dueDate ? (
+        <button
+          type="button"
+          onClick={() => onChange(null)}
+          className="ml-0.5 grid size-5 place-items-center rounded text-zinc-500 transition-colors hover:bg-white/10 hover:text-red-300"
+          aria-label="Clear due date"
+        >
+          <CalendarX2 className="size-3" />
+        </button>
+      ) : null}
+      <input
+        ref={inputRef}
+        type="date"
+        value={toInputValue(dueDate)}
+        onChange={(event) => {
+          const raw = event.target.value;
+          if (!raw) {
+            onChange(null);
+            return;
+          }
+          const [y, m, d] = raw.split("-").map((part) => Number(part));
+          onChange(new Date(y, m - 1, d, 12, 0, 0, 0));
+        }}
+        className="absolute -z-10 size-0 opacity-0"
+        tabIndex={-1}
+      />
+    </span>
+  );
+}
+
 function initials(name: string): string {
   return (
     name
@@ -372,49 +478,5 @@ function initials(name: string): string {
       .slice(0, 2)
       .map((part) => part[0]?.toUpperCase() ?? "")
       .join("") || "?"
-  );
-}
-
-function PriorityDropdown({
-  priority,
-  onChange,
-}: {
-  priority: TaskPriority;
-  onChange: (next: TaskPriority) => void;
-}) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className={cn(
-            "inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-white/10",
-          )}
-        >
-          <PriorityIcon priority={priority} />
-          {TASK_PRIORITY_LABELS[priority]}
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-44">
-        <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-zinc-500">
-          Priority
-        </DropdownMenuLabel>
-        {[...TASK_PRIORITIES].reverse().map((option) => (
-          <DropdownMenuItem
-            key={option}
-            onSelect={() => onChange(option)}
-            className="justify-between"
-          >
-            <span className="flex items-center gap-2">
-              <PriorityIcon priority={option} />
-              {TASK_PRIORITY_LABELS[option]}
-            </span>
-            {option === priority ? (
-              <Check className="size-3.5 text-zinc-300" />
-            ) : null}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }

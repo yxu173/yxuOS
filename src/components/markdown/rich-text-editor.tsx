@@ -80,6 +80,10 @@ export function RichTextEditor({
         // overkill; users get h2 / h3 from the toolbar and can drop a
         // markdown-style `# ` if they really want h1.
         heading: { levels: [1, 2, 3] },
+        // StarterKit ships its own Link extension; disable it so we can
+        // configure our own (autolink + open-in-new-tab) without
+        // tripping the "duplicate extension names" runtime warning.
+        link: false,
       }),
       Placeholder.configure({
         placeholder: placeholder ?? "Add a description…",
@@ -237,8 +241,11 @@ function Toolbar({
   onPickImage: () => void;
   onAttachLink: () => void;
 }) {
+  // Toolbar sits flush above the editor surface — no separate border or
+  // background, so it reads as part of the same input rather than a
+  // detached strip.
   return (
-    <div className="flex flex-wrap items-center gap-0.5 rounded-md border border-white/5 bg-white/[0.02] px-1 py-1">
+    <div className="flex flex-wrap items-center gap-0.5">
       <ToolbarBtn
         label="Bold"
         shortcut="⌘B"
