@@ -38,6 +38,10 @@ export interface DesignShellProps {
   initialComments: CommentItemData[];
   members: MentionTarget[];
   designs: DesignSummary[];
+  /** Base path used by the left panel for sibling design links. */
+  designsHrefBase: string;
+  /** Slug for the active project — used when the inline "+" creates a sibling. */
+  projectSlug?: string;
   components: LibraryComponent[];
   assets: LibraryAsset[];
   teams: WorkspaceSwitcherTeam[];
@@ -56,6 +60,8 @@ export function DesignShell({
   initialComments,
   members,
   designs,
+  designsHrefBase,
+  projectSlug,
   components,
   assets,
   teams,
@@ -116,7 +122,7 @@ export function DesignShell({
     <ComponentLibraryProvider components={components} assets={assets}>
       <div className="fixed inset-0 flex flex-col bg-zinc-950 text-zinc-100">
       <WorkspaceTopBar
-        homePath="/designs"
+        homePath={designsHrefBase}
         homeLabel="Designs"
         leftPanelLabel="designs"
         nameSlot={<DesignName designId={designId} initialName={designName} />}
@@ -138,7 +144,12 @@ export function DesignShell({
       />
       <div className="flex min-h-0 flex-1">
         {leftOpen ? (
-          <DesignLeftPanel designs={designs} activeDesignId={designId} />
+          <DesignLeftPanel
+            designs={designs}
+            activeDesignId={designId}
+            designsHrefBase={designsHrefBase}
+            projectSlug={projectSlug ?? "workspace"}
+          />
         ) : null}
         <main className="relative flex-1 overflow-hidden">
           <CanvasViewport />

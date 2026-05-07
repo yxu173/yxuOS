@@ -22,17 +22,42 @@ export interface AppTopBarProps {
    * this undefined so no link is highlighted.
    */
   active?: AppTopBarSection;
+  /**
+   * Active project slug — when supplied, section nav links go straight
+   * to `/p/<slug>/<section>` instead of through the legacy redirect.
+   * Pages outside the project surface (home, account, team) leave it
+   * undefined; nav still works via the legacy redirect.
+   */
+  projectSlug?: string;
 }
 
-const SECTION_LINKS: Array<{
+interface SectionLinkSpec {
   id: AppTopBarSection;
   label: string;
-  href: string;
+  /** When the page knows the project, prefer `/p/<slug>/<section>`. */
+  buildHref: (projectSlug: string | undefined) => string;
   Icon: typeof LayoutDashboard;
-}> = [
-  { id: "boards", label: "Boards", href: "/boards", Icon: LayoutDashboard },
-  { id: "designs", label: "Designs", href: "/designs", Icon: Palette },
-  { id: "tasks", label: "Tasks", href: "/tasks", Icon: CheckSquare },
+}
+
+const SECTION_LINKS: SectionLinkSpec[] = [
+  {
+    id: "boards",
+    label: "Boards",
+    buildHref: (slug) => (slug ? `/p/${slug}/boards` : "/boards"),
+    Icon: LayoutDashboard,
+  },
+  {
+    id: "designs",
+    label: "Designs",
+    buildHref: (slug) => (slug ? `/p/${slug}/designs` : "/designs"),
+    Icon: Palette,
+  },
+  {
+    id: "tasks",
+    label: "Tasks",
+    buildHref: (slug) => (slug ? `/p/${slug}/tasks` : "/tasks"),
+    Icon: CheckSquare,
+  },
 ];
 
 /**
@@ -49,6 +74,7 @@ export function AppTopBar({
   userName,
   userEmail,
   active,
+  projectSlug,
 }: AppTopBarProps) {
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b border-white/5 bg-zinc-950/60 px-3 backdrop-blur">
@@ -65,12 +91,12 @@ export function AppTopBar({
         aria-label="Sections"
         className="ml-3 hidden items-center gap-0.5 sm:flex"
       >
-        {SECTION_LINKS.map(({ id, label, href, Icon }) => {
+        {SECTION_LINKS.map(({ id, label, buildHref, Icon }) => {
           const isActive = id === active;
           return (
             <Link
               key={id}
-              href={href}
+              href={buildHref(projectSlug)}
               aria-current={isActive ? "page" : undefined}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm font-medium transition-colors",

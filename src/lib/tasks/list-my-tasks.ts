@@ -1,7 +1,7 @@
 import { and, asc, eq, ne } from "drizzle-orm";
 
 import { db } from "@/db";
-import { tasks } from "@/db/schema";
+import { projects, tasks } from "@/db/schema";
 
 import type { TaskPriority, TaskStatus } from "./task-types";
 
@@ -14,6 +14,8 @@ export interface MyTaskRow {
   /** Pre-computed at fetch time so the page render stays pure. */
   overdue: boolean;
   parentTaskId: string | null;
+  /** Slug of the project the task lives in — used to build /p/<slug>/tasks/<id> links. */
+  projectSlug: string | null;
 }
 
 /**
@@ -34,8 +36,10 @@ export async function listMyOpenTasks(
       priority: tasks.priority,
       dueDate: tasks.dueDate,
       parentTaskId: tasks.parentTaskId,
+      projectSlug: projects.slug,
     })
     .from(tasks)
+    .leftJoin(projects, eq(projects.id, tasks.projectId))
     .where(
       and(
         eq(tasks.teamId, teamId),
@@ -59,5 +63,6 @@ export async function listMyOpenTasks(
     dueDate: row.dueDate,
     overdue: row.dueDate ? row.dueDate.getTime() < now : false,
     parentTaskId: row.parentTaskId,
+    projectSlug: row.projectSlug,
   }));
 }

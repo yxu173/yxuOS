@@ -121,7 +121,11 @@ export default async function HomePage() {
               {myTasks.map((task) => (
                 <li key={task.id}>
                   <Link
-                    href={`/tasks/${task.id}`}
+                    href={
+                      task.projectSlug
+                        ? `/p/${task.projectSlug}/tasks/${task.id}`
+                        : `/tasks/${task.id}`
+                    }
                     className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-white/[0.04]"
                   >
                     <PriorityIcon priority={task.priority} />

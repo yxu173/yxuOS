@@ -135,13 +135,25 @@ export async function deleteDesignComponent(componentId: string) {
 }
 
 /**
- * Fetch every component for `teamId`. Used by both the design page (the
- * active team's library) and the public share page (the design's team
- * library, so component-refs in shared designs still expand).
+ * Fetch every component visible from a given (team, project) context.
+ * - If `projectId` is supplied, only that project's components are
+ *   returned — this is what the design page uses now that components are
+ *   project-scoped.
+ * - If only `teamId` is supplied (e.g. legacy callers), every component
+ *   on the team is returned. This path is kept for the public share
+ *   page until that page also threads a projectId through.
  */
-export async function listDesignComponentsForTeam(teamId: string) {
+export async function listDesignComponentsForTeam(
+  teamId: string,
+  projectId?: string,
+) {
   return db.query.designComponents.findMany({
-    where: eq(designComponents.teamId, teamId),
+    where: projectId
+      ? and(
+          eq(designComponents.teamId, teamId),
+          eq(designComponents.projectId, projectId),
+        )
+      : eq(designComponents.teamId, teamId),
     orderBy: asc(designComponents.name),
     columns: {
       id: true,

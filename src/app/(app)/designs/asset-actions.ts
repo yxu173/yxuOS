@@ -117,9 +117,17 @@ export async function deleteDesignAsset(assetId: string) {
   revalidatePath("/designs");
 }
 
-export async function listDesignAssetsForTeam(teamId: string) {
+export async function listDesignAssetsForTeam(
+  teamId: string,
+  projectId?: string,
+) {
   return db.query.designAssets.findMany({
-    where: eq(designAssets.teamId, teamId),
+    where: projectId
+      ? and(
+          eq(designAssets.teamId, teamId),
+          eq(designAssets.projectId, projectId),
+        )
+      : eq(designAssets.teamId, teamId),
     orderBy: asc(designAssets.name),
     columns: {
       id: true,

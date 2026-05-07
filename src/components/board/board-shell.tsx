@@ -30,6 +30,10 @@ export interface BoardShellProps {
   shareToken: string | null;
   initialSnapshot: Record<string, unknown> | null;
   boards: BoardSummary[];
+  /** Base path used by the left panel for sibling links. */
+  boardsHrefBase: string;
+  /** Project slug used when the inline "+" in the left panel creates a sibling. */
+  projectSlug: string;
   initialMessages: UIMessage[];
   initialComments: CommentItemData[];
   members: MentionTarget[];
@@ -54,6 +58,8 @@ function BoardShellInner({
   shareToken,
   initialSnapshot,
   boards,
+  boardsHrefBase,
+  projectSlug,
   initialMessages,
   initialComments,
   members,
@@ -126,7 +132,7 @@ function BoardShellInner({
   return (
     <div className="fixed inset-0 flex flex-col bg-background">
       <WorkspaceTopBar
-        homePath="/boards"
+        homePath={boardsHrefBase}
         homeLabel="Boards"
         leftPanelLabel="chats"
         nameSlot={<BoardName boardId={boardId} initialName={boardName} />}
@@ -146,7 +152,12 @@ function BoardShellInner({
 
       <div className="flex min-h-0 flex-1">
         {leftOpen ? (
-          <LeftPanel boards={boards} activeBoardId={boardId} />
+          <LeftPanel
+            boards={boards}
+            activeBoardId={boardId}
+            boardsHrefBase={boardsHrefBase}
+            projectSlug={projectSlug}
+          />
         ) : null}
 
         <main className="relative flex-1 overflow-hidden">

@@ -52,6 +52,8 @@ export interface CreateTaskDialogProps {
   triggerLabel?: string;
   /** When true, render the trigger as a small ghost button (used inside the subtasks list). */
   inline?: boolean;
+  /** Project the task lands in. Defaults to the team's default project when unset. */
+  projectSlug?: string;
 }
 
 const UNASSIGNED = "__unassigned__";
@@ -68,6 +70,7 @@ export function CreateTaskDialog({
   parentTaskId,
   triggerLabel,
   inline = false,
+  projectSlug,
 }: CreateTaskDialogProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -107,15 +110,18 @@ export function CreateTaskDialog({
     }
     startTransition(async () => {
       try {
-        await createTask({
-          title: trimmed,
-          description: description.trim() || null,
-          status,
-          priority,
-          assigneeId: assigneeId === UNASSIGNED ? null : assigneeId,
-          parentTaskId: parentTaskId ?? null,
-          dueDate,
-        });
+        await createTask(
+          {
+            title: trimmed,
+            description: description.trim() || null,
+            status,
+            priority,
+            assigneeId: assigneeId === UNASSIGNED ? null : assigneeId,
+            parentTaskId: parentTaskId ?? null,
+            dueDate,
+          },
+          projectSlug,
+        );
         setOpen(false);
         reset();
         router.refresh();

@@ -18,6 +18,10 @@ export interface BoardSummary {
 export interface LeftPanelProps {
   boards: BoardSummary[];
   activeBoardId: string;
+  /** Base href for sibling boards in the list (e.g. `/p/<slug>/boards`). */
+  boardsHrefBase: string;
+  /** Slug for the currently active project — used so the inline "+" creates a board in the same project. */
+  projectSlug: string;
 }
 
 const dateFormatter = new Intl.DateTimeFormat("en", {
@@ -25,7 +29,12 @@ const dateFormatter = new Intl.DateTimeFormat("en", {
   day: "numeric",
 });
 
-export function LeftPanel({ boards, activeBoardId }: LeftPanelProps) {
+export function LeftPanel({
+  boards,
+  activeBoardId,
+  boardsHrefBase,
+  projectSlug,
+}: LeftPanelProps) {
   const [pending, startTransition] = useTransition();
 
   return (
@@ -37,7 +46,7 @@ export function LeftPanel({ boards, activeBoardId }: LeftPanelProps) {
         <form
           action={() => {
             startTransition(async () => {
-              await createBoard();
+              await createBoard(projectSlug);
             });
           }}
         >
@@ -66,7 +75,7 @@ export function LeftPanel({ boards, activeBoardId }: LeftPanelProps) {
               return (
                 <li key={board.id}>
                   <Link
-                    href={`/boards/${board.id}`}
+                    href={`${boardsHrefBase}/${board.id}`}
                     className={cn(
                       "flex flex-col gap-0.5 rounded-md px-2 py-1.5 text-sm transition-colors",
                       isActive

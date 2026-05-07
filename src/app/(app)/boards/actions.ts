@@ -8,24 +8,30 @@ import { nanoid } from "nanoid";
 import { db } from "@/db";
 import { boards } from "@/db/schema";
 import { logActivity } from "@/lib/activity";
-import { requireActiveTeam } from "@/lib/permissions";
-import { ensureDefaultProject } from "@/lib/projects";
+import {
+  requireActiveProject,
+  requireActiveTeam,
+} from "@/lib/permissions";
 
 /**
- * Creates a new board owned by the active team and redirects to it.
+ * Creates a new board on the active team. When a project slug is
+ * provided (every page under `/p/[projectSlug]/boards` binds it via
+ * `createBoard.bind(null, slug)`) the board is dropped into that
+ * project; otherwise it lands in the team's default project.
+ *
  * The current user is recorded as the creator (`ownerId`) for "Created
  * by Alice" badges; access control is by `teamId`.
  */
-export async function createBoard() {
-  const { session, teamId } = await requireActiveTeam();
-  const project = await ensureDefaultProject(teamId);
+export async function createBoard(projectSlug?: string) {
+  const { session, teamId, projectId, projectSlug: resolvedSlug } =
+    await requireActiveProject(projectSlug ?? null);
 
   const [board] = await db
     .insert(boards)
     .values({
       ownerId: session.user.id,
       teamId,
-      projectId: project.id,
+      projectId,
     })
     .returning({ id: boards.id, name: boards.name });
 
@@ -38,8 +44,8 @@ export async function createBoard() {
     subjectName: board.name,
   });
 
-  revalidatePath("/boards");
-  redirect(`/boards/${board.id}`);
+  revalidatePath(`/p/${resolvedSlug}/boards`);
+  redirect(`/p/${resolvedSlug}/boards/${board.id}`);
 }
 
 /**

@@ -7,8 +7,10 @@ import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { member, tasks } from "@/db/schema";
 import { logActivity } from "@/lib/activity";
-import { requireActiveTeam } from "@/lib/permissions";
-import { ensureDefaultProject } from "@/lib/projects";
+import {
+  requireActiveProject,
+  requireActiveTeam,
+} from "@/lib/permissions";
 import {
   isValidPriority,
   isValidStatus,
@@ -68,9 +70,14 @@ export interface CreateTaskInput {
 
 export async function createTask(
   input: CreateTaskInput,
+  projectSlug?: string,
 ): Promise<{ id: string }> {
-  const { session, teamId } = await requireActiveTeam();
-  const project = await ensureDefaultProject(teamId);
+  const {
+    session,
+    teamId,
+    projectId,
+    projectSlug: resolvedSlug,
+  } = await requireActiveProject(projectSlug ?? null);
 
   const title = input.title.trim().slice(0, MAX_TITLE);
   if (!title) throw new Error("Task title is required");
@@ -109,7 +116,7 @@ export async function createTask(
     .insert(tasks)
     .values({
       teamId,
-      projectId: project.id,
+      projectId,
       creatorId: session.user.id,
       assigneeId: input.assigneeId ?? null,
       parentTaskId: input.parentTaskId ?? null,
@@ -135,13 +142,13 @@ export async function createTask(
     },
   });
 
-  revalidatePath("/tasks");
+  revalidatePath(`/p/${resolvedSlug}/tasks`);
   if (input.parentTaskId) {
-    revalidatePath(`/tasks/${input.parentTaskId}`);
+    revalidatePath(`/p/${resolvedSlug}/tasks/${input.parentTaskId}`);
   }
 
   if (input.redirectAfter) {
-    redirect(`/tasks/${created.id}`);
+    redirect(`/p/${resolvedSlug}/tasks/${created.id}`);
   }
 
   return { id: created.id };
@@ -312,15 +319,21 @@ export interface TaskListRow {
 }
 
 /**
- * Loads every top-level task on a team plus a quick subtask count summary.
- * Subtasks are surfaced inside each task's detail page, not in the list,
- * so flattening would just create noise.
+ * Loads every top-level task on a team (optionally scoped to a project)
+ * plus a quick subtask count summary. Subtasks are surfaced inside each
+ * task's detail page, not in the list, so flattening would just create
+ * noise.
  */
 export async function listTopLevelTasks(
   teamId: string,
+  projectId?: string,
 ): Promise<TaskListRow[]> {
+  const baseScope = projectId
+    ? and(eq(tasks.teamId, teamId), eq(tasks.projectId, projectId))
+    : eq(tasks.teamId, teamId);
+
   const rows = await db.query.tasks.findMany({
-    where: and(eq(tasks.teamId, teamId), isNull(tasks.parentTaskId)),
+    where: and(baseScope, isNull(tasks.parentTaskId)),
     orderBy: desc(tasks.updatedAt),
     with: {
       assignee: {
@@ -343,9 +356,7 @@ export async function listTopLevelTasks(
       status: tasks.status,
     })
     .from(tasks)
-    .where(
-      and(eq(tasks.teamId, teamId), inArray(tasks.parentTaskId, ids)),
-    );
+    .where(and(baseScope, inArray(tasks.parentTaskId, ids)));
 
   const counts = new Map<string, { total: number; done: number }>();
   for (const row of subtaskRows) {

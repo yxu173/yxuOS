@@ -1,63 +1,10 @@
-import { listTopLevelTasks } from "@/app/(app)/tasks/actions";
-import { CreateTaskDialog } from "@/components/tasks/create-task-dialog";
-import { TaskList } from "@/components/tasks/task-list";
-import { AppTopBar } from "@/components/workspaces/app-top-bar";
+import { redirect } from "next/navigation";
+
 import { requireActiveTeam } from "@/lib/permissions";
-import { listTeamMembers, listUserTeams } from "@/lib/teams";
+import { ensureDefaultProject } from "@/lib/projects";
 
-export const metadata = {
-  title: "Tasks · yxuOS",
-};
-
-export default async function TasksIndexPage() {
-  const { session, teamId } = await requireActiveTeam();
-
-  const [tasks, teams, members] = await Promise.all([
-    listTopLevelTasks(teamId),
-    listUserTeams(session.user.id),
-    listTeamMembers(teamId),
-  ]);
-
-  const memberOptions = members.map((m) => ({
-    userId: m.userId,
-    name: m.name,
-    username: m.username,
-  }));
-
-  return (
-    <div className="flex min-h-screen flex-col">
-      <AppTopBar
-        teams={teams}
-        activeTeamId={teamId}
-        userName={session.user.name}
-        userEmail={session.user.email}
-        active="tasks"
-      />
-      <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-8">
-        <header className="flex items-baseline justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
-            <p className="text-sm text-muted-foreground">
-              Track work for the team. Click a task to open it; click the
-              status pill to move it through the pipeline.
-            </p>
-          </div>
-          <CreateTaskDialog members={memberOptions} />
-        </header>
-
-        {tasks.length === 0 ? (
-          <section className="grid h-72 place-items-center rounded-lg border border-dashed border-white/10 bg-white/[0.02] text-sm text-muted-foreground">
-            <div className="flex flex-col items-center gap-2 text-center">
-              <p>No tasks yet.</p>
-              <p className="text-xs">
-                Create your first task to start tracking work for the team.
-              </p>
-            </div>
-          </section>
-        ) : (
-          <TaskList tasks={tasks} members={memberOptions} />
-        )}
-      </main>
-    </div>
-  );
+export default async function LegacyTasksRedirect() {
+  const { teamId } = await requireActiveTeam();
+  const project = await ensureDefaultProject(teamId);
+  redirect(`/p/${project.slug}/tasks`);
 }

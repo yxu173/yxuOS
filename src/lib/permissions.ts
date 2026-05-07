@@ -2,9 +2,10 @@ import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 
 import { db } from "@/db";
-import { member } from "@/db/schema";
+import { member, projects } from "@/db/schema";
 
 import { auth } from "./auth";
+import { ensureDefaultProject } from "./projects";
 
 /* ─── Roles ─────────────────────────────────────────── */
 
@@ -109,4 +110,64 @@ export async function requireMembership(
     throw new Error(`This action requires the ${minRole} role`);
   }
   return { session, teamId, role, memberId };
+}
+
+/**
+ * Resolves the active project for a given slug under the active team —
+ * the workhorse permission gate for everything under `/p/[projectSlug]/`.
+ *
+ * - Verifies the team membership (same role check as `requireActiveTeam`).
+ * - Loads the project by `(team_id, slug)`. Archived projects throw — you
+ *   can read them via `requireMembership` directly if needed.
+ * - When `slug` is `null` / undefined, falls back to the team's default
+ *   project (creating one lazily if the team has none — handles
+ *   pre-backfill teams).
+ */
+export async function requireActiveProject(
+  slug: string | null | undefined,
+  minRole: TeamRole = "member",
+): Promise<{
+  session: Awaited<ReturnType<typeof requireSession>>;
+  teamId: string;
+  projectId: string;
+  projectSlug: string;
+  projectName: string;
+  role: TeamRole;
+  memberId: string;
+}> {
+  const team = await requireActiveTeam(minRole);
+
+  if (!slug) {
+    const fallback = await ensureDefaultProject(team.teamId);
+    return {
+      session: team.session,
+      teamId: team.teamId,
+      projectId: fallback.id,
+      projectSlug: fallback.slug,
+      projectName: fallback.name,
+      role: team.role,
+      memberId: team.memberId,
+    };
+  }
+
+  const project = await db.query.projects.findFirst({
+    where: and(eq(projects.teamId, team.teamId), eq(projects.slug, slug)),
+    columns: { id: true, slug: true, name: true, archived: true },
+  });
+  if (!project) {
+    throw new Error(`Project "${slug}" not found in this team`);
+  }
+  if (project.archived) {
+    throw new Error(`Project "${slug}" is archived`);
+  }
+
+  return {
+    session: team.session,
+    teamId: team.teamId,
+    projectId: project.id,
+    projectSlug: project.slug,
+    projectName: project.name,
+    role: team.role,
+    memberId: team.memberId,
+  };
 }

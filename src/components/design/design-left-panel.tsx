@@ -18,6 +18,8 @@ export interface DesignSummary {
 export interface DesignLeftPanelProps {
   designs: DesignSummary[];
   activeDesignId: string;
+  designsHrefBase: string;
+  projectSlug: string;
 }
 
 const dateFormatter = new Intl.DateTimeFormat("en", {
@@ -28,6 +30,8 @@ const dateFormatter = new Intl.DateTimeFormat("en", {
 export function DesignLeftPanel({
   designs,
   activeDesignId,
+  designsHrefBase,
+  projectSlug,
 }: DesignLeftPanelProps) {
   const [pending, startTransition] = useTransition();
 
@@ -40,7 +44,7 @@ export function DesignLeftPanel({
         <form
           action={() => {
             startTransition(async () => {
-              await createDesign();
+              await createDesign(projectSlug);
             });
           }}
         >
@@ -69,7 +73,7 @@ export function DesignLeftPanel({
               return (
                 <li key={design.id}>
                   <Link
-                    href={`/designs/${design.id}`}
+                    href={`${designsHrefBase}/${design.id}`}
                     className={cn(
                       "flex flex-col gap-0.5 rounded-md px-2 py-1.5 text-sm transition-colors",
                       isActive

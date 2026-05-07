@@ -8,19 +8,21 @@ import { nanoid } from "nanoid";
 import { db } from "@/db";
 import { designs } from "@/db/schema";
 import { logActivity } from "@/lib/activity";
-import { requireActiveTeam } from "@/lib/permissions";
-import { ensureDefaultProject } from "@/lib/projects";
+import {
+  requireActiveProject,
+  requireActiveTeam,
+} from "@/lib/permissions";
 
-export async function createDesign() {
-  const { session, teamId } = await requireActiveTeam();
-  const project = await ensureDefaultProject(teamId);
+export async function createDesign(projectSlug?: string) {
+  const { session, teamId, projectId, projectSlug: resolvedSlug } =
+    await requireActiveProject(projectSlug ?? null);
 
   const [design] = await db
     .insert(designs)
     .values({
       ownerId: session.user.id,
       teamId,
-      projectId: project.id,
+      projectId,
     })
     .returning({ id: designs.id, name: designs.name });
 
@@ -33,8 +35,8 @@ export async function createDesign() {
     subjectName: design.name,
   });
 
-  revalidatePath("/designs");
-  redirect(`/designs/${design.id}`);
+  revalidatePath(`/p/${resolvedSlug}/designs`);
+  redirect(`/p/${resolvedSlug}/designs/${design.id}`);
 }
 
 export async function saveDesignSnapshot(
