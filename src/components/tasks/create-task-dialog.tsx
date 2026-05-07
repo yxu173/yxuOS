@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
 import {
@@ -136,11 +138,14 @@ export function CreateTaskDialog({
         className="flex max-w-2xl flex-col gap-0 p-0 sm:max-w-2xl"
       >
         <form onSubmit={submit} className="flex flex-col">
-          {/* Crumb / context line */}
+          {/* Crumb / context line — also serves as the dialog's accessible
+              title. The visual styling is intentionally muted because the
+              big title input below is the real focus, but the heading
+              still needs to exist for screen readers. */}
           <header className="flex items-center justify-between border-b border-white/5 px-5 py-3">
-            <span className="text-xs uppercase tracking-wide text-zinc-500">
+            <DialogTitle className="text-xs font-normal uppercase tracking-wide text-zinc-500">
               {parentTaskId ? "New sub-task" : "New task"}
-            </span>
+            </DialogTitle>
             <span className="text-[10px] text-zinc-500">
               <kbd className="rounded border border-white/10 bg-white/5 px-1 py-px font-mono text-[10px] text-zinc-300">
                 ⌘
@@ -151,6 +156,11 @@ export function CreateTaskDialog({
               {" to create"}
             </span>
           </header>
+          <DialogDescription className="sr-only">
+            {parentTaskId
+              ? "Add a sub-task. Sub-tasks roll up to their parent and have their own status, priority, and assignee."
+              : "Create a task scoped to the active team. Add details now or fill them in later."}
+          </DialogDescription>
 
           {/* Title — borderless, big */}
           <div className="px-5 pt-4">
