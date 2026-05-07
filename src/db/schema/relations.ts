@@ -15,6 +15,7 @@ import { comments } from "./comments";
 import { designAssets } from "./design-assets";
 import { designComponents } from "./design-components";
 import { designs } from "./designs";
+import { projects } from "./projects";
 import { tasks } from "./tasks";
 
 /**
@@ -49,12 +50,30 @@ export const organizationRelations = relations(organization, ({ many }) => ({
   activityRows: many(activityLog),
   tasks: many(tasks),
   attachments: many(attachments),
+  projects: many(projects),
+}));
+
+export const projectsRelations = relations(projects, ({ one, many }) => ({
+  team: one(organization, {
+    fields: [projects.teamId],
+    references: [organization.id],
+  }),
+  boards: many(boards),
+  designs: many(designs),
+  tasks: many(tasks),
+  designComponents: many(designComponents),
+  designAssets: many(designAssets),
+  attachments: many(attachments),
 }));
 
 export const attachmentsRelations = relations(attachments, ({ one }) => ({
   team: one(organization, {
     fields: [attachments.teamId],
     references: [organization.id],
+  }),
+  project: one(projects, {
+    fields: [attachments.projectId],
+    references: [projects.id],
   }),
   uploader: one(user, {
     fields: [attachments.uploaderId],
@@ -66,6 +85,10 @@ export const tasksRelations = relations(tasks, ({ one, many }) => ({
   team: one(organization, {
     fields: [tasks.teamId],
     references: [organization.id],
+  }),
+  project: one(projects, {
+    fields: [tasks.projectId],
+    references: [projects.id],
   }),
   creator: one(user, {
     fields: [tasks.creatorId],
@@ -136,6 +159,10 @@ export const designAssetsRelations = relations(designAssets, ({ one }) => ({
     fields: [designAssets.ownerId],
     references: [user.id],
   }),
+  project: one(projects, {
+    fields: [designAssets.projectId],
+    references: [projects.id],
+  }),
 }));
 
 export const designComponentsRelations = relations(
@@ -144,6 +171,10 @@ export const designComponentsRelations = relations(
     owner: one(user, {
       fields: [designComponents.ownerId],
       references: [user.id],
+    }),
+    project: one(projects, {
+      fields: [designComponents.projectId],
+      references: [projects.id],
     }),
   }),
 );
@@ -167,11 +198,19 @@ export const boardsRelations = relations(boards, ({ one }) => ({
     fields: [boards.ownerId],
     references: [user.id],
   }),
+  project: one(projects, {
+    fields: [boards.projectId],
+    references: [projects.id],
+  }),
 }));
 
 export const designsRelations = relations(designs, ({ one }) => ({
   owner: one(user, {
     fields: [designs.ownerId],
     references: [user.id],
+  }),
+  project: one(projects, {
+    fields: [designs.projectId],
+    references: [projects.id],
   }),
 }));

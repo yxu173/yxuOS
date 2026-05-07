@@ -2,6 +2,7 @@ import { index, jsonb, pgTable, text, timestamp, unique } from "drizzle-orm/pg-c
 import { nanoid } from "nanoid";
 
 import { organization, user } from "./auth";
+import { projects } from "./projects";
 
 const newId = () => nanoid();
 
@@ -26,6 +27,10 @@ export const designComponents = pgTable(
     teamId: text("team_id")
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
+    /** Project the component lives in. Nullable until Phase 1.2 backfill. */
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
     /** Human-readable name shown in the library, e.g. "Stride Logo". */
     name: text("name").notNull(),
     /** Stable kebab-case identifier the agent / DesignNodes reference. */
@@ -42,6 +47,7 @@ export const designComponents = pgTable(
   (t) => [
     index("design_components_owner_idx").on(t.ownerId),
     index("design_components_team_idx").on(t.teamId),
+    index("design_components_project_idx").on(t.projectId),
     // Slugs unique per-user so two users can both have a "logo" component.
     unique("design_components_owner_slug_unique").on(t.ownerId, t.slug),
   ],

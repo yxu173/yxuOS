@@ -8,6 +8,7 @@ import {
 import { nanoid } from "nanoid";
 
 import { organization, user } from "./auth";
+import { projects } from "./projects";
 
 const newId = () => nanoid();
 
@@ -28,6 +29,14 @@ export const attachments = pgTable(
     teamId: text("team_id")
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
+    /**
+     * Project the attachment was uploaded into. Nullable for legacy
+     * uploads that pre-date the projects rollout; new uploads after
+     * Phase 1 always set this.
+     */
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
     uploaderId: text("uploader_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
@@ -45,6 +54,7 @@ export const attachments = pgTable(
   },
   (t) => [
     index("attachments_team_idx").on(t.teamId),
+    index("attachments_project_idx").on(t.projectId),
     index("attachments_uploader_idx").on(t.uploaderId),
   ],
 );

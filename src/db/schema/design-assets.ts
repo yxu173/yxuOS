@@ -8,6 +8,7 @@ import {
 import { nanoid } from "nanoid";
 
 import { organization, user } from "./auth";
+import { projects } from "./projects";
 
 const newId = () => nanoid();
 
@@ -30,6 +31,10 @@ export const designAssets = pgTable(
     teamId: text("team_id")
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
+    /** Project the asset lives in. Nullable until Phase 1.2 backfill. */
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
     /** Display name (defaults to the original file name). */
     name: text("name").notNull(),
     /** Vercel Blob pathname — needed for `del()`. */
@@ -48,6 +53,7 @@ export const designAssets = pgTable(
   (t) => [
     index("design_assets_owner_idx").on(t.ownerId),
     index("design_assets_team_idx").on(t.teamId),
+    index("design_assets_project_idx").on(t.projectId),
   ],
 );
 

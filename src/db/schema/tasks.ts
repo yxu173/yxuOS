@@ -8,6 +8,7 @@ import {
 import { nanoid } from "nanoid";
 
 import { organization, user } from "./auth";
+import { projects } from "./projects";
 
 const newId = () => nanoid();
 
@@ -33,6 +34,10 @@ export const tasks = pgTable(
     teamId: text("team_id")
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
+    /** Project the task lives in. Nullable until Phase 1.2 backfill. */
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
     creatorId: text("creator_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
@@ -58,6 +63,7 @@ export const tasks = pgTable(
   (t) => [
     index("tasks_team_idx").on(t.teamId),
     index("tasks_team_status_idx").on(t.teamId, t.status),
+    index("tasks_project_idx").on(t.projectId),
     index("tasks_assignee_idx").on(t.assigneeId),
     index("tasks_parent_idx").on(t.parentTaskId),
     index("tasks_creator_idx").on(t.creatorId),
