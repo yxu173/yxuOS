@@ -448,13 +448,17 @@ export interface ExtractComponentInput {
  *  3. Replace the in-artboard node with a `component-ref` pointing at the
  *     new slug.
  *
- * The caller (DesignChat) is responsible for calling `router.refresh()`
- * after this returns so the local component library picks up the new
- * entry; the renderer falls back to a placeholder until the refresh
- * completes.
+ * The optional `onComponentSaved` side channel lets the caller register
+ * the new component into the library context optimistically, before
+ * `router.refresh()` round-trips the new server-provided list. Without
+ * it, `<DesignRenderer>` would render a missing-component placeholder
+ * for the in-place ref until the refresh completes.
  */
 export async function executeExtractComponent(
   input: ExtractComponentInput,
+  options?: {
+    onComponentSaved?: (component: LibraryComponent) => void;
+  },
 ): Promise<
   ToolResult<{
     artboardId: string;
@@ -507,6 +511,14 @@ export async function executeExtractComponent(
         err instanceof Error ? err.message : "Failed to save component.",
       );
     }
+
+    // Optimistic library push — render the new component immediately.
+    options?.onComponentSaved?.({
+      id: saved.id,
+      name: input.name,
+      slug: saved.slug,
+      tree: cloned,
+    });
 
     // Replace the source node with a component-ref so future edits to the
     // saved component propagate everywhere.
@@ -880,13 +892,17 @@ export interface UpdateComponentInput {
  * malformed updates fail fast with `validation_failed` instead of
  * landing a broken component that breaks every artboard referencing it.
  *
- * The caller (DesignChat) calls `router.refresh()` after this returns
- * so `<DesignRenderer>` picks up the new tree on the next paint;
- * artboards using `component-ref` propagate automatically.
+ * The optional `onComponentSaved` side channel lets the caller push the
+ * updated tree into the library context optimistically — every
+ * artboard with a `component-ref` to this slug then re-renders the new
+ * tree on the next paint, no `router.refresh()` round-trip needed.
  */
 export async function executeUpdateComponent(
   input: UpdateComponentInput,
   components: LibraryComponent[],
+  options?: {
+    onComponentSaved?: (component: LibraryComponent) => void;
+  },
 ): Promise<ToolResult<{ componentSlug: string }>> {
   return withIdempotencyAsync(input.idempotencyKey, async () => {
     const existing = components.find((c) => c.slug === input.componentSlug);
@@ -903,8 +919,9 @@ export async function executeUpdateComponent(
       return fail("validation_failed", violation.message, violation.hint);
     }
 
+    let saved: { id: string; slug: string };
     try {
-      await updateDesignComponentBySlug({
+      saved = await updateDesignComponentBySlug({
         slug: input.componentSlug,
         tree: input.tree as unknown as Record<string, unknown>,
         name: input.name,
@@ -915,6 +932,15 @@ export async function executeUpdateComponent(
         err instanceof Error ? err.message : "Failed to update component.",
       );
     }
+
+    // Optimistic library push — every artboard with a component-ref to
+    // this slug re-renders with the new tree on the next React frame.
+    options?.onComponentSaved?.({
+      id: saved.id,
+      name: input.name?.trim() || existing.name,
+      slug: saved.slug,
+      tree: input.tree,
+    });
 
     return ok({ componentSlug: input.componentSlug });
   });

@@ -229,12 +229,16 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
             case "extract_component": {
               const output = await executeExtractComponent(
                 toolCall.input as Parameters<typeof executeExtractComponent>[0],
+                // Optimistic library push — without this, every artboard
+                // with the new component-ref shows a missing-component
+                // placeholder until router.refresh() round-trips.
+                { onComponentSaved: library.registerOptimisticComponent },
               );
               emit(output);
-              // Pull the freshly-saved component into the local library so
-              // `list_components` / the renderer pick it up on the next
-              // turn. revalidatePath() inside the action is the source of
-              // truth; this just kicks Next into refetching.
+              // router.refresh() is still kicked so the next server-side
+              // listDesignComponentsForTeam pickup matches the optimistic
+              // entry; the overlay drops out automatically when the
+              // server-provided list catches up.
               if (output.ok) router.refresh();
               break;
             }
@@ -242,11 +246,12 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
               const output = await executeUpdateComponent(
                 toolCall.input as Parameters<typeof executeUpdateComponent>[0],
                 library.components,
+                { onComponentSaved: library.registerOptimisticComponent },
               );
               emit(output);
-              // Saved components are rendered via `component-ref` lookups,
-              // so refreshing the library makes the new tree show up
-              // everywhere it's referenced on the next paint.
+              // The optimistic push already drove the in-canvas re-render;
+              // refresh aligns the server-provided list (and any other
+              // open tabs) with what we already showed.
               if (output.ok) router.refresh();
               break;
             }
