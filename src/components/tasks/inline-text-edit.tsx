@@ -1,9 +1,12 @@
 "use client";
 
+import { Pencil } from "lucide-react";
 import { useEffect, useRef, useState, useTransition } from "react";
 
 import { updateTask } from "@/app/(app)/tasks/actions";
-import { Textarea } from "@/components/ui/textarea";
+import { MarkdownEditor } from "@/components/markdown/markdown-editor";
+import { MarkdownProse } from "@/components/markdown/markdown-prose";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export interface InlineTaskTitleProps {
@@ -94,48 +97,135 @@ export interface InlineTaskDescriptionProps {
 }
 
 /**
- * Inline-editable description. Always visible as a textarea — minimal
- * chrome until focus, autosave on blur with optimistic local state.
+ * Mode-switching task description: renders the saved markdown as prose
+ * by default, switches to a full markdown editor (with paste / drop /
+ * button image upload) when clicked. Click outside or hit "Save" to
+ * commit; "Cancel" reverts.
  */
 export function InlineTaskDescription({
   taskId,
   initialValue,
 }: InlineTaskDescriptionProps) {
   const [value, setValue] = useState(initialValue);
+  const [editing, setEditing] = useState(false);
   const [pending, startTransition] = useTransition();
   const lastSavedRef = useRef(initialValue);
 
   // Sync local optimistic value to whatever the server just shipped.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setValue(initialValue);
-    lastSavedRef.current = initialValue;
-  }, [initialValue]);
+    if (!editing) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setValue(initialValue);
+      lastSavedRef.current = initialValue;
+    }
+  }, [initialValue, editing]);
 
   const save = () => {
-    if (value === lastSavedRef.current) return;
+    if (value === lastSavedRef.current) {
+      setEditing(false);
+      return;
+    }
     const next = value.trim() || null;
     startTransition(async () => {
       try {
         await updateTask({ taskId, description: next });
         lastSavedRef.current = value;
+        setEditing(false);
       } catch (err) {
         alert(err instanceof Error ? err.message : "Failed to save description");
       }
     });
   };
 
+  const cancel = () => {
+    setValue(lastSavedRef.current);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="flex flex-col gap-2">
+        <MarkdownEditor
+          value={value}
+          onChange={setValue}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              cancel();
+              return;
+            }
+            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+              event.preventDefault();
+              save();
+            }
+          }}
+          autoFocus
+          rows={6}
+          placeholder="Acceptance criteria, links, paste a screenshot…"
+        />
+        <div className="flex items-center justify-end gap-2">
+          <span className="text-[10px] text-zinc-500">
+            <kbd className="rounded border border-white/10 bg-white/5 px-1 py-px font-mono text-[10px] text-zinc-300">
+              ⌘
+            </kbd>{" "}
+            <kbd className="rounded border border-white/10 bg-white/5 px-1 py-px font-mono text-[10px] text-zinc-300">
+              ⏎
+            </kbd>{" "}
+            to save · Esc to cancel
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={cancel}
+            disabled={pending}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            onClick={save}
+            disabled={pending}
+          >
+            {pending ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const hasContent = value.trim().length > 0;
+
   return (
-    <Textarea
-      value={value}
-      onChange={(event) => setValue(event.target.value)}
-      onBlur={save}
-      placeholder="Add a description, acceptance criteria, links…"
-      rows={4}
-      className={cn(
-        "min-h-24 max-h-[60vh] resize-none border-transparent bg-transparent px-1 py-1 text-sm leading-relaxed text-zinc-200 shadow-none focus-visible:border-white/10 focus-visible:ring-0",
-        pending && "opacity-70",
-      )}
-    />
+    <div className="group relative flex flex-col gap-2">
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className={cn(
+          "min-h-12 w-full rounded-md px-2 py-1.5 text-left transition-colors hover:bg-white/[0.03]",
+          !hasContent && "text-zinc-500",
+        )}
+        aria-label="Edit description"
+      >
+        {hasContent ? (
+          <MarkdownProse>{value}</MarkdownProse>
+        ) : (
+          <p className="text-sm">
+            Add a description — markdown and pasted images are supported.
+          </p>
+        )}
+      </button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        onClick={() => setEditing(true)}
+        className="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100"
+        aria-label="Edit description"
+      >
+        <Pencil className="size-3.5" />
+      </Button>
+    </div>
   );
 }

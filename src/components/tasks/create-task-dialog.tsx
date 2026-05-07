@@ -1,30 +1,25 @@
 "use client";
 
-import { Plus } from "lucide-react";
+import { Check, Plus, UserPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 
 import { createTask } from "@/app/(app)/tasks/actions";
+import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   TASK_PRIORITIES,
   TASK_PRIORITY_LABELS,
@@ -33,8 +28,11 @@ import {
   type TaskPriority,
   type TaskStatus,
 } from "@/lib/tasks/task-types";
+import { cn } from "@/lib/utils";
 
-import type { AssigneeOption } from "./assignee-picker";
+import { type AssigneeOption } from "./assignee-picker";
+import { PriorityIcon } from "./priority-icon";
+import { StatusIcon } from "./status-icon";
 
 export interface CreateTaskDialogProps {
   members: AssigneeOption[];
@@ -42,12 +40,18 @@ export interface CreateTaskDialogProps {
   parentTaskId?: string;
   /** Trigger override — defaults to a "New task" button. */
   triggerLabel?: string;
-  /** When true, render the trigger as a small inline button (used inside the subtasks list). */
+  /** When true, render the trigger as a small ghost button (used inside the subtasks list). */
   inline?: boolean;
 }
 
 const UNASSIGNED = "__unassigned__";
 
+/**
+ * Linear-style create-task overlay. Big title input is the focus; the
+ * description supports markdown + image upload via the shared
+ * `MarkdownEditor`. Status / priority / assignee live as inline pills at
+ * the bottom — clicking each opens its picker.
+ */
 export function CreateTaskDialog({
   members,
   parentTaskId,
@@ -63,6 +67,13 @@ export function CreateTaskDialog({
   const [priority, setPriority] = useState<TaskPriority>("medium");
   const [assigneeId, setAssigneeId] = useState<string>(UNASSIGNED);
   const [error, setError] = useState<string | null>(null);
+  const titleRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setTimeout(() => titleRef.current?.focus(), 50);
+    }
+  }, [open]);
 
   const reset = () => {
     setTitle("");
@@ -73,11 +84,12 @@ export function CreateTaskDialog({
     setError(null);
   };
 
-  const submit = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const submit = (event?: React.FormEvent<HTMLFormElement>) => {
+    event?.preventDefault();
     const trimmed = title.trim();
     if (!trimmed) {
       setError("Title is required");
+      titleRef.current?.focus();
       return;
     }
     startTransition(async () => {
@@ -99,6 +111,8 @@ export function CreateTaskDialog({
     });
   };
 
+  const assignedMember = members.find((m) => m.userId === assigneeId) ?? null;
+
   return (
     <Dialog
       open={open}
@@ -108,114 +122,98 @@ export function CreateTaskDialog({
       }}
     >
       <DialogTrigger asChild>
-        <Button size={inline ? "sm" : "default"} variant={inline ? "ghost" : "default"} className="gap-1.5">
+        <Button
+          size={inline ? "sm" : "default"}
+          variant={inline ? "ghost" : "default"}
+          className="gap-1.5"
+        >
           <Plus className="size-4" />
           {triggerLabel ?? (parentTaskId ? "New sub-task" : "New task")}
         </Button>
       </DialogTrigger>
-      <DialogContent>
-        <form onSubmit={submit} className="flex flex-col gap-4">
-          <DialogHeader>
-            <DialogTitle>
-              {parentTaskId ? "Add a sub-task" : "Create a task"}
-            </DialogTitle>
-            <DialogDescription>
-              {parentTaskId
-                ? "Sub-tasks roll up to their parent. They have their own status and assignee."
-                : "Tasks are scoped to the active team. Add details now or fill them in later."}
-            </DialogDescription>
-          </DialogHeader>
+      <DialogContent
+        showCloseButton={false}
+        className="flex max-w-2xl flex-col gap-0 p-0 sm:max-w-2xl"
+      >
+        <form onSubmit={submit} className="flex flex-col">
+          {/* Crumb / context line */}
+          <header className="flex items-center justify-between border-b border-white/5 px-5 py-3">
+            <span className="text-xs uppercase tracking-wide text-zinc-500">
+              {parentTaskId ? "New sub-task" : "New task"}
+            </span>
+            <span className="text-[10px] text-zinc-500">
+              <kbd className="rounded border border-white/10 bg-white/5 px-1 py-px font-mono text-[10px] text-zinc-300">
+                ⌘
+              </kbd>{" "}
+              <kbd className="rounded border border-white/10 bg-white/5 px-1 py-px font-mono text-[10px] text-zinc-300">
+                ⏎
+              </kbd>
+              {" to create"}
+            </span>
+          </header>
 
-          <div className="grid gap-3">
-            <div className="grid gap-1.5">
-              <Label htmlFor="task-title">Title</Label>
-              <Input
-                id="task-title"
-                autoFocus
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                maxLength={200}
-                required
-              />
-            </div>
+          {/* Title — borderless, big */}
+          <div className="px-5 pt-4">
+            <input
+              ref={titleRef}
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="Task title"
+              maxLength={200}
+              required
+              onKeyDown={(event) => {
+                if (
+                  (event.metaKey || event.ctrlKey) &&
+                  event.key === "Enter"
+                ) {
+                  event.preventDefault();
+                  submit();
+                }
+              }}
+              className="w-full bg-transparent text-lg font-semibold tracking-tight text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
+            />
+          </div>
 
-            <div className="grid gap-1.5">
-              <Label htmlFor="task-description">Description</Label>
-              <Textarea
-                id="task-description"
-                rows={3}
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-                placeholder="Acceptance criteria, links, context…"
-                className="max-h-40 resize-none"
-              />
-            </div>
+          {/* Description — markdown editor with image upload */}
+          <div className="px-5 pb-1 pt-2">
+            <MarkdownEditor
+              value={description}
+              onChange={setDescription}
+              rows={6}
+              placeholder="Add a description… markdown supported, paste / drop images."
+              onKeyDown={(event) => {
+                if (
+                  (event.metaKey || event.ctrlKey) &&
+                  event.key === "Enter"
+                ) {
+                  event.preventDefault();
+                  submit();
+                }
+              }}
+            />
+          </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-1.5">
-                <Label htmlFor="task-status">Status</Label>
-                <Select
-                  value={status}
-                  onValueChange={(value) => setStatus(value as TaskStatus)}
-                >
-                  <SelectTrigger id="task-status">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {TASK_STATUSES.map((option) => (
-                      <SelectItem key={option} value={option}>
-                        {TASK_STATUS_LABELS[option]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor="task-priority">Priority</Label>
-                <Select
-                  value={priority}
-                  onValueChange={(value) =>
-                    setPriority(value as TaskPriority)
-                  }
-                >
-                  <SelectTrigger id="task-priority">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[...TASK_PRIORITIES].reverse().map((option) => (
-                      <SelectItem key={option} value={option}>
-                        {TASK_PRIORITY_LABELS[option]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div className="grid gap-1.5">
-              <Label htmlFor="task-assignee">Assignee</Label>
-              <Select value={assigneeId} onValueChange={setAssigneeId}>
-                <SelectTrigger id="task-assignee">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={UNASSIGNED}>Unassigned</SelectItem>
-                  {members.map((m) => (
-                    <SelectItem key={m.userId} value={m.userId}>
-                      {m.name}
-                      {m.username ? ` · @${m.username}` : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          {/* Inline property pills */}
+          <div className="flex flex-wrap items-center gap-1.5 border-t border-white/5 px-5 py-3">
+            <StatusDropdown status={status} onChange={setStatus} />
+            <PriorityDropdown
+              priority={priority}
+              onChange={setPriority}
+            />
+            <AssigneeDropdown
+              assignee={assignedMember}
+              members={members}
+              onChange={(next) =>
+                setAssigneeId(next?.userId ?? UNASSIGNED)
+              }
+            />
           </div>
 
           {error ? (
-            <p className="text-sm text-destructive">{error}</p>
+            <p className="px-5 pb-2 text-sm text-destructive">{error}</p>
           ) : null}
 
-          <DialogFooter>
+          <footer className="flex items-center justify-end gap-2 border-t border-white/5 bg-white/[0.02] px-5 py-3">
             <Button
               type="button"
               variant="ghost"
@@ -224,12 +222,185 @@ export function CreateTaskDialog({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={pending}>
-              {pending ? "Creating…" : "Create task"}
+            <Button type="submit" disabled={pending || !title.trim()}>
+              {pending
+                ? "Creating…"
+                : parentTaskId
+                  ? "Create sub-task"
+                  : "Create task"}
             </Button>
-          </DialogFooter>
+          </footer>
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* ─── local-only pickers (don't hit the server while we're still in the create form) ─── */
+
+function StatusDropdown({
+  status,
+  onChange,
+}: {
+  status: TaskStatus;
+  onChange: (next: TaskStatus) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-white/10"
+        >
+          <StatusIcon status={status} />
+          {TASK_STATUS_LABELS[status]}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-44">
+        <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-zinc-500">
+          Status
+        </DropdownMenuLabel>
+        {TASK_STATUSES.map((option) => (
+          <DropdownMenuItem
+            key={option}
+            onSelect={() => onChange(option)}
+            className="justify-between"
+          >
+            <span className="flex items-center gap-2">
+              <StatusIcon status={option} />
+              {TASK_STATUS_LABELS[option]}
+            </span>
+            {option === status ? (
+              <Check className="size-3.5 text-zinc-300" />
+            ) : null}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function AssigneeDropdown({
+  assignee,
+  members,
+  onChange,
+}: {
+  assignee: AssigneeOption | null;
+  members: AssigneeOption[];
+  onChange: (next: AssigneeOption | null) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-white/10"
+        >
+          {assignee ? (
+            <span className="grid size-4 shrink-0 place-items-center rounded-full bg-zinc-800 text-[8px] font-semibold text-zinc-200">
+              {initials(assignee.name)}
+            </span>
+          ) : (
+            <UserPlus className="size-3.5 text-zinc-500" />
+          )}
+          {assignee?.name ?? "Unassigned"}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-56">
+        <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-zinc-500">
+          Assign to
+        </DropdownMenuLabel>
+        {members.map((m) => (
+          <DropdownMenuItem
+            key={m.userId}
+            onSelect={() => onChange(m)}
+            className="justify-between gap-2"
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="grid size-5 shrink-0 place-items-center rounded-full bg-zinc-800 text-[9px] font-semibold text-zinc-200">
+                {initials(m.name)}
+              </span>
+              <span className="flex min-w-0 items-baseline gap-1.5 truncate">
+                <span className="truncate text-zinc-100">{m.name}</span>
+                {m.username ? (
+                  <span className="text-[10px] text-zinc-500">
+                    @{m.username}
+                  </span>
+                ) : null}
+              </span>
+            </span>
+            {m.userId === assignee?.userId ? (
+              <Check className="size-3.5 text-zinc-300" />
+            ) : null}
+          </DropdownMenuItem>
+        ))}
+        {assignee ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() => onChange(null)}
+              className="text-zinc-400 focus:text-zinc-200"
+            >
+              Unassign
+            </DropdownMenuItem>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function initials(name: string): string {
+  return (
+    name
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() ?? "")
+      .join("") || "?"
+  );
+}
+
+function PriorityDropdown({
+  priority,
+  onChange,
+}: {
+  priority: TaskPriority;
+  onChange: (next: TaskPriority) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-white/10",
+          )}
+        >
+          <PriorityIcon priority={priority} />
+          {TASK_PRIORITY_LABELS[priority]}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-44">
+        <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-zinc-500">
+          Priority
+        </DropdownMenuLabel>
+        {[...TASK_PRIORITIES].reverse().map((option) => (
+          <DropdownMenuItem
+            key={option}
+            onSelect={() => onChange(option)}
+            className="justify-between"
+          >
+            <span className="flex items-center gap-2">
+              <PriorityIcon priority={option} />
+              {TASK_PRIORITY_LABELS[option]}
+            </span>
+            {option === priority ? (
+              <Check className="size-3.5 text-zinc-300" />
+            ) : null}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
