@@ -4,6 +4,7 @@ import type { UIMessage } from "ai";
 import { useEffect, useState } from "react";
 
 import { WorkspaceTopBar } from "@/components/workspaces/workspace-top-bar";
+import type { WorkspaceSwitcherTeam } from "@/components/workspaces/workspace-switcher";
 
 import { CanvasViewport } from "./canvas-viewport";
 import { useDesignCanvas, MAX_ZOOM, MIN_ZOOM } from "./canvas-store";
@@ -33,6 +34,8 @@ export interface DesignShellProps {
   designs: DesignSummary[];
   components: LibraryComponent[];
   assets: LibraryAsset[];
+  teams: WorkspaceSwitcherTeam[];
+  activeTeamId: string;
 }
 
 export function DesignShell({
@@ -46,6 +49,8 @@ export function DesignShell({
   designs,
   components,
   assets,
+  teams,
+  activeTeamId,
 }: DesignShellProps) {
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
@@ -113,6 +118,8 @@ export function DesignShell({
         }
         userName={userName}
         userEmail={userEmail}
+        teams={teams}
+        activeTeamId={activeTeamId}
         leftPanelOpen={leftOpen}
         rightPanelOpen={rightOpen}
         onToggleLeftPanel={() => setLeftOpen((value) => !value)}

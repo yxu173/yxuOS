@@ -15,6 +15,7 @@ import type { Artboard } from "@/components/design/types";
 import { db } from "@/db";
 import { designs } from "@/db/schema";
 import { requireActiveTeam } from "@/lib/permissions";
+import { listUserTeams } from "@/lib/teams";
 import { mastra } from "@/mastra";
 
 interface DesignSnapshot {
@@ -44,32 +45,31 @@ export default async function DesignPage({
 
   const { session, teamId } = await requireActiveTeam();
 
-  const [design, userDesigns, componentRows, assetRows] = await Promise.all([
-    db.query.designs.findFirst({
-      where: and(
-        eq(designs.id, designId),
-        eq(designs.teamId, teamId),
-      ),
-      columns: {
-        id: true,
-        name: true,
-        snapshot: true,
-        threadId: true,
-        shareToken: true,
-      },
-    }),
-    db.query.designs.findMany({
-      where: eq(designs.teamId, teamId),
-      orderBy: desc(designs.updatedAt),
-      columns: {
-        id: true,
-        name: true,
-        updatedAt: true,
-      },
-    }),
-    listDesignComponentsForTeam(teamId),
-    listDesignAssetsForTeam(teamId),
-  ]);
+  const [design, userDesigns, componentRows, assetRows, teams] =
+    await Promise.all([
+      db.query.designs.findFirst({
+        where: and(eq(designs.id, designId), eq(designs.teamId, teamId)),
+        columns: {
+          id: true,
+          name: true,
+          snapshot: true,
+          threadId: true,
+          shareToken: true,
+        },
+      }),
+      db.query.designs.findMany({
+        where: eq(designs.teamId, teamId),
+        orderBy: desc(designs.updatedAt),
+        columns: {
+          id: true,
+          name: true,
+          updatedAt: true,
+        },
+      }),
+      listDesignComponentsForTeam(teamId),
+      listDesignAssetsForTeam(teamId),
+      listUserTeams(session.user.id),
+    ]);
 
   if (!design) {
     notFound();
@@ -108,6 +108,8 @@ export default async function DesignPage({
       designs={userDesigns}
       components={components}
       assets={assets}
+      teams={teams}
+      activeTeamId={teamId}
     />
   );
 }

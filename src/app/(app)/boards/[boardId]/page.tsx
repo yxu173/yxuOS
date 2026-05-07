@@ -7,6 +7,7 @@ import { BoardShell } from "@/components/board/board-shell";
 import { db } from "@/db";
 import { boards } from "@/db/schema";
 import { requireActiveTeam } from "@/lib/permissions";
+import { listUserTeams } from "@/lib/teams";
 import { mastra } from "@/mastra";
 
 async function loadInitialMessages(
@@ -34,7 +35,7 @@ export default async function BoardPage({
 
   const { session, teamId } = await requireActiveTeam();
 
-  const [board, userBoards] = await Promise.all([
+  const [board, userBoards, teams] = await Promise.all([
     db.query.boards.findFirst({
       where: and(eq(boards.id, boardId), eq(boards.teamId, teamId)),
       columns: {
@@ -54,6 +55,7 @@ export default async function BoardPage({
         updatedAt: true,
       },
     }),
+    listUserTeams(session.user.id),
   ]);
 
   if (!board) {
@@ -75,6 +77,8 @@ export default async function BoardPage({
       initialSnapshot={board.snapshot ?? null}
       boards={userBoards}
       initialMessages={initialMessages}
+      teams={teams}
+      activeTeamId={teamId}
     />
   );
 }

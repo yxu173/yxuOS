@@ -11,6 +11,10 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
 import { UserMenu } from "./user-menu";
+import {
+  WorkspaceSwitcher,
+  type WorkspaceSwitcherTeam,
+} from "./workspace-switcher";
 
 export interface WorkspaceTopBarProps {
   /** URL of the workspace index (e.g. "/boards" or "/designs"). */
@@ -23,6 +27,10 @@ export interface WorkspaceTopBarProps {
   shareSlot?: React.ReactNode;
   userName: string;
   userEmail?: string;
+  /** Teams the user belongs to, fed into the workspace switcher. */
+  teams: WorkspaceSwitcherTeam[];
+  /** Currently active team ID. */
+  activeTeamId: string;
   leftPanelOpen: boolean;
   rightPanelOpen: boolean;
   onToggleLeftPanel: () => void;
@@ -47,6 +55,8 @@ export function WorkspaceTopBar({
   shareSlot,
   userName,
   userEmail,
+  teams,
+  activeTeamId,
   leftPanelOpen,
   rightPanelOpen,
   onToggleLeftPanel,
@@ -82,6 +92,8 @@ export function WorkspaceTopBar({
       >
         yxuOS
       </Link>
+      <span className="text-zinc-600">/</span>
+      <WorkspaceSwitcher teams={teams} activeTeamId={activeTeamId} />
       <span className="text-zinc-600">/</span>
       <Link
         href={homePath}

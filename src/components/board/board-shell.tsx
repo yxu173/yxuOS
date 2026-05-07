@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { Whiteboard } from "@/components/board/whiteboard";
 import { WorkspaceTopBar } from "@/components/workspaces/workspace-top-bar";
+import type { WorkspaceSwitcherTeam } from "@/components/workspaces/workspace-switcher";
 
 import { BoardName } from "./board-name";
 import { Chat } from "./chat";
@@ -21,6 +22,8 @@ export interface BoardShellProps {
   initialSnapshot: Record<string, unknown> | null;
   boards: BoardSummary[];
   initialMessages: UIMessage[];
+  teams: WorkspaceSwitcherTeam[];
+  activeTeamId: string;
 }
 
 export function BoardShell({
@@ -32,6 +35,8 @@ export function BoardShell({
   initialSnapshot,
   boards,
   initialMessages,
+  teams,
+  activeTeamId,
 }: BoardShellProps) {
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
@@ -65,6 +70,8 @@ export function BoardShell({
           }
           userName={userName}
           userEmail={userEmail}
+          teams={teams}
+          activeTeamId={activeTeamId}
           leftPanelOpen={leftOpen}
           rightPanelOpen={rightOpen}
           onToggleLeftPanel={() => setLeftOpen((value) => !value)}
