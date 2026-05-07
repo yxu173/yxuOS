@@ -56,6 +56,15 @@ export default async function DesignPage({
           threadId: true,
           shareToken: true,
         },
+        with: {
+          owner: {
+            columns: {
+              name: true,
+              username: true,
+              displayUsername: true,
+            },
+          },
+        },
       }),
       db.query.designs.findMany({
         where: eq(designs.teamId, teamId),
@@ -96,6 +105,13 @@ export default async function DesignPage({
     size: row.size,
   }));
 
+  const creator = design.owner
+    ? {
+        name: design.owner.name,
+        username: design.owner.displayUsername ?? design.owner.username,
+      }
+    : null;
+
   return (
     <DesignShell
       designId={design.id}
@@ -110,6 +126,7 @@ export default async function DesignPage({
       assets={assets}
       teams={teams}
       activeTeamId={teamId}
+      creator={creator}
     />
   );
 }

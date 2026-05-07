@@ -31,6 +31,8 @@ export interface WorkspaceTopBarProps {
   teams: WorkspaceSwitcherTeam[];
   /** Currently active team ID. */
   activeTeamId: string;
+  /** Optional creator badge shown after the name slot. */
+  creator?: { name: string; username: string | null } | null;
   leftPanelOpen: boolean;
   rightPanelOpen: boolean;
   onToggleLeftPanel: () => void;
@@ -57,6 +59,7 @@ export function WorkspaceTopBar({
   userEmail,
   teams,
   activeTeamId,
+  creator,
   leftPanelOpen,
   rightPanelOpen,
   onToggleLeftPanel,
@@ -103,6 +106,17 @@ export function WorkspaceTopBar({
       </Link>
       <span className="text-zinc-600">/</span>
       {nameSlot}
+      {creator ? (
+        <span
+          className="hidden items-center gap-1 truncate rounded px-1.5 py-0.5 text-[11px] text-zinc-500 sm:inline-flex"
+          title={`Created by ${creator.name}`}
+        >
+          by{" "}
+          <span className="text-zinc-300">
+            {creator.username ? `@${creator.username}` : creator.name}
+          </span>
+        </span>
+      ) : null}
 
       <div className="ml-auto flex items-center gap-1.5">
         {shareSlot}

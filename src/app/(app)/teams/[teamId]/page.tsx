@@ -136,7 +136,11 @@ export default async function TeamPage({
                   : " Admins can add members only — owners can grant other roles."}
               </p>
             </div>
-            <TeamAddMemberForm teamId={teamId} actorRole={role} />
+            <TeamAddMemberForm
+              teamId={teamId}
+              actorRole={role}
+              memberCount={members.length}
+            />
           </section>
         ) : null}
       </main>

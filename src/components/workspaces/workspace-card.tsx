@@ -40,10 +40,18 @@ const dateFormatter = new Intl.DateTimeFormat("en", {
   minute: "2-digit",
 });
 
+export interface WorkspaceCreator {
+  name: string;
+  /** Lowercase handle (the `username` column on the user table). */
+  username: string | null;
+}
+
 export interface WorkspaceItem {
   id: string;
   name: string;
   updatedAt: Date;
+  /** The user who first created this item. Optional so older callers still type-check. */
+  creator?: WorkspaceCreator | null;
 }
 
 export interface WorkspaceCardProps {
@@ -108,6 +116,16 @@ export function WorkspaceCard({
               <p className="text-xs text-muted-foreground">
                 Updated {dateFormatter.format(item.updatedAt)}
               </p>
+              {item.creator ? (
+                <p className="mt-1 truncate text-xs text-muted-foreground/70">
+                  by{" "}
+                  <span className="text-zinc-400">
+                    {item.creator.username
+                      ? `@${item.creator.username}`
+                      : item.creator.name}
+                  </span>
+                </p>
+              ) : null}
             </CardHeader>
           </Card>
         </Link>

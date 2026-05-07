@@ -14,7 +14,7 @@ import { createDesign, deleteDesign, renameDesign } from "./actions";
 export default async function DesignsIndexPage() {
   const { session, teamId } = await requireActiveTeam();
 
-  const [userDesigns, teams] = await Promise.all([
+  const [designRows, teams] = await Promise.all([
     db.query.designs.findMany({
       where: eq(designs.teamId, teamId),
       columns: {
@@ -23,9 +23,31 @@ export default async function DesignsIndexPage() {
         createdAt: true,
         updatedAt: true,
       },
+      with: {
+        owner: {
+          columns: {
+            name: true,
+            username: true,
+            displayUsername: true,
+          },
+        },
+      },
     }),
     listUserTeams(session.user.id),
   ]);
+
+  const userDesigns = designRows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    creator: row.owner
+      ? {
+          name: row.owner.name,
+          username: row.owner.displayUsername ?? row.owner.username,
+        }
+      : null,
+  }));
 
   return (
     <div className="flex min-h-screen flex-col">

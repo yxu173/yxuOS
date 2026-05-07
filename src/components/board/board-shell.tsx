@@ -24,6 +24,7 @@ export interface BoardShellProps {
   initialMessages: UIMessage[];
   teams: WorkspaceSwitcherTeam[];
   activeTeamId: string;
+  creator: { name: string; username: string | null } | null;
 }
 
 export function BoardShell({
@@ -37,6 +38,7 @@ export function BoardShell({
   initialMessages,
   teams,
   activeTeamId,
+  creator,
 }: BoardShellProps) {
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
@@ -72,6 +74,7 @@ export function BoardShell({
           userEmail={userEmail}
           teams={teams}
           activeTeamId={activeTeamId}
+          creator={creator}
           leftPanelOpen={leftOpen}
           rightPanelOpen={rightOpen}
           onToggleLeftPanel={() => setLeftOpen((value) => !value)}

@@ -36,6 +36,7 @@ export interface DesignShellProps {
   assets: LibraryAsset[];
   teams: WorkspaceSwitcherTeam[];
   activeTeamId: string;
+  creator: { name: string; username: string | null } | null;
 }
 
 export function DesignShell({
@@ -51,6 +52,7 @@ export function DesignShell({
   assets,
   teams,
   activeTeamId,
+  creator,
 }: DesignShellProps) {
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
@@ -120,6 +122,7 @@ export function DesignShell({
         userEmail={userEmail}
         teams={teams}
         activeTeamId={activeTeamId}
+        creator={creator}
         leftPanelOpen={leftOpen}
         rightPanelOpen={rightOpen}
         onToggleLeftPanel={() => setLeftOpen((value) => !value)}

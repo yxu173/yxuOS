@@ -45,6 +45,15 @@ export default async function BoardPage({
         threadId: true,
         shareToken: true,
       },
+      with: {
+        owner: {
+          columns: {
+            name: true,
+            username: true,
+            displayUsername: true,
+          },
+        },
+      },
     }),
     db.query.boards.findMany({
       where: eq(boards.teamId, teamId),
@@ -67,6 +76,13 @@ export default async function BoardPage({
     session.user.id,
   );
 
+  const creator = board.owner
+    ? {
+        name: board.owner.name,
+        username: board.owner.displayUsername ?? board.owner.username,
+      }
+    : null;
+
   return (
     <BoardShell
       boardId={board.id}
@@ -79,6 +95,7 @@ export default async function BoardPage({
       initialMessages={initialMessages}
       teams={teams}
       activeTeamId={teamId}
+      creator={creator}
     />
   );
 }

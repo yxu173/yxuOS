@@ -14,7 +14,7 @@ import { createBoard, deleteBoard, renameBoard } from "./actions";
 export default async function BoardsIndexPage() {
   const { session, teamId } = await requireActiveTeam();
 
-  const [userBoards, teams] = await Promise.all([
+  const [boardRows, teams] = await Promise.all([
     db.query.boards.findMany({
       where: eq(boards.teamId, teamId),
       columns: {
@@ -23,9 +23,31 @@ export default async function BoardsIndexPage() {
         createdAt: true,
         updatedAt: true,
       },
+      with: {
+        owner: {
+          columns: {
+            name: true,
+            username: true,
+            displayUsername: true,
+          },
+        },
+      },
     }),
     listUserTeams(session.user.id),
   ]);
+
+  const userBoards = boardRows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    creator: row.owner
+      ? {
+          name: row.owner.name,
+          username: row.owner.displayUsername ?? row.owner.username,
+        }
+      : null,
+  }));
 
   return (
     <div className="flex min-h-screen flex-col">
