@@ -1,6 +1,7 @@
 "use client";
 
 import { LogOut, User } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 
@@ -63,9 +64,11 @@ export function UserMenu({ userName, userEmail }: UserMenuProps) {
           ) : null}
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem disabled className="text-xs">
-          <User className="size-3.5" />
-          Account settings (soon)
+        <DropdownMenuItem asChild>
+          <Link href="/account" className="w-full">
+            <User className="size-3.5" />
+            Account settings
+          </Link>
         </DropdownMenuItem>
         <DropdownMenuItem
           onSelect={(event) => {
