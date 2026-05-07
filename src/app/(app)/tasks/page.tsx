@@ -2,7 +2,6 @@ import { listTopLevelTasks } from "@/app/(app)/tasks/actions";
 import { CreateTaskDialog } from "@/components/tasks/create-task-dialog";
 import { TaskList } from "@/components/tasks/task-list";
 import { AppTopBar } from "@/components/workspaces/app-top-bar";
-import { WorkspaceTabs } from "@/components/workspaces/workspace-tabs";
 import { requireActiveTeam } from "@/lib/permissions";
 import { listTeamMembers, listUserTeams } from "@/lib/teams";
 
@@ -32,10 +31,9 @@ export default async function TasksIndexPage() {
         activeTeamId={teamId}
         userName={session.user.name}
         userEmail={session.user.email}
+        active="tasks"
       />
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-8">
-        <WorkspaceTabs active="tasks" />
-
         <header className="flex items-baseline justify-between">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>

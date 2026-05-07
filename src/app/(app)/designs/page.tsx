@@ -3,7 +3,6 @@ import { eq } from "drizzle-orm";
 import { Button } from "@/components/ui/button";
 import { AppTopBar } from "@/components/workspaces/app-top-bar";
 import { WorkspaceGrid } from "@/components/workspaces/workspace-grid";
-import { WorkspaceTabs } from "@/components/workspaces/workspace-tabs";
 import { db } from "@/db";
 import { designs } from "@/db/schema";
 import { requireActiveTeam } from "@/lib/permissions";
@@ -56,10 +55,9 @@ export default async function DesignsIndexPage() {
         activeTeamId={teamId}
         userName={session.user.name}
         userEmail={session.user.email}
+        active="designs"
       />
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-8 p-8">
-        <WorkspaceTabs active="designs" />
-
         <header className="flex items-baseline justify-between">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Designs</h1>

@@ -77,6 +77,7 @@ export default async function TaskDetailPage({ params }: TaskPageParams) {
         activeTeamId={teamId}
         userName={session.user.name}
         userEmail={session.user.email}
+        active="tasks"
       />
 
       <main className="mx-auto grid w-full max-w-6xl gap-8 p-8 md:grid-cols-[1fr_280px]">
