@@ -22,6 +22,30 @@ function rolePassesMinimum(role: TeamRole, minRole: TeamRole): boolean {
 
 /* ─── Helpers ───────────────────────────────────────── */
 
+async function requireSession() {
+  const session = await auth.api.getSession({
+    headers: await headers(),
+  });
+  if (!session) {
+    throw new Error("Unauthorized");
+  }
+  return session;
+}
+
+async function requireMemberRow(userId: string, teamId: string) {
+  const memberRow = await db.query.member.findFirst({
+    where: and(eq(member.userId, userId), eq(member.organizationId, teamId)),
+    columns: { id: true, role: true },
+  });
+  if (!memberRow) {
+    throw new Error("Not a member of this team");
+  }
+  return {
+    id: memberRow.id,
+    role: memberRow.role as TeamRole,
+  };
+}
+
 /**
  * Resolves the active session, the active team, and the member row that
  * proves the user belongs to that team.
@@ -30,12 +54,7 @@ function rolePassesMinimum(role: TeamRole, minRole: TeamRole): boolean {
  * is null (handles stale sessions from before the org plugin landed).
  */
 export async function requireActiveTeam(minRole: TeamRole = "member") {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session) {
-    throw new Error("Unauthorized");
-  }
+  const session = await requireSession();
 
   let activeOrgId = session.session.activeOrganizationId;
 
@@ -52,18 +71,11 @@ export async function requireActiveTeam(minRole: TeamRole = "member") {
     activeOrgId = firstMember.organizationId;
   }
 
-  const memberRow = await db.query.member.findFirst({
-    where: and(
-      eq(member.userId, session.user.id),
-      eq(member.organizationId, activeOrgId),
-    ),
-    columns: { id: true, role: true },
-  });
-  if (!memberRow) {
-    throw new Error("Not a member of the active team");
-  }
+  const { id: memberId, role } = await requireMemberRow(
+    session.user.id,
+    activeOrgId,
+  );
 
-  const role = memberRow.role as TeamRole;
   if (!rolePassesMinimum(role, minRole)) {
     throw new Error(`This action requires the ${minRole} role`);
   }
@@ -72,6 +84,29 @@ export async function requireActiveTeam(minRole: TeamRole = "member") {
     session,
     teamId: activeOrgId,
     role,
-    memberId: memberRow.id,
+    memberId,
   };
+}
+
+/**
+ * Like {@link requireActiveTeam} but for an explicit team id. Used by
+ * `/teams/[teamId]` where the URL — not the session — picks the team.
+ *
+ * The caller still has to be a member of `teamId`, with a role at least
+ * `minRole`. Useful for actions like add/remove member where we want
+ * "admin in this specific team", not "admin in active team".
+ */
+export async function requireMembership(
+  teamId: string,
+  minRole: TeamRole = "member",
+) {
+  const session = await requireSession();
+  const { id: memberId, role } = await requireMemberRow(
+    session.user.id,
+    teamId,
+  );
+  if (!rolePassesMinimum(role, minRole)) {
+    throw new Error(`This action requires the ${minRole} role`);
+  }
+  return { session, teamId, role, memberId };
 }

@@ -1,6 +1,7 @@
 "use client";
 
-import { Check, ChevronsUpDown, Plus } from "lucide-react";
+import { Check, ChevronsUpDown, Plus, Settings } from "lucide-react";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
@@ -112,6 +113,14 @@ export function WorkspaceSwitcher({
             </DropdownMenuItem>
           ))}
           <DropdownMenuSeparator />
+          {active ? (
+            <DropdownMenuItem asChild>
+              <Link href={`/teams/${active.id}`} className="w-full">
+                <Settings className="size-3.5" />
+                Manage {active.name}
+              </Link>
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuItem
             onSelect={(event) => {
               event.preventDefault();
