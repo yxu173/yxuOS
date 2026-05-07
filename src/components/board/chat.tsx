@@ -23,7 +23,12 @@ import {
   executeAddMarkdownCard,
   executeAddMermaidCard,
   executeAddShapes,
+  executeAlignShapes,
+  executeConnectShapes,
   executeDeleteShapes,
+  executeDistributeShapes,
+  executeFindShapes,
+  executeGroupIntoFrame,
   executeQueryCanvas,
   executeUpdateShapes,
 } from "./canvas-tools";
@@ -37,7 +42,12 @@ export interface ChatProps {
 
 const TOOL_LABELS: Record<string, string> = {
   query_canvas: "Reading canvas",
+  find_shapes: "Searching canvas",
   add_shapes: "Drawing shapes",
+  connect_shapes: "Connecting shapes",
+  align_shapes: "Aligning shapes",
+  distribute_shapes: "Distributing shapes",
+  group_into_frame: "Grouping into frame",
   update_shapes: "Updating shapes",
   delete_shapes: "Deleting shapes",
   add_markdown_card: "Writing note",
@@ -60,113 +70,146 @@ export function Chat({ boardId, initialMessages }: ChatProps) {
         if (toolCall.dynamic) return;
 
         const editor = editorRef.current;
-        if (!editor) {
+
+        // Helper: emit a successful tool output (envelope already produced
+        // by the executor — ok/err alike, both go through `output`).
+        const emit = (
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          output: any,
+        ) =>
+          addToolOutput({
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            tool: toolCall.toolName as any,
+            toolCallId: toolCall.toolCallId,
+            output,
+          });
+
+        // Catastrophic transport-level failures use `output-error`.
+        // Tool-level failures (validation, not_found, etc.) come back
+        // inside the envelope as `{ ok: false, error }` via `emit`.
+        const fatal = (errorText: string) =>
           addToolOutput({
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             tool: toolCall.toolName as any,
             toolCallId: toolCall.toolCallId,
             state: "output-error",
-            errorText:
-              "Canvas isn't ready yet. Try again in a second once the whiteboard finishes loading.",
+            errorText,
           });
+
+        if (!editor) {
+          fatal(
+            "Canvas isn't ready yet. Try again in a second once the whiteboard finishes loading.",
+          );
           return;
         }
 
         try {
           switch (toolCall.toolName) {
             case "query_canvas": {
-              const output = executeQueryCanvas(editor);
-              addToolOutput({
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                tool: toolCall.toolName as any,
-                toolCallId: toolCall.toolCallId,
-                output,
-              });
+              emit(
+                executeQueryCanvas(
+                  editor,
+                  toolCall.input as Parameters<typeof executeQueryCanvas>[1],
+                ),
+              );
+              break;
+            }
+            case "find_shapes": {
+              emit(
+                executeFindShapes(
+                  editor,
+                  toolCall.input as Parameters<typeof executeFindShapes>[1],
+                ),
+              );
               break;
             }
             case "add_shapes": {
-              const output = executeAddShapes(
-                editor,
-                toolCall.input as Parameters<typeof executeAddShapes>[1],
+              emit(
+                executeAddShapes(
+                  editor,
+                  toolCall.input as Parameters<typeof executeAddShapes>[1],
+                ),
               );
-              addToolOutput({
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                tool: toolCall.toolName as any,
-                toolCallId: toolCall.toolCallId,
-                output,
-              });
+              break;
+            }
+            case "connect_shapes": {
+              emit(
+                executeConnectShapes(
+                  editor,
+                  toolCall.input as Parameters<typeof executeConnectShapes>[1],
+                ),
+              );
+              break;
+            }
+            case "align_shapes": {
+              emit(
+                executeAlignShapes(
+                  editor,
+                  toolCall.input as Parameters<typeof executeAlignShapes>[1],
+                ),
+              );
+              break;
+            }
+            case "distribute_shapes": {
+              emit(
+                executeDistributeShapes(
+                  editor,
+                  toolCall.input as Parameters<typeof executeDistributeShapes>[1],
+                ),
+              );
+              break;
+            }
+            case "group_into_frame": {
+              emit(
+                executeGroupIntoFrame(
+                  editor,
+                  toolCall.input as Parameters<typeof executeGroupIntoFrame>[1],
+                ),
+              );
               break;
             }
             case "update_shapes": {
-              const output = executeUpdateShapes(
-                editor,
-                toolCall.input as Parameters<typeof executeUpdateShapes>[1],
+              emit(
+                executeUpdateShapes(
+                  editor,
+                  toolCall.input as Parameters<typeof executeUpdateShapes>[1],
+                ),
               );
-              addToolOutput({
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                tool: toolCall.toolName as any,
-                toolCallId: toolCall.toolCallId,
-                output,
-              });
               break;
             }
             case "delete_shapes": {
-              const output = executeDeleteShapes(
-                editor,
-                toolCall.input as Parameters<typeof executeDeleteShapes>[1],
+              emit(
+                executeDeleteShapes(
+                  editor,
+                  toolCall.input as Parameters<typeof executeDeleteShapes>[1],
+                ),
               );
-              addToolOutput({
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                tool: toolCall.toolName as any,
-                toolCallId: toolCall.toolCallId,
-                output,
-              });
               break;
             }
             case "add_markdown_card": {
-              const output = executeAddMarkdownCard(
-                editor,
-                toolCall.input as Parameters<typeof executeAddMarkdownCard>[1],
+              emit(
+                executeAddMarkdownCard(
+                  editor,
+                  toolCall.input as Parameters<typeof executeAddMarkdownCard>[1],
+                ),
               );
-              addToolOutput({
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                tool: toolCall.toolName as any,
-                toolCallId: toolCall.toolCallId,
-                output,
-              });
               break;
             }
             case "add_mermaid_card": {
-              const output = await executeAddMermaidCard(
-                editor,
-                toolCall.input as Parameters<typeof executeAddMermaidCard>[1],
+              emit(
+                await executeAddMermaidCard(
+                  editor,
+                  toolCall.input as Parameters<typeof executeAddMermaidCard>[1],
+                ),
               );
-              addToolOutput({
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                tool: toolCall.toolName as any,
-                toolCallId: toolCall.toolCallId,
-                output,
-              });
               break;
             }
             default: {
-              addToolOutput({
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                tool: toolCall.toolName as any,
-                toolCallId: toolCall.toolCallId,
-                state: "output-error",
-                errorText: `Unknown tool: ${toolCall.toolName}`,
-              });
+              fatal(`Unknown tool: ${toolCall.toolName}`);
             }
           }
         } catch (err) {
-          addToolOutput({
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            tool: toolCall.toolName as any,
-            toolCallId: toolCall.toolCallId,
-            state: "output-error",
-            errorText: err instanceof Error ? err.message : "Tool failed",
-          });
+          fatal(err instanceof Error ? err.message : "Tool failed");
         }
       },
     },
@@ -383,30 +426,52 @@ function describeToolResult(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   output: any,
 ): string | null {
+  // Every tool now returns the standard envelope. Surface tool-level
+  // errors compactly in the chat sidebar so the user sees what's wrong
+  // without expanding the raw JSON.
+  if (output && output.ok === false && output.error) {
+    return `Failed · ${output.error.code}: ${output.error.message}`;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data: any = output && output.ok === true ? output.data : null;
+  const plural = (n: number, s: string) =>
+    `${n} ${s}${n === 1 ? "" : "s"}`;
+
   switch (toolName) {
-    case "query_canvas":
-      return output && Array.isArray(output.shapes)
-        ? `Read canvas (${output.shapes.length} shape${
-            output.shapes.length === 1 ? "" : "s"
-          })`
-        : "Read canvas";
+    case "query_canvas": {
+      if (!data) return "Read canvas";
+      const total = data.summary?.totalShapes ?? data.returned ?? 0;
+      return `Read canvas (${plural(total, "shape")})`;
+    }
+    case "find_shapes": {
+      if (!data) return "Searched canvas";
+      return `Found ${plural(data.totalMatched ?? 0, "match").replace(/matchs$/, "matches")}`;
+    }
     case "add_shapes":
-      return output && Array.isArray(output.createdShapeIds)
-        ? `Drew ${output.createdShapeIds.length} shape${
-            output.createdShapeIds.length === 1 ? "" : "s"
-          }`
+      return data && Array.isArray(data.createdShapeIds)
+        ? `Drew ${plural(data.createdShapeIds.length, "shape")}`
         : "Drew shapes";
+    case "connect_shapes":
+      return "Connected shapes";
+    case "align_shapes":
+      return data && Array.isArray(data.alignedShapeIds)
+        ? `Aligned ${plural(data.alignedShapeIds.length, "shape")}`
+        : "Aligned shapes";
+    case "distribute_shapes":
+      return data && Array.isArray(data.distributedShapeIds)
+        ? `Distributed ${plural(data.distributedShapeIds.length, "shape")}`
+        : "Distributed shapes";
+    case "group_into_frame":
+      return data && Array.isArray(data.framedShapeIds)
+        ? `Grouped ${plural(data.framedShapeIds.length, "shape")} into frame`
+        : "Grouped into frame";
     case "update_shapes":
-      return output && Array.isArray(output.updatedShapeIds)
-        ? `Updated ${output.updatedShapeIds.length} shape${
-            output.updatedShapeIds.length === 1 ? "" : "s"
-          }`
+      return data && Array.isArray(data.updatedShapeIds)
+        ? `Updated ${plural(data.updatedShapeIds.length, "shape")}`
         : "Updated shapes";
     case "delete_shapes":
-      return output && Array.isArray(output.deletedShapeIds)
-        ? `Deleted ${output.deletedShapeIds.length} shape${
-            output.deletedShapeIds.length === 1 ? "" : "s"
-          }`
+      return data && Array.isArray(data.deletedShapeIds)
+        ? `Deleted ${plural(data.deletedShapeIds.length, "shape")}`
         : "Deleted shapes";
     case "add_markdown_card":
       return "Wrote a markdown card";

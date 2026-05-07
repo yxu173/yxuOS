@@ -7,6 +7,7 @@ import {
   type UIMessage,
 } from "ai";
 import { ArrowUp, Paperclip, Sparkles, Square, X } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { ChatMarkdown } from "@/components/board/chat-markdown";
@@ -22,7 +23,11 @@ import { cn } from "@/lib/utils";
 
 import {
   executeAddArtboard,
+  executeApplyTheme,
   executeDeleteArtboard,
+  executeDuplicateNode,
+  executeExtractComponent,
+  executeFindNodes,
   executeGetArtboard,
   executeListAssets,
   executeListComponents,
@@ -43,7 +48,11 @@ const TOOL_LABELS: Record<string, string> = {
   update_artboard: "Updating artboard",
   delete_artboard: "Deleting artboard",
   get_artboard: "Reading artboard",
+  find_nodes: "Searching artboard",
   patch_node: "Patching element",
+  duplicate_node: "Duplicating element",
+  apply_theme: "Applying theme",
+  extract_component: "Saving component",
   list_components: "Reading component library",
   list_assets: "Reading uploaded assets",
 };
@@ -74,6 +83,7 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const library = useComponentLibrary();
+  const router = useRouter();
 
   const { messages, sendMessage, status, error, addToolOutput, stop } =
     useChat({
@@ -85,7 +95,21 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
       async onToolCall({ toolCall }) {
         if (toolCall.dynamic) return;
 
-        const reportError = (errorText: string) => {
+        // Helper: emit a tool result envelope. Tool-level errors come back
+        // INSIDE the envelope (`{ ok: false, error }`) — only catastrophic
+        // failures (unknown tool, executor exception) use `output-error`.
+        const emit = (
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          output: any,
+        ) =>
+          addToolOutput({
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            tool: toolCall.toolName as any,
+            toolCallId: toolCall.toolCallId,
+            output,
+          });
+
+        const fatal = (errorText: string) =>
           addToolOutput({
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             tool: toolCall.toolName as any,
@@ -93,105 +117,91 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
             state: "output-error",
             errorText,
           });
-        };
 
         try {
           switch (toolCall.toolName) {
-            case "query_canvas": {
-              const output = executeQueryCanvas();
-              addToolOutput({
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                tool: toolCall.toolName as any,
-                toolCallId: toolCall.toolCallId,
-                output,
-              });
+            case "query_canvas":
+              emit(executeQueryCanvas());
               break;
-            }
-            case "add_artboard": {
-              const output = executeAddArtboard(
-                toolCall.input as Parameters<typeof executeAddArtboard>[0],
+            case "add_artboard":
+              emit(
+                executeAddArtboard(
+                  toolCall.input as Parameters<typeof executeAddArtboard>[0],
+                ),
               );
-              addToolOutput({
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                tool: toolCall.toolName as any,
-                toolCallId: toolCall.toolCallId,
-                output,
-              });
               break;
-            }
-            case "update_artboard": {
-              const output = executeUpdateArtboard(
-                toolCall.input as Parameters<typeof executeUpdateArtboard>[0],
+            case "update_artboard":
+              emit(
+                executeUpdateArtboard(
+                  toolCall.input as Parameters<typeof executeUpdateArtboard>[0],
+                ),
               );
-              addToolOutput({
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                tool: toolCall.toolName as any,
-                toolCallId: toolCall.toolCallId,
-                output,
-              });
               break;
-            }
-            case "delete_artboard": {
-              const output = executeDeleteArtboard(
-                toolCall.input as Parameters<typeof executeDeleteArtboard>[0],
+            case "delete_artboard":
+              emit(
+                executeDeleteArtboard(
+                  toolCall.input as Parameters<typeof executeDeleteArtboard>[0],
+                ),
               );
-              addToolOutput({
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                tool: toolCall.toolName as any,
-                toolCallId: toolCall.toolCallId,
-                output,
-              });
               break;
-            }
-            case "get_artboard": {
-              const output = executeGetArtboard(
-                toolCall.input as Parameters<typeof executeGetArtboard>[0],
+            case "get_artboard":
+              emit(
+                executeGetArtboard(
+                  toolCall.input as Parameters<typeof executeGetArtboard>[0],
+                ),
               );
-              addToolOutput({
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                tool: toolCall.toolName as any,
-                toolCallId: toolCall.toolCallId,
-                output,
-              });
               break;
-            }
-            case "patch_node": {
-              const output = executePatchNode(
-                toolCall.input as Parameters<typeof executePatchNode>[0],
+            case "find_nodes":
+              emit(
+                executeFindNodes(
+                  toolCall.input as Parameters<typeof executeFindNodes>[0],
+                ),
               );
-              addToolOutput({
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                tool: toolCall.toolName as any,
-                toolCallId: toolCall.toolCallId,
-                output,
-              });
+              break;
+            case "patch_node":
+              emit(
+                executePatchNode(
+                  toolCall.input as Parameters<typeof executePatchNode>[0],
+                ),
+              );
+              break;
+            case "duplicate_node":
+              emit(
+                executeDuplicateNode(
+                  toolCall.input as Parameters<typeof executeDuplicateNode>[0],
+                ),
+              );
+              break;
+            case "apply_theme":
+              emit(
+                executeApplyTheme(
+                  toolCall.input as Parameters<typeof executeApplyTheme>[0],
+                ),
+              );
+              break;
+            case "extract_component": {
+              const output = await executeExtractComponent(
+                toolCall.input as Parameters<typeof executeExtractComponent>[0],
+              );
+              emit(output);
+              // Pull the freshly-saved component into the local library so
+              // `list_components` / the renderer pick it up on the next
+              // turn. revalidatePath() inside the action is the source of
+              // truth; this just kicks Next into refetching.
+              if (output.ok) router.refresh();
               break;
             }
-            case "list_components": {
-              const output = executeListComponents(library.components);
-              addToolOutput({
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                tool: toolCall.toolName as any,
-                toolCallId: toolCall.toolCallId,
-                output,
-              });
+            case "list_components":
+              emit(executeListComponents(library.components));
               break;
-            }
-            case "list_assets": {
-              const output = executeListAssets(library.assets);
-              addToolOutput({
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                tool: toolCall.toolName as any,
-                toolCallId: toolCall.toolCallId,
-                output,
-              });
+            case "list_assets":
+              emit(executeListAssets(library.assets));
               break;
-            }
             default:
-              reportError(`Unknown tool: ${toolCall.toolName}`);
+              fatal(`Unknown tool: ${toolCall.toolName}`);
           }
         } catch (err) {
-          reportError(err instanceof Error ? err.message : "Tool failed");
+          fatal(err instanceof Error ? err.message : "Tool failed");
         }
       },
     });
@@ -590,7 +600,16 @@ function describeToolResult(
   toolName: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   input: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  output: any,
 ): string | null {
+  // Surface tool-level errors compactly in the chat sidebar.
+  if (output && output.ok === false && output.error) {
+    return `Failed · ${output.error.code}: ${output.error.message}`;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data: any = output && output.ok === true ? output.data : null;
+
   switch (toolName) {
     case "query_canvas":
       return "Read canvas";
@@ -604,10 +623,30 @@ function describeToolResult(
       return "Removed artboard";
     case "get_artboard":
       return "Read artboard";
+    case "find_nodes":
+      if (data) {
+        return `Found ${data.totalMatched} match${
+          data.totalMatched === 1 ? "" : "es"
+        }`;
+      }
+      return "Searched artboard";
     case "patch_node": {
       const fields = input?.patch ? describePatchFields(input.patch) : null;
       return fields ? `Patched element · ${fields}` : "Patched element";
     }
+    case "duplicate_node":
+      return "Duplicated element";
+    case "apply_theme":
+      if (data) {
+        return `Themed ${data.patchCount} element${
+          data.patchCount === 1 ? "" : "s"
+        }`;
+      }
+      return "Applied theme";
+    case "extract_component":
+      return data?.componentSlug
+        ? `Saved component "${data.componentSlug}"`
+        : "Saved component";
     case "list_components":
       return "Read component library";
     case "list_assets":

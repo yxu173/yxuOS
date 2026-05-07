@@ -2,13 +2,34 @@
 
 import { nanoid } from "nanoid";
 
+import { createDesignComponent } from "@/app/(app)/designs/component-actions";
+import {
+  fail,
+  ok,
+  withIdempotency,
+  withIdempotencyAsync,
+  type ToolResult,
+} from "@/lib/tool-result";
+
 import { useDesignCanvas } from "./canvas-store";
 import type {
   LibraryAsset,
   LibraryComponent,
 } from "./component-library-context";
 import type { DesignNode } from "./design-node";
-import { type NodePatch, patchNodeInTree } from "./node-utils";
+import {
+  applyThemeToTree,
+  cloneSubtreeWithFreshIds,
+  duplicateNodeInTree,
+  findNodesInTree,
+  patchNodeInTree,
+  replaceNodeWithComponentRef,
+  validateTree,
+  type FindNodePredicate,
+  type NodeMatch,
+  type NodePatch,
+  type Theme,
+} from "./node-utils";
 import { DEVICE_DIMENSIONS, type Artboard, type DevicePreset } from "./types";
 
 /**
@@ -16,6 +37,11 @@ import { DEVICE_DIMENSIONS, type Artboard, type DevicePreset } from "./types";
  * by `<DesignChat>` from its `onToolCall` handler — the agent declares
  * tools server-side without `execute`, so the browser runs them here
  * against the live zustand store.
+ *
+ * Every executor returns a `ToolResult<T>` envelope. Errors that the
+ * agent should be able to recover from (`not_found`, `validation_failed`,
+ * `preconditions_failed`) come back as `{ ok: false, error: { code, ... } }`
+ * instead of throwing.
  */
 
 /* ─── query_canvas ──────────────────────────────────────── */
@@ -36,9 +62,9 @@ export interface QueryCanvasOutput {
   selectedNodeId: string | null;
 }
 
-export function executeQueryCanvas(): QueryCanvasOutput {
+export function executeQueryCanvas(): ToolResult<QueryCanvasOutput> {
   const state = useDesignCanvas.getState();
-  return {
+  return ok({
     artboards: state.artboards.map((a) => ({
       id: a.id,
       name: a.name,
@@ -52,7 +78,7 @@ export function executeQueryCanvas(): QueryCanvasOutput {
     })),
     selectedArtboardIds: state.selection,
     selectedNodeId: state.selectedNodeId,
-  };
+  });
 }
 
 /* ─── add_artboard ──────────────────────────────────────── */
@@ -65,58 +91,67 @@ export interface AddArtboardInput {
   x?: number;
   y?: number;
   design?: DesignNode | null;
+  idempotencyKey?: string;
 }
 
-export function executeAddArtboard(input: AddArtboardInput): {
-  artboardId: string;
-} {
-  const state = useDesignCanvas.getState();
+export function executeAddArtboard(
+  input: AddArtboardInput,
+): ToolResult<{ artboardId: string }> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
 
-  // Resolve dimensions.
-  let w = input.width;
-  let h = input.height;
-  if (input.device !== "custom") {
-    const preset = DEVICE_DIMENSIONS[input.device];
-    if (preset) {
-      w = w ?? preset.w;
-      h = h ?? preset.h;
+    let w = input.width;
+    let h = input.height;
+    if (input.device !== "custom") {
+      const preset = DEVICE_DIMENSIONS[input.device];
+      if (preset) {
+        w = w ?? preset.w;
+        h = h ?? preset.h;
+      }
     }
-  }
-  if (!w || !h) {
-    throw new Error(
-      "device=custom requires explicit `width` and `height`; or specify a device preset.",
-    );
-  }
+    if (!w || !h) {
+      return fail(
+        "invalid_input",
+        "device='custom' requires explicit `width` and `height`.",
+        "Either pass `width` and `height`, or pick a device preset.",
+      );
+    }
 
-  // Resolve position. If unspecified, place to the right of the rightmost
-  // existing artboard with a 80-px gutter; on an empty canvas, world (0, 0).
-  let x = input.x;
-  let y = input.y;
-  if (x === undefined || y === undefined) {
-    const rightmost =
-      state.artboards.length === 0
-        ? null
-        : state.artboards.reduce((acc, a) =>
-            a.x + a.w > acc.x + acc.w ? a : acc,
-          );
-    x = x ?? (rightmost ? rightmost.x + rightmost.w + 80 : 0);
-    y = y ?? (rightmost ? rightmost.y : 0);
-  }
+    if (input.design) {
+      const violation = validateTree(input.design);
+      if (violation) {
+        return fail("validation_failed", violation.message, violation.hint);
+      }
+    }
 
-  const id = nanoid();
-  const artboard: Artboard = {
-    id,
-    name: input.name,
-    device: input.device,
-    x,
-    y,
-    w,
-    h,
-    design: input.design ?? null,
-  };
-  state.addArtboard(artboard);
-  state.selectOnly(id);
-  return { artboardId: id };
+    let x = input.x;
+    let y = input.y;
+    if (x === undefined || y === undefined) {
+      const rightmost =
+        state.artboards.length === 0
+          ? null
+          : state.artboards.reduce((acc, a) =>
+              a.x + a.w > acc.x + acc.w ? a : acc,
+            );
+      x = x ?? (rightmost ? rightmost.x + rightmost.w + 80 : 0);
+      y = y ?? (rightmost ? rightmost.y : 0);
+    }
+
+    const id = nanoid();
+    const artboard: Artboard = {
+      id,
+      name: input.name,
+      device: input.device,
+      x,
+      y,
+      w,
+      h,
+      design: input.design ?? null,
+    };
+    state.addArtboard(artboard);
+    state.selectOnly(id);
+    return ok({ artboardId: id });
+  });
 }
 
 /* ─── update_artboard ───────────────────────────────────── */
@@ -129,38 +164,54 @@ export interface UpdateArtboardInput {
   width?: number;
   height?: number;
   design?: DesignNode | null;
+  idempotencyKey?: string;
 }
 
-export function executeUpdateArtboard(input: UpdateArtboardInput): {
-  artboardId: string;
-} {
-  const state = useDesignCanvas.getState();
-  const existing = state.artboards.find((a) => a.id === input.artboardId);
-  if (!existing) {
-    throw new Error(`Artboard "${input.artboardId}" not found.`);
-  }
-  const patch: Partial<Artboard> = {};
-  if (input.name !== undefined) patch.name = input.name;
-  if (input.x !== undefined) patch.x = input.x;
-  if (input.y !== undefined) patch.y = input.y;
-  if (input.width !== undefined) patch.w = input.width;
-  if (input.height !== undefined) patch.h = input.height;
-  if (input.design !== undefined) patch.design = input.design;
-  state.updateArtboard(input.artboardId, patch);
-  return { artboardId: input.artboardId };
+export function executeUpdateArtboard(
+  input: UpdateArtboardInput,
+): ToolResult<{ artboardId: string }> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
+    const existing = state.artboards.find((a) => a.id === input.artboardId);
+    if (!existing) {
+      return fail(
+        "not_found",
+        `Artboard "${input.artboardId}" not found.`,
+        "Call `query_canvas` to refresh artboard ids.",
+      );
+    }
+    if (input.design) {
+      const violation = validateTree(input.design);
+      if (violation) {
+        return fail("validation_failed", violation.message, violation.hint);
+      }
+    }
+    const patch: Partial<Artboard> = {};
+    if (input.name !== undefined) patch.name = input.name;
+    if (input.x !== undefined) patch.x = input.x;
+    if (input.y !== undefined) patch.y = input.y;
+    if (input.width !== undefined) patch.w = input.width;
+    if (input.height !== undefined) patch.h = input.height;
+    if (input.design !== undefined) patch.design = input.design;
+    state.updateArtboard(input.artboardId, patch);
+    return ok({ artboardId: input.artboardId });
+  });
 }
 
 /* ─── delete_artboard ───────────────────────────────────── */
 
-export function executeDeleteArtboard(input: { artboardId: string }): {
+export function executeDeleteArtboard(input: {
   artboardId: string;
-} {
-  const state = useDesignCanvas.getState();
-  if (!state.artboards.some((a) => a.id === input.artboardId)) {
-    throw new Error(`Artboard "${input.artboardId}" not found.`);
-  }
-  state.removeArtboard(input.artboardId);
-  return { artboardId: input.artboardId };
+  idempotencyKey?: string;
+}): ToolResult<{ artboardId: string }> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
+    if (!state.artboards.some((a) => a.id === input.artboardId)) {
+      return fail("not_found", `Artboard "${input.artboardId}" not found.`);
+    }
+    state.removeArtboard(input.artboardId);
+    return ok({ artboardId: input.artboardId });
+  });
 }
 
 /* ─── get_artboard ──────────────────────────────────────── */
@@ -178,13 +229,17 @@ export interface GetArtboardOutput {
 
 export function executeGetArtboard(input: {
   artboardId: string;
-}): GetArtboardOutput {
+}): ToolResult<GetArtboardOutput> {
   const state = useDesignCanvas.getState();
   const found = state.artboards.find((a) => a.id === input.artboardId);
   if (!found) {
-    throw new Error(`Artboard "${input.artboardId}" not found.`);
+    return fail(
+      "not_found",
+      `Artboard "${input.artboardId}" not found.`,
+      "Call `query_canvas` to refresh artboard ids.",
+    );
   }
-  return {
+  return ok({
     id: found.id,
     name: found.name,
     device: found.device,
@@ -193,7 +248,50 @@ export function executeGetArtboard(input: {
     w: found.w,
     h: found.h,
     design: found.design,
-  };
+  });
+}
+
+/* ─── find_nodes ────────────────────────────────────────── */
+
+export interface FindNodesInput extends FindNodePredicate {
+  artboardId: string;
+  limit?: number;
+}
+
+export interface FindNodesOutput {
+  matches: NodeMatch[];
+  totalMatched: number;
+  truncated: boolean;
+}
+
+export function executeFindNodes(
+  input: FindNodesInput,
+): ToolResult<FindNodesOutput> {
+  const state = useDesignCanvas.getState();
+  const ab = state.artboards.find((a) => a.id === input.artboardId);
+  if (!ab) {
+    return fail(
+      "not_found",
+      `Artboard "${input.artboardId}" not found.`,
+      "Call `query_canvas` to refresh artboard ids.",
+    );
+  }
+  if (!ab.design) {
+    return ok({ matches: [], totalMatched: 0, truncated: false });
+  }
+  const limit = input.limit ?? 50;
+  const result = findNodesInTree(
+    ab.design,
+    {
+      type: input.type,
+      tag: input.tag,
+      variant: input.variant,
+      textIncludes: input.textIncludes,
+      hasStyleKey: input.hasStyleKey,
+    },
+    limit,
+  );
+  return ok(result);
 }
 
 /* ─── patch_node ────────────────────────────────────────── */
@@ -202,30 +300,222 @@ export interface PatchNodeInput {
   artboardId: string;
   nodeId: string;
   patch: NodePatch;
+  idempotencyKey?: string;
 }
 
-export function executePatchNode(input: PatchNodeInput): {
+export function executePatchNode(
+  input: PatchNodeInput,
+): ToolResult<{ artboardId: string; nodeId: string }> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
+    const ab = state.artboards.find((a) => a.id === input.artboardId);
+    if (!ab) {
+      return fail(
+        "not_found",
+        `Artboard "${input.artboardId}" not found.`,
+        "Call `query_canvas` to refresh artboard ids.",
+      );
+    }
+    if (!ab.design) {
+      return fail(
+        "preconditions_failed",
+        `Artboard "${ab.name}" is empty — nothing to patch.`,
+        "Use `add_artboard` or `update_artboard` with a full design tree first.",
+      );
+    }
+    const nextTree = patchNodeInTree(ab.design, input.nodeId, input.patch);
+    if (!nextTree) {
+      return fail(
+        "not_found",
+        `Node "${input.nodeId}" not found in artboard "${ab.name}".`,
+        "Call `find_nodes` or `get_artboard` to see current node ids.",
+      );
+    }
+    state.updateArtboard(input.artboardId, { design: nextTree });
+    return ok({ artboardId: input.artboardId, nodeId: input.nodeId });
+  });
+}
+
+/* ─── duplicate_node ────────────────────────────────────── */
+
+export interface DuplicateNodeInput {
   artboardId: string;
   nodeId: string;
-} {
-  const state = useDesignCanvas.getState();
-  const ab = state.artboards.find((a) => a.id === input.artboardId);
-  if (!ab) {
-    throw new Error(`Artboard "${input.artboardId}" not found.`);
-  }
-  if (!ab.design) {
-    throw new Error(
-      `Artboard "${ab.name}" is empty — nothing to patch. Use add_artboard or update_artboard with a full design tree first.`,
+  idempotencyKey?: string;
+}
+
+export function executeDuplicateNode(
+  input: DuplicateNodeInput,
+): ToolResult<{ artboardId: string; newNodeId: string }> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
+    const ab = state.artboards.find((a) => a.id === input.artboardId);
+    if (!ab) {
+      return fail("not_found", `Artboard "${input.artboardId}" not found.`);
+    }
+    if (!ab.design) {
+      return fail(
+        "preconditions_failed",
+        `Artboard "${ab.name}" is empty.`,
+        "Use `add_artboard` first.",
+      );
+    }
+    if (ab.design.id === input.nodeId) {
+      return fail(
+        "preconditions_failed",
+        "Can't duplicate the root of an artboard.",
+        "Use `add_artboard` to create a sibling page instead.",
+      );
+    }
+    const result = duplicateNodeInTree(ab.design, input.nodeId);
+    if (!result) {
+      return fail(
+        "not_found",
+        `Node "${input.nodeId}" not found in artboard "${ab.name}".`,
+        "Call `find_nodes` or `get_artboard` for current ids.",
+      );
+    }
+    state.updateArtboard(input.artboardId, { design: result.tree });
+    return ok({
+      artboardId: input.artboardId,
+      newNodeId: result.newNodeId,
+    });
+  });
+}
+
+/* ─── apply_theme ───────────────────────────────────────── */
+
+export interface ApplyThemeInput {
+  artboardId: string;
+  theme: Theme;
+  idempotencyKey?: string;
+}
+
+export function executeApplyTheme(
+  input: ApplyThemeInput,
+): ToolResult<{
+  artboardId: string;
+  patchedNodeIds: string[];
+  patchCount: number;
+}> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
+    const ab = state.artboards.find((a) => a.id === input.artboardId);
+    if (!ab) {
+      return fail("not_found", `Artboard "${input.artboardId}" not found.`);
+    }
+    if (!ab.design) {
+      return fail(
+        "preconditions_failed",
+        `Artboard "${ab.name}" is empty.`,
+        "Use `add_artboard` first.",
+      );
+    }
+    const { tree, patchedNodeIds } = applyThemeToTree(ab.design, input.theme);
+    state.updateArtboard(input.artboardId, { design: tree });
+    return ok({
+      artboardId: input.artboardId,
+      patchedNodeIds,
+      patchCount: patchedNodeIds.length,
+    });
+  });
+}
+
+/* ─── extract_component ─────────────────────────────────── */
+
+export interface ExtractComponentInput {
+  artboardId: string;
+  nodeId: string;
+  name: string;
+  slug?: string;
+  idempotencyKey?: string;
+}
+
+/**
+ * Promote a subtree of an artboard into a saved, reusable component:
+ *  1. Clone the subtree with fresh ids.
+ *  2. Save it via the `createDesignComponent` server action (Drizzle write,
+ *     revalidates `/designs`).
+ *  3. Replace the in-artboard node with a `component-ref` pointing at the
+ *     new slug.
+ *
+ * The caller (DesignChat) is responsible for calling `router.refresh()`
+ * after this returns so the local component library picks up the new
+ * entry; the renderer falls back to a placeholder until the refresh
+ * completes.
+ */
+export async function executeExtractComponent(
+  input: ExtractComponentInput,
+): Promise<
+  ToolResult<{
+    artboardId: string;
+    componentId: string;
+    componentSlug: string;
+  }>
+> {
+  return withIdempotencyAsync(input.idempotencyKey, async () => {
+    const state = useDesignCanvas.getState();
+    const ab = state.artboards.find((a) => a.id === input.artboardId);
+    if (!ab) {
+      return fail("not_found", `Artboard "${input.artboardId}" not found.`);
+    }
+    if (!ab.design) {
+      return fail(
+        "preconditions_failed",
+        `Artboard "${ab.name}" is empty.`,
+        "Use `add_artboard` first.",
+      );
+    }
+    if (ab.design.id === input.nodeId) {
+      return fail(
+        "preconditions_failed",
+        "Can't extract the root of an artboard as a component.",
+        "Pick a child node — a section, card, or specific element.",
+      );
+    }
+
+    const cloned = cloneSubtreeWithFreshIds(ab.design, input.nodeId);
+    if (!cloned) {
+      return fail(
+        "not_found",
+        `Node "${input.nodeId}" not found in artboard "${ab.name}".`,
+        "Call `find_nodes` or `get_artboard` for current ids.",
+      );
+    }
+
+    let saved: { id: string; slug: string };
+    try {
+      saved = await createDesignComponent({
+        name: input.name,
+        slug: input.slug,
+        // Server action accepts a generic Record — DesignNode trees are
+        // JSON-compatible.
+        tree: cloned as unknown as Record<string, unknown>,
+      });
+    } catch (err) {
+      return fail(
+        "internal",
+        err instanceof Error ? err.message : "Failed to save component.",
+      );
+    }
+
+    // Replace the source node with a component-ref so future edits to the
+    // saved component propagate everywhere.
+    const nextTree = replaceNodeWithComponentRef(
+      ab.design,
+      input.nodeId,
+      saved.slug,
     );
-  }
-  const nextTree = patchNodeInTree(ab.design, input.nodeId, input.patch);
-  if (!nextTree) {
-    throw new Error(
-      `Node "${input.nodeId}" not found in artboard "${ab.name}". Call get_artboard to see the current node ids.`,
-    );
-  }
-  state.updateArtboard(input.artboardId, { design: nextTree });
-  return { artboardId: input.artboardId, nodeId: input.nodeId };
+    if (nextTree) {
+      state.updateArtboard(input.artboardId, { design: nextTree });
+    }
+
+    return ok({
+      artboardId: input.artboardId,
+      componentId: saved.id,
+      componentSlug: saved.slug,
+    });
+  });
 }
 
 /* ─── list_components ───────────────────────────────────── */
@@ -241,15 +531,15 @@ export interface ListComponentsOutput {
 
 export function executeListComponents(
   components: LibraryComponent[],
-): ListComponentsOutput {
-  return {
+): ToolResult<ListComponentsOutput> {
+  return ok({
     components: components.map((c) => ({
       slug: c.slug,
       name: c.name,
       rootType: c.tree.type,
       nodeCount: countNodes(c.tree),
     })),
-  };
+  });
 }
 
 function countNodes(node: DesignNode): number {
@@ -270,12 +560,14 @@ export interface ListAssetsOutput {
   }>;
 }
 
-export function executeListAssets(assets: LibraryAsset[]): ListAssetsOutput {
-  return {
+export function executeListAssets(
+  assets: LibraryAsset[],
+): ToolResult<ListAssetsOutput> {
+  return ok({
     assets: assets.map((a) => ({
       name: a.name,
       url: a.url,
       mimeType: a.mimeType,
     })),
-  };
+  });
 }

@@ -1,6 +1,11 @@
 "use client";
 
-import { Tldraw, type Editor, type TLStoreSnapshot } from "tldraw";
+import {
+  Tldraw,
+  type Editor,
+  type TLComponents,
+  type TLStoreSnapshot,
+} from "tldraw";
 import "tldraw/tldraw.css";
 
 import { saveBoardSnapshot } from "@/app/(app)/boards/actions";
@@ -10,7 +15,15 @@ import {
   useBoardEditorRef,
   useBoardSelectionWriter,
 } from "./editor-context";
+import { ShapePreviewOverlay } from "./shape-preview-overlay";
 import { customShapeUtils } from "./shapes";
+
+// Mounted inside the editor's coordinate-aware container. Defined at
+// module scope so React doesn't see a fresh component identity on every
+// render of TldrawCanvas (which would remount the overlay).
+const tldrawComponents: TLComponents = {
+  InFrontOfTheCanvas: ShapePreviewOverlay,
+};
 
 const SAVE_DEBOUNCE_MS = 1500;
 
@@ -86,6 +99,7 @@ export function TldrawCanvas({ boardId, initialSnapshot }: TldrawCanvasProps) {
     <div className="absolute inset-0">
       <Tldraw
         shapeUtils={customShapeUtils}
+        components={tldrawComponents}
         snapshot={
           initialSnapshot
             ? (initialSnapshot as unknown as TLStoreSnapshot)
