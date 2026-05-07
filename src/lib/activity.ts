@@ -10,10 +10,13 @@ import { activityLog } from "@/db/schema";
 export type ActivityVerb =
   | "created"
   | "renamed"
+  | "updated"
   | "deleted"
   | "shared"
   | "unshared"
   | "commented"
+  | "reassigned"
+  | "status_changed"
   | "added_member"
   | "removed_member"
   | "left"
@@ -24,7 +27,8 @@ export type ActivitySubjectType =
   | "design"
   | "comment"
   | "member"
-  | "team";
+  | "team"
+  | "task";
 
 export interface LogActivityInput {
   teamId: string;

@@ -4,14 +4,14 @@ import { and, asc, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 import { db } from "@/db";
-import { boards, comments, designs } from "@/db/schema";
+import { boards, comments, designs, tasks } from "@/db/schema";
 import { logActivity } from "@/lib/activity";
 import { resolveMentionsForTeam } from "@/lib/comments/mention-parser";
 import { requireActiveTeam } from "@/lib/permissions";
 
 const MAX_COMMENT_LENGTH = 4000;
 
-export type CommentSubject = "board" | "design";
+export type CommentSubject = "board" | "design" | "task";
 
 interface SubjectGuardResult {
   teamId: string;
@@ -39,12 +39,21 @@ async function authorizeSubject(
     return { teamId, authorId: session.user.id, subjectName: row.name };
   }
 
-  const row = await db.query.designs.findFirst({
-    where: and(eq(designs.id, subjectId), eq(designs.teamId, teamId)),
-    columns: { id: true, name: true },
+  if (subjectType === "design") {
+    const row = await db.query.designs.findFirst({
+      where: and(eq(designs.id, subjectId), eq(designs.teamId, teamId)),
+      columns: { id: true, name: true },
+    });
+    if (!row) throw new Error("Design not found");
+    return { teamId, authorId: session.user.id, subjectName: row.name };
+  }
+
+  const row = await db.query.tasks.findFirst({
+    where: and(eq(tasks.id, subjectId), eq(tasks.teamId, teamId)),
+    columns: { id: true, title: true },
   });
-  if (!row) throw new Error("Design not found");
-  return { teamId, authorId: session.user.id, subjectName: row.name };
+  if (!row) throw new Error("Task not found");
+  return { teamId, authorId: session.user.id, subjectName: row.title };
 }
 
 /* ─── create ─────────────────────────────────────────── */
@@ -96,13 +105,18 @@ export async function createComment(input: {
     },
   });
 
-  revalidatePath(
-    input.subjectType === "board"
-      ? `/boards/${input.subjectId}`
-      : `/designs/${input.subjectId}`,
-  );
+  revalidatePath(pathForSubject(input.subjectType, input.subjectId));
 
   return { id: created.id };
+}
+
+function pathForSubject(
+  subjectType: CommentSubject,
+  subjectId: string,
+): string {
+  if (subjectType === "board") return `/boards/${subjectId}`;
+  if (subjectType === "design") return `/designs/${subjectId}`;
+  return `/tasks/${subjectId}`;
 }
 
 /* ─── delete ─────────────────────────────────────────── */
@@ -132,9 +146,10 @@ export async function deleteComment(commentId: string) {
     .where(and(eq(comments.id, commentId), eq(comments.teamId, teamId)));
 
   revalidatePath(
-    existing.subjectType === "board"
-      ? `/boards/${existing.subjectId}`
-      : `/designs/${existing.subjectId}`,
+    pathForSubject(
+      existing.subjectType as CommentSubject,
+      existing.subjectId,
+    ),
   );
 }
 

@@ -14,6 +14,7 @@ import { comments } from "./comments";
 import { designAssets } from "./design-assets";
 import { designComponents } from "./design-components";
 import { designs } from "./designs";
+import { tasks } from "./tasks";
 
 /**
  * Drizzle relations registry.
@@ -32,6 +33,8 @@ export const userRelations = relations(user, ({ many }) => ({
   designAssets: many(designAssets),
   comments: many(comments),
   activityRows: many(activityLog),
+  createdTasks: many(tasks, { relationName: "task_creator" }),
+  assignedTasks: many(tasks, { relationName: "task_assignee" }),
   // Better Auth organization plugin
   members: many(member),
   invitations: many(invitation),
@@ -42,6 +45,32 @@ export const organizationRelations = relations(organization, ({ many }) => ({
   invitations: many(invitation),
   comments: many(comments),
   activityRows: many(activityLog),
+  tasks: many(tasks),
+}));
+
+export const tasksRelations = relations(tasks, ({ one, many }) => ({
+  team: one(organization, {
+    fields: [tasks.teamId],
+    references: [organization.id],
+  }),
+  creator: one(user, {
+    fields: [tasks.creatorId],
+    references: [user.id],
+    relationName: "task_creator",
+  }),
+  assignee: one(user, {
+    fields: [tasks.assigneeId],
+    references: [user.id],
+    relationName: "task_assignee",
+  }),
+  // Self-relation for subtasks. Drizzle doesn't auto-pair self-relations
+  // so name them explicitly.
+  parent: one(tasks, {
+    fields: [tasks.parentTaskId],
+    references: [tasks.id],
+    relationName: "task_parent",
+  }),
+  subtasks: many(tasks, { relationName: "task_parent" }),
 }));
 
 export const commentsRelations = relations(comments, ({ one }) => ({
