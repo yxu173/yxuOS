@@ -26,10 +26,10 @@ export const designAssets = pgTable(
     ownerId: text("owner_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    /** Owning team. Nullable until commit 3 lands the inserts; NOT NULL after migration 0006. */
-    teamId: text("team_id").references(() => organization.id, {
-      onDelete: "cascade",
-    }),
+    /** Owning team. Cascades on team delete. */
+    teamId: text("team_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
     /** Display name (defaults to the original file name). */
     name: text("name").notNull(),
     /** Vercel Blob pathname — needed for `del()`. */

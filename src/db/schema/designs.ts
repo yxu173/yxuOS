@@ -19,10 +19,10 @@ export const designs = pgTable(
     ownerId: text("owner_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    /** Owning team. Nullable until commit 3 lands the inserts; NOT NULL after migration 0006. */
-    teamId: text("team_id").references(() => organization.id, {
-      onDelete: "cascade",
-    }),
+    /** Owning team. Cascades on team delete. */
+    teamId: text("team_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
     threadId: text("thread_id").notNull().$defaultFn(newId),
     /**
      * Snapshot of the design canvas: list of artboards (each with position,

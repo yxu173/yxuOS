@@ -22,10 +22,10 @@ export const designComponents = pgTable(
     ownerId: text("owner_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    /** Owning team. Nullable until commit 3 lands the inserts; NOT NULL after migration 0006. */
-    teamId: text("team_id").references(() => organization.id, {
-      onDelete: "cascade",
-    }),
+    /** Owning team. Cascades on team delete. */
+    teamId: text("team_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
     /** Human-readable name shown in the library, e.g. "Stride Logo". */
     name: text("name").notNull(),
     /** Stable kebab-case identifier the agent / DesignNodes reference. */
