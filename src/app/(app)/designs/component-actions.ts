@@ -120,6 +120,55 @@ export async function updateDesignComponentTree(
   revalidatePath("/designs");
 }
 
+/**
+ * Slug-keyed counterpart to updateDesignComponentTree, used by the
+ * design agent's `update_component` tool. Looks up the component by
+ * (teamId, slug), confirms it exists inside the active team, and
+ * applies the new tree (and optionally a new display name) in one
+ * round-trip. Returns the component's id so the caller can correlate.
+ *
+ * Slug uniqueness is per-creator (legacy), but every component still
+ * belongs to a single team — querying by (teamId, slug) is safe
+ * because the agent only ever resolves slugs returned from the same
+ * team's `list_components`.
+ */
+export async function updateDesignComponentBySlug(input: {
+  slug: string;
+  tree: Record<string, unknown>;
+  name?: string;
+}): Promise<{ id: string; slug: string }> {
+  const { teamId } = await requireActiveTeam();
+
+  const existing = await db.query.designComponents.findFirst({
+    where: and(
+      eq(designComponents.teamId, teamId),
+      eq(designComponents.slug, input.slug),
+    ),
+    columns: { id: true, slug: true },
+  });
+  if (!existing) {
+    throw new Error(`Component "${input.slug}" not found in this team`);
+  }
+
+  const patch: { tree: Record<string, unknown>; updatedAt: Date; name?: string } = {
+    tree: input.tree,
+    updatedAt: new Date(),
+  };
+  if (input.name !== undefined) {
+    const trimmed = input.name.trim();
+    if (!trimmed) throw new Error("Component name cannot be empty");
+    patch.name = trimmed;
+  }
+
+  await db
+    .update(designComponents)
+    .set(patch)
+    .where(eq(designComponents.id, existing.id));
+
+  revalidatePath("/designs");
+  return { id: existing.id, slug: existing.slug };
+}
+
 export async function deleteDesignComponent(componentId: string) {
   const { teamId } = await requireActiveTeam();
   await db

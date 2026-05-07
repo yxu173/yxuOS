@@ -2,7 +2,10 @@
 
 import { nanoid } from "nanoid";
 
-import { createDesignComponent } from "@/app/(app)/designs/component-actions";
+import {
+  createDesignComponent,
+  updateDesignComponentBySlug,
+} from "@/app/(app)/designs/component-actions";
 import {
   fail,
   ok,
@@ -20,12 +23,18 @@ import type { DesignNode } from "./design-node";
 import {
   applyThemeToTree,
   cloneSubtreeWithFreshIds,
+  deleteNodesInTree,
   duplicateNodeInTree,
+  findNodeInTree,
   findNodesInTree,
+  insertNodesIntoTree,
+  moveNodesInTree,
   patchNodeInTree,
+  regenerateIds,
   replaceNodeWithComponentRef,
   validateTree,
   type FindNodePredicate,
+  type InsertPosition,
   type NodeMatch,
   type NodePatch,
   type Theme,
@@ -571,3 +580,349 @@ export function executeListAssets(
     })),
   });
 }
+
+/* ─── add_nodes ─────────────────────────────────────────── */
+
+export interface AddNodesInput {
+  artboardId: string;
+  targetNodeId: string;
+  position: InsertPosition;
+  nodes: DesignNode[];
+  idempotencyKey?: string;
+}
+
+export function executeAddNodes(
+  input: AddNodesInput,
+): ToolResult<{ artboardId: string; insertedNodeIds: string[] }> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
+    const ab = state.artboards.find((a) => a.id === input.artboardId);
+    if (!ab) {
+      return fail(
+        "not_found",
+        `Artboard "${input.artboardId}" not found.`,
+        "Call `query_canvas` to refresh artboard ids.",
+      );
+    }
+    if (!ab.design) {
+      return fail(
+        "preconditions_failed",
+        `Artboard "${ab.name}" is empty.`,
+        "Use `add_artboard` or `update_artboard` with a tree first.",
+      );
+    }
+
+    // Validate every incoming subtree before we touch the live tree —
+    // failing fast keeps the canvas consistent.
+    for (const node of input.nodes) {
+      const violation = validateTree(node);
+      if (violation) {
+        return fail("validation_failed", violation.message, violation.hint);
+      }
+    }
+
+    const insertion = insertNodesIntoTree(
+      ab.design,
+      { id: input.targetNodeId, position: input.position },
+      input.nodes,
+    );
+    if ("error" in insertion) {
+      // `not_found` covers missing target/anchor; anything else is a
+      // precondition (leaf parent, root before/after).
+      const isMissing = insertion.error.message.includes("not found");
+      return fail(
+        isMissing ? "not_found" : "preconditions_failed",
+        insertion.error.message,
+        insertion.error.hint,
+      );
+    }
+
+    state.updateArtboard(input.artboardId, { design: insertion.result.tree });
+    return ok({
+      artboardId: input.artboardId,
+      insertedNodeIds: insertion.result.insertedNodeIds,
+    });
+  });
+}
+
+/* ─── delete_nodes ──────────────────────────────────────── */
+
+export interface DeleteNodesInput {
+  artboardId: string;
+  nodeIds: string[];
+  idempotencyKey?: string;
+}
+
+export function executeDeleteNodes(
+  input: DeleteNodesInput,
+): ToolResult<{ artboardId: string; deletedNodeIds: string[] }> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
+    const ab = state.artboards.find((a) => a.id === input.artboardId);
+    if (!ab) {
+      return fail("not_found", `Artboard "${input.artboardId}" not found.`);
+    }
+    if (!ab.design) {
+      return fail(
+        "preconditions_failed",
+        `Artboard "${ab.name}" is empty.`,
+        "Nothing to delete.",
+      );
+    }
+    if (ab.design.id && input.nodeIds.includes(ab.design.id)) {
+      return fail(
+        "preconditions_failed",
+        "Can't delete the artboard root via `delete_nodes`.",
+        "Use `delete_artboard` to remove the whole artboard.",
+      );
+    }
+
+    const { tree, deletedNodeIds } = deleteNodesInTree(
+      ab.design,
+      new Set(input.nodeIds),
+    );
+
+    if (deletedNodeIds.length === 0) {
+      // No-op — every id was missing. Surface as not_found so the
+      // agent re-reads ids before retrying.
+      return fail(
+        "not_found",
+        "None of the requested node ids were found in the artboard.",
+        "Call `find_nodes` or `get_artboard` to see current ids.",
+      );
+    }
+
+    state.updateArtboard(input.artboardId, { design: tree });
+    return ok({
+      artboardId: input.artboardId,
+      deletedNodeIds,
+    });
+  });
+}
+
+/* ─── move_nodes ────────────────────────────────────────── */
+
+export interface MoveNodesInput {
+  artboardId: string;
+  nodeIds: string[];
+  targetNodeId: string;
+  position: InsertPosition;
+  idempotencyKey?: string;
+}
+
+export function executeMoveNodes(
+  input: MoveNodesInput,
+): ToolResult<{ artboardId: string; movedNodeIds: string[] }> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
+    const ab = state.artboards.find((a) => a.id === input.artboardId);
+    if (!ab) {
+      return fail("not_found", `Artboard "${input.artboardId}" not found.`);
+    }
+    if (!ab.design) {
+      return fail(
+        "preconditions_failed",
+        `Artboard "${ab.name}" is empty.`,
+        "Nothing to move.",
+      );
+    }
+
+    const result = moveNodesInTree(
+      ab.design,
+      input.nodeIds,
+      { id: input.targetNodeId, position: input.position },
+    );
+    if ("error" in result) {
+      const isMissing = result.error.message.includes("not found");
+      return fail(
+        isMissing ? "not_found" : "preconditions_failed",
+        result.error.message,
+        result.error.hint,
+      );
+    }
+
+    state.updateArtboard(input.artboardId, { design: result.tree });
+    return ok({
+      artboardId: input.artboardId,
+      movedNodeIds: result.movedNodeIds,
+    });
+  });
+}
+
+/* ─── patch_nodes (plural) ──────────────────────────────── */
+
+export interface PatchNodesInput {
+  artboardId: string;
+  nodeIds: string[];
+  patch: NodePatch;
+  idempotencyKey?: string;
+}
+
+export function executePatchNodes(
+  input: PatchNodesInput,
+): ToolResult<{ artboardId: string; patchedNodeIds: string[] }> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
+    const ab = state.artboards.find((a) => a.id === input.artboardId);
+    if (!ab) {
+      return fail("not_found", `Artboard "${input.artboardId}" not found.`);
+    }
+    if (!ab.design) {
+      return fail(
+        "preconditions_failed",
+        `Artboard "${ab.name}" is empty.`,
+        "Use `add_artboard` first.",
+      );
+    }
+
+    let tree = ab.design;
+    const patchedNodeIds: string[] = [];
+    const missing: string[] = [];
+
+    // Walk each id sequentially: each patch is independent so order
+    // doesn't matter, and we want to keep the call partial-success
+    // friendly (missing ids become warnings, not a hard error).
+    for (const nodeId of input.nodeIds) {
+      const next = patchNodeInTree(tree, nodeId, input.patch);
+      if (next) {
+        tree = next;
+        patchedNodeIds.push(nodeId);
+      } else {
+        missing.push(nodeId);
+      }
+    }
+
+    if (patchedNodeIds.length === 0) {
+      return fail(
+        "not_found",
+        "None of the requested node ids were found in the artboard.",
+        "Call `find_nodes` or `get_artboard` to see current ids.",
+      );
+    }
+
+    state.updateArtboard(input.artboardId, { design: tree });
+
+    const warnings: string[] | undefined =
+      missing.length > 0
+        ? [
+            `Skipped ${missing.length} missing node id${
+              missing.length === 1 ? "" : "s"
+            }: ${missing.slice(0, 5).join(", ")}${
+              missing.length > 5 ? "…" : ""
+            }`,
+          ]
+        : undefined;
+    return ok({ artboardId: input.artboardId, patchedNodeIds }, warnings);
+  });
+}
+
+/* ─── duplicate_artboard ────────────────────────────────── */
+
+export interface DuplicateArtboardInput {
+  artboardId: string;
+  name?: string;
+  x?: number;
+  y?: number;
+  idempotencyKey?: string;
+}
+
+export function executeDuplicateArtboard(
+  input: DuplicateArtboardInput,
+): ToolResult<{ artboardId: string; sourceArtboardId: string }> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
+    const source = state.artboards.find((a) => a.id === input.artboardId);
+    if (!source) {
+      return fail("not_found", `Artboard "${input.artboardId}" not found.`);
+    }
+
+    // Default placement: 80-px gap to the right of the source. Same
+    // rule as `add_artboard`'s auto-placement so duplicates flow
+    // visually with new artboards.
+    const x = input.x ?? source.x + source.w + 80;
+    const y = input.y ?? source.y;
+    const name = input.name?.trim() || `${source.name} (copy)`;
+
+    // Deep-clone the design tree with fresh ids so the new artboard's
+    // nodes are independently targetable.
+    const designClone = source.design ? regenerateIds(source.design) : null;
+
+    const id = nanoid();
+    const artboard: Artboard = {
+      id,
+      name,
+      device: source.device,
+      x,
+      y,
+      w: source.w,
+      h: source.h,
+      design: designClone,
+      ...(source.background ? { background: source.background } : {}),
+    };
+    state.addArtboard(artboard);
+    state.selectOnly(id);
+    return ok({ artboardId: id, sourceArtboardId: source.id });
+  });
+}
+
+/* ─── update_component ──────────────────────────────────── */
+
+export interface UpdateComponentInput {
+  componentSlug: string;
+  name?: string;
+  tree: DesignNode;
+  idempotencyKey?: string;
+}
+
+/**
+ * Replace a saved component's tree (and optionally its display name).
+ * The new tree is validated structurally before the server write so
+ * malformed updates fail fast with `validation_failed` instead of
+ * landing a broken component that breaks every artboard referencing it.
+ *
+ * The caller (DesignChat) calls `router.refresh()` after this returns
+ * so `<DesignRenderer>` picks up the new tree on the next paint;
+ * artboards using `component-ref` propagate automatically.
+ */
+export async function executeUpdateComponent(
+  input: UpdateComponentInput,
+  components: LibraryComponent[],
+): Promise<ToolResult<{ componentSlug: string }>> {
+  return withIdempotencyAsync(input.idempotencyKey, async () => {
+    const existing = components.find((c) => c.slug === input.componentSlug);
+    if (!existing) {
+      return fail(
+        "not_found",
+        `Component "${input.componentSlug}" not found.`,
+        "Call `list_components` to refresh the library.",
+      );
+    }
+
+    const violation = validateTree(input.tree);
+    if (violation) {
+      return fail("validation_failed", violation.message, violation.hint);
+    }
+
+    try {
+      await updateDesignComponentBySlug({
+        slug: input.componentSlug,
+        tree: input.tree as unknown as Record<string, unknown>,
+        name: input.name,
+      });
+    } catch (err) {
+      return fail(
+        "internal",
+        err instanceof Error ? err.message : "Failed to update component.",
+      );
+    }
+
+    return ok({ componentSlug: input.componentSlug });
+  });
+}
+
+/* ─── helpers ──────────────────────────────────────────── */
+
+// Re-exported so the chat can ask "is this id even in the tree?" before
+// dispatching multi-node tools — currently unused but kept here so the
+// plural executors and any future inspector code can share the import.
+export { findNodeInTree };

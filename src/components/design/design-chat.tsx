@@ -23,17 +23,23 @@ import { cn } from "@/lib/utils";
 
 import {
   executeAddArtboard,
+  executeAddNodes,
   executeApplyTheme,
   executeDeleteArtboard,
+  executeDeleteNodes,
+  executeDuplicateArtboard,
   executeDuplicateNode,
   executeExtractComponent,
   executeFindNodes,
   executeGetArtboard,
   executeListAssets,
   executeListComponents,
+  executeMoveNodes,
   executePatchNode,
+  executePatchNodes,
   executeQueryCanvas,
   executeUpdateArtboard,
+  executeUpdateComponent,
 } from "./canvas-tools";
 import { useComponentLibrary } from "./component-library-context";
 
@@ -47,12 +53,18 @@ const TOOL_LABELS: Record<string, string> = {
   add_artboard: "Drawing artboard",
   update_artboard: "Updating artboard",
   delete_artboard: "Deleting artboard",
+  duplicate_artboard: "Cloning artboard",
   get_artboard: "Reading artboard",
   find_nodes: "Searching artboard",
   patch_node: "Patching element",
+  patch_nodes: "Patching elements",
+  add_nodes: "Adding elements",
+  delete_nodes: "Removing elements",
+  move_nodes: "Moving elements",
   duplicate_node: "Duplicating element",
   apply_theme: "Applying theme",
   extract_component: "Saving component",
+  update_component: "Updating component",
   list_components: "Reading component library",
   list_assets: "Reading uploaded assets",
 };
@@ -172,6 +184,41 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
                 ),
               );
               break;
+            case "duplicate_artboard":
+              emit(
+                executeDuplicateArtboard(
+                  toolCall.input as Parameters<typeof executeDuplicateArtboard>[0],
+                ),
+              );
+              break;
+            case "add_nodes":
+              emit(
+                executeAddNodes(
+                  toolCall.input as Parameters<typeof executeAddNodes>[0],
+                ),
+              );
+              break;
+            case "delete_nodes":
+              emit(
+                executeDeleteNodes(
+                  toolCall.input as Parameters<typeof executeDeleteNodes>[0],
+                ),
+              );
+              break;
+            case "move_nodes":
+              emit(
+                executeMoveNodes(
+                  toolCall.input as Parameters<typeof executeMoveNodes>[0],
+                ),
+              );
+              break;
+            case "patch_nodes":
+              emit(
+                executePatchNodes(
+                  toolCall.input as Parameters<typeof executePatchNodes>[0],
+                ),
+              );
+              break;
             case "apply_theme":
               emit(
                 executeApplyTheme(
@@ -188,6 +235,18 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
               // `list_components` / the renderer pick it up on the next
               // turn. revalidatePath() inside the action is the source of
               // truth; this just kicks Next into refetching.
+              if (output.ok) router.refresh();
+              break;
+            }
+            case "update_component": {
+              const output = await executeUpdateComponent(
+                toolCall.input as Parameters<typeof executeUpdateComponent>[0],
+                library.components,
+              );
+              emit(output);
+              // Saved components are rendered via `component-ref` lookups,
+              // so refreshing the library makes the new tree show up
+              // everywhere it's referenced on the next paint.
               if (output.ok) router.refresh();
               break;
             }
@@ -621,6 +680,8 @@ function describeToolResult(
       return "Updated artboard";
     case "delete_artboard":
       return "Removed artboard";
+    case "duplicate_artboard":
+      return "Cloned artboard";
     case "get_artboard":
       return "Read artboard";
     case "find_nodes":
@@ -633,6 +694,38 @@ function describeToolResult(
     case "patch_node": {
       const fields = input?.patch ? describePatchFields(input.patch) : null;
       return fields ? `Patched element · ${fields}` : "Patched element";
+    }
+    case "patch_nodes": {
+      const count = data?.patchedNodeIds?.length;
+      const fields = input?.patch ? describePatchFields(input.patch) : null;
+      if (typeof count === "number") {
+        const head = `Patched ${count} element${count === 1 ? "" : "s"}`;
+        return fields ? `${head} · ${fields}` : head;
+      }
+      return fields ? `Patched elements · ${fields}` : "Patched elements";
+    }
+    case "add_nodes": {
+      const count =
+        data?.insertedNodeIds?.length ??
+        (Array.isArray(input?.nodes) ? input.nodes.length : null);
+      if (count !== null) {
+        return `Added ${count} element${count === 1 ? "" : "s"}`;
+      }
+      return "Added elements";
+    }
+    case "delete_nodes": {
+      const count = data?.deletedNodeIds?.length;
+      if (typeof count === "number") {
+        return `Removed ${count} element${count === 1 ? "" : "s"}`;
+      }
+      return "Removed elements";
+    }
+    case "move_nodes": {
+      const count = data?.movedNodeIds?.length;
+      if (typeof count === "number") {
+        return `Moved ${count} element${count === 1 ? "" : "s"}`;
+      }
+      return "Moved elements";
     }
     case "duplicate_node":
       return "Duplicated element";
@@ -647,6 +740,10 @@ function describeToolResult(
       return data?.componentSlug
         ? `Saved component "${data.componentSlug}"`
         : "Saved component";
+    case "update_component":
+      return data?.componentSlug
+        ? `Updated component "${data.componentSlug}"`
+        : "Updated component";
     case "list_components":
       return "Read component library";
     case "list_assets":
