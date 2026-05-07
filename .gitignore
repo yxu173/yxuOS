@@ -60,3 +60,7 @@ mastra.db-wal
 
 # uploads / generated
 public/uploads/
+
+# local agent skills installs (per-machine; don't commit)
+.agents/
+skills-lock.json
