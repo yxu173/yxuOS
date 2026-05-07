@@ -1,11 +1,11 @@
 "use client";
 
-import { LayoutDashboard, Palette } from "lucide-react";
+import { CheckSquare, LayoutDashboard, Palette } from "lucide-react";
 import Link from "next/link";
 
 import { cn } from "@/lib/utils";
 
-export type ActiveWorkspace = "boards" | "designs";
+export type ActiveWorkspace = "boards" | "designs" | "tasks";
 
 export interface WorkspaceTabsProps {
   active: ActiveWorkspace;
@@ -28,6 +28,12 @@ const TABS: Array<{
     label: "Designs",
     href: "/designs",
     Icon: Palette,
+  },
+  {
+    id: "tasks",
+    label: "Tasks",
+    href: "/tasks",
+    Icon: CheckSquare,
   },
 ];
 

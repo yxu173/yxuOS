@@ -299,7 +299,7 @@ export interface TaskListRow {
   updatedAt: Date;
   parentTaskId: string | null;
   assignee: {
-    id: string;
+    userId: string;
     name: string;
     username: string | null;
   } | null;
@@ -363,7 +363,7 @@ export async function listTopLevelTasks(
     parentTaskId: row.parentTaskId,
     assignee: row.assignee
       ? {
-          id: row.assignee.id,
+          userId: row.assignee.id,
           name: row.assignee.name,
           username:
             row.assignee.displayUsername ?? row.assignee.username ?? null,
@@ -391,12 +391,12 @@ export interface TaskDetail {
     title: string;
   } | null;
   creator: {
-    id: string;
+    userId: string;
     name: string;
     username: string | null;
   };
   assignee: {
-    id: string;
+    userId: string;
     name: string;
     username: string | null;
   } | null;
@@ -406,7 +406,7 @@ export interface TaskDetail {
     status: TaskStatus;
     priority: TaskPriority;
     assignee: {
-      id: string;
+      userId: string;
       name: string;
       username: string | null;
     } | null;
@@ -467,13 +467,13 @@ export async function getTaskDetail(taskId: string): Promise<TaskDetail | null> 
     completedAt: row.completedAt,
     parentTask: row.parent ? { id: row.parent.id, title: row.parent.title } : null,
     creator: {
-      id: row.creator.id,
+      userId: row.creator.id,
       name: row.creator.name,
       username: row.creator.displayUsername ?? row.creator.username ?? null,
     },
     assignee: row.assignee
       ? {
-          id: row.assignee.id,
+          userId: row.assignee.id,
           name: row.assignee.name,
           username:
             row.assignee.displayUsername ?? row.assignee.username ?? null,
@@ -486,7 +486,7 @@ export async function getTaskDetail(taskId: string): Promise<TaskDetail | null> 
       priority: s.priority as TaskPriority,
       assignee: s.assignee
         ? {
-            id: s.assignee.id,
+            userId: s.assignee.id,
             name: s.assignee.name,
             username: s.assignee.displayUsername ?? s.assignee.username ?? null,
           }
