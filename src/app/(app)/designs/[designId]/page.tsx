@@ -3,6 +3,7 @@ import type { UIMessage } from "ai";
 import { and, desc, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 
+import { listCommentsForSubject } from "@/app/(app)/comments/actions";
 import { listDesignAssetsForTeam } from "@/app/(app)/designs/asset-actions";
 import { listDesignComponentsForTeam } from "@/app/(app)/designs/component-actions";
 import type {
@@ -15,7 +16,7 @@ import type { Artboard } from "@/components/design/types";
 import { db } from "@/db";
 import { designs } from "@/db/schema";
 import { requireActiveTeam } from "@/lib/permissions";
-import { listUserTeams } from "@/lib/teams";
+import { listTeamMembers, listUserTeams } from "@/lib/teams";
 import { mastra } from "@/mastra";
 
 interface DesignSnapshot {
@@ -45,40 +46,49 @@ export default async function DesignPage({
 
   const { session, teamId } = await requireActiveTeam();
 
-  const [design, userDesigns, componentRows, assetRows, teams] =
-    await Promise.all([
-      db.query.designs.findFirst({
-        where: and(eq(designs.id, designId), eq(designs.teamId, teamId)),
-        columns: {
-          id: true,
-          name: true,
-          snapshot: true,
-          threadId: true,
-          shareToken: true,
-        },
-        with: {
-          owner: {
-            columns: {
-              name: true,
-              username: true,
-              displayUsername: true,
-            },
+  const [
+    design,
+    userDesigns,
+    componentRows,
+    assetRows,
+    teams,
+    members,
+    commentRows,
+  ] = await Promise.all([
+    db.query.designs.findFirst({
+      where: and(eq(designs.id, designId), eq(designs.teamId, teamId)),
+      columns: {
+        id: true,
+        name: true,
+        snapshot: true,
+        threadId: true,
+        shareToken: true,
+      },
+      with: {
+        owner: {
+          columns: {
+            name: true,
+            username: true,
+            displayUsername: true,
           },
         },
-      }),
-      db.query.designs.findMany({
-        where: eq(designs.teamId, teamId),
-        orderBy: desc(designs.updatedAt),
-        columns: {
-          id: true,
-          name: true,
-          updatedAt: true,
-        },
-      }),
-      listDesignComponentsForTeam(teamId),
-      listDesignAssetsForTeam(teamId),
-      listUserTeams(session.user.id),
-    ]);
+      },
+    }),
+    db.query.designs.findMany({
+      where: eq(designs.teamId, teamId),
+      orderBy: desc(designs.updatedAt),
+      columns: {
+        id: true,
+        name: true,
+        updatedAt: true,
+      },
+    }),
+    listDesignComponentsForTeam(teamId),
+    listDesignAssetsForTeam(teamId),
+    listUserTeams(session.user.id),
+    listTeamMembers(teamId),
+    listCommentsForSubject("design", designId),
+  ]);
 
   if (!design) {
     notFound();
@@ -121,6 +131,12 @@ export default async function DesignPage({
       shareToken={design.shareToken}
       initialArtboards={initialArtboards}
       initialMessages={initialMessages}
+      initialComments={commentRows}
+      members={members.map((m) => ({
+        userId: m.userId,
+        name: m.name,
+        username: m.username,
+      }))}
       designs={userDesigns}
       components={components}
       assets={assets}

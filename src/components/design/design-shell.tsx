@@ -3,6 +3,10 @@
 import type { UIMessage } from "ai";
 import { useEffect, useState } from "react";
 
+import type {
+  CommentItemData,
+  MentionTarget,
+} from "@/components/comments/types";
 import { WorkspaceTopBar } from "@/components/workspaces/workspace-top-bar";
 import type { WorkspaceSwitcherTeam } from "@/components/workspaces/workspace-switcher";
 
@@ -31,6 +35,8 @@ export interface DesignShellProps {
   shareToken: string | null;
   initialArtboards: Artboard[];
   initialMessages: UIMessage[];
+  initialComments: CommentItemData[];
+  members: MentionTarget[];
   designs: DesignSummary[];
   components: LibraryComponent[];
   assets: LibraryAsset[];
@@ -47,6 +53,8 @@ export function DesignShell({
   shareToken,
   initialArtboards,
   initialMessages,
+  initialComments,
+  members,
   designs,
   components,
   assets,
@@ -139,6 +147,8 @@ export function DesignShell({
           <DesignRightPanel
             designId={designId}
             initialMessages={initialMessages}
+            initialComments={initialComments}
+            members={members}
           />
         ) : null}
       </div>
