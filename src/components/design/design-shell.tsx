@@ -72,9 +72,13 @@ export function DesignShell({
   const [rightOpen, setRightOpen] = useState(true);
 
   // Hydrate the zustand store with the server-fetched artboards on first
-  // render via a lazy initializer (no flash of empty canvas).
+  // render via a lazy initializer (no flash of empty canvas). Clears the
+  // undo stack right after so the first user-visible state — what the
+  // server sent — is the floor of the history (Cmd+Z can never roll
+  // 'before the design loaded' to an empty canvas).
   useState(() => {
     useDesignCanvas.getState().setArtboards(initialArtboards);
+    useDesignCanvas.temporal.getState().clear();
     return null;
   });
 
@@ -112,6 +116,20 @@ export function DesignShell({
       } else if (event.key === "-") {
         event.preventDefault();
         zoomCenter(0.8);
+      } else if (event.key === "z" || event.key === "Z") {
+        // ⌘Z = undo, ⇧⌘Z = redo. The temporal store reverts only the
+        // artboards slice; camera + selection keep current values.
+        event.preventDefault();
+        const temporal = useDesignCanvas.temporal.getState();
+        if (event.shiftKey) {
+          temporal.redo();
+        } else {
+          temporal.undo();
+        }
+      } else if (event.key === "y" || event.key === "Y") {
+        // ⌘Y = redo (Windows convention; Mac users have ⇧⌘Z).
+        event.preventDefault();
+        useDesignCanvas.temporal.getState().redo();
       }
     };
     window.addEventListener("keydown", handler);

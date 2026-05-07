@@ -1,6 +1,7 @@
 "use client";
 
 import { create } from "zustand";
+import { temporal } from "zundo";
 
 import type { DesignNode } from "./design-node";
 import {
@@ -72,7 +73,18 @@ function normaliseArtboard(artboard: Artboard): Artboard {
   };
 }
 
-export const useDesignCanvas = create<DesignCanvasState>((set) => ({
+/**
+ * Pieces of the store that participate in undo/redo. Camera + selection
+ * are session-only — undoing a pan or a click would feel wrong, and
+ * they'd swamp the history stack. Only the artboard data is tracked.
+ */
+interface UndoableState {
+  artboards: Artboard[];
+}
+
+export const useDesignCanvas = create<DesignCanvasState>()(
+  temporal(
+    (set) => ({
   artboards: [],
   camera: { x: 120, y: 120, zoom: 0.5 },
   selection: [],
@@ -160,4 +172,18 @@ export const useDesignCanvas = create<DesignCanvasState>((set) => ({
       selectedNodeId:
         state.selectedNodeId === nodeId ? null : state.selectedNodeId,
     })),
-}));
+    }),
+    {
+      // Only the artboard tree is undoable. Camera + selection are
+      // session state and would pollute the history.
+      partialize: (state): UndoableState => ({ artboards: state.artboards }),
+      // Reference equality on the artboards array is enough — every
+      // mutation builds a new array, untouched ones reuse references.
+      // Skips no-op pushes (idempotent rehydrate from server, etc.).
+      equality: (past, current) => past.artboards === current.artboards,
+      // Keep the stack tight; ~50 steps covers any reasonable
+      // single-session edit history without unbounded memory growth.
+      limit: 50,
+    },
+  ),
+);
