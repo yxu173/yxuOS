@@ -2,6 +2,7 @@ import { desc, eq } from "drizzle-orm";
 import {
   Activity,
   ArrowRight,
+  CheckSquare,
   LayoutDashboard,
   Palette,
   Sparkles,
@@ -11,6 +12,8 @@ import { headers } from "next/headers";
 import Link from "next/link";
 
 import { ActivityFeed } from "@/components/activity/activity-feed";
+import { PriorityIcon } from "@/components/tasks/priority-icon";
+import { StatusIcon } from "@/components/tasks/status-icon";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { AppTopBar } from "@/components/workspaces/app-top-bar";
@@ -18,7 +21,9 @@ import { db } from "@/db";
 import { boards, designs, member } from "@/db/schema";
 import { listRecentActivity } from "@/lib/activity-list";
 import { auth } from "@/lib/auth";
+import { listMyOpenTasks } from "@/lib/tasks/list-my-tasks";
 import { listUserTeams } from "@/lib/teams";
+import { cn } from "@/lib/utils";
 
 import { createBoard } from "./(app)/boards/actions";
 import { createDesign } from "./(app)/designs/actions";
@@ -54,22 +59,24 @@ export default async function HomePage() {
     return <SignedOutLanding />;
   }
 
-  const [recentBoards, recentDesigns, teams, activity] = await Promise.all([
-    db.query.boards.findMany({
-      where: eq(boards.teamId, teamId),
-      orderBy: desc(boards.updatedAt),
-      limit: RECENT_LIMIT,
-      columns: { id: true, name: true, updatedAt: true },
-    }),
-    db.query.designs.findMany({
-      where: eq(designs.teamId, teamId),
-      orderBy: desc(designs.updatedAt),
-      limit: RECENT_LIMIT,
-      columns: { id: true, name: true, updatedAt: true },
-    }),
-    listUserTeams(session.user.id),
-    listRecentActivity(teamId, 8),
-  ]);
+  const [recentBoards, recentDesigns, teams, activity, myTasks] =
+    await Promise.all([
+      db.query.boards.findMany({
+        where: eq(boards.teamId, teamId),
+        orderBy: desc(boards.updatedAt),
+        limit: RECENT_LIMIT,
+        columns: { id: true, name: true, updatedAt: true },
+      }),
+      db.query.designs.findMany({
+        where: eq(designs.teamId, teamId),
+        orderBy: desc(designs.updatedAt),
+        limit: RECENT_LIMIT,
+        columns: { id: true, name: true, updatedAt: true },
+      }),
+      listUserTeams(session.user.id),
+      listRecentActivity(teamId, 8),
+      listMyOpenTasks(session.user.id, teamId, 6),
+    ]);
 
   const activeTeam = teams.find((t) => t.id === teamId);
   const isEmpty = recentBoards.length === 0 && recentDesigns.length === 0;
@@ -96,6 +103,51 @@ export default async function HomePage() {
         </header>
 
         {isEmpty ? <EmptyState /> : null}
+
+        {myTasks.length > 0 ? (
+          <section className="flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-zinc-400">
+                <CheckSquare className="size-3.5" />
+                Your open tasks
+              </h2>
+              <Button asChild size="sm" variant="ghost">
+                <Link href="/tasks" className="gap-1">
+                  All tasks <ArrowRight className="size-3.5" />
+                </Link>
+              </Button>
+            </div>
+            <ul className="flex flex-col gap-0.5 rounded-lg border border-white/5 bg-white/[0.015] p-1.5">
+              {myTasks.map((task) => (
+                <li key={task.id}>
+                  <Link
+                    href={`/tasks/${task.id}`}
+                    className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-white/[0.04]"
+                  >
+                    <PriorityIcon priority={task.priority} />
+                    <StatusIcon status={task.status} />
+                    <span className="min-w-0 flex-1 truncate text-zinc-100">
+                      {task.title}
+                    </span>
+                    {task.dueDate ? (
+                      <span
+                        className={cn(
+                          "shrink-0 text-[11px] tabular-nums",
+                          task.overdue ? "text-red-300" : "text-zinc-500",
+                        )}
+                      >
+                        {task.dueDate.toLocaleDateString("en", {
+                          month: "short",
+                          day: "numeric",
+                        })}
+                      </span>
+                    ) : null}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
 
         <RecentSection
           title="Recent boards"

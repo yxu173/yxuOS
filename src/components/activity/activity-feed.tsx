@@ -1,4 +1,5 @@
 import {
+  CheckSquare,
   FilePen,
   FilePlus,
   FileX2,
@@ -8,10 +9,13 @@ import {
   MessageCircle,
   Palette,
   Tag,
+  UserCog,
   UserMinus,
   UserPlus,
   type LucideIcon,
 } from "lucide-react";
+
+import { TASK_STATUS_LABELS, type TaskStatus } from "@/lib/tasks/task-types";
 import Link from "next/link";
 
 import type { ActivityListItem } from "@/lib/activity-list";
@@ -78,14 +82,22 @@ function visualForRow(item: ActivityListItem): VerbVisual {
       return { icon: FilePlus, phrase: "created board", link: true };
     case "created:design":
       return { icon: FilePlus, phrase: "created design", link: true };
+    case "created:task":
+      return { icon: FilePlus, phrase: "created task", link: true };
     case "renamed:board":
       return { icon: FilePen, phrase: "renamed board", link: true };
     case "renamed:design":
       return { icon: FilePen, phrase: "renamed design", link: true };
+    case "renamed:task":
+      return { icon: FilePen, phrase: "renamed task", link: true };
+    case "updated:task":
+      return { icon: FilePen, phrase: "updated task", link: true };
     case "deleted:board":
       return { icon: FileX2, phrase: "deleted board" };
     case "deleted:design":
       return { icon: FileX2, phrase: "deleted design" };
+    case "deleted:task":
+      return { icon: FileX2, phrase: "deleted task" };
     case "shared:board":
     case "shared:design":
       return { icon: Globe, phrase: "shared", link: true };
@@ -96,6 +108,19 @@ function visualForRow(item: ActivityListItem): VerbVisual {
       return { icon: MessageCircle, phrase: "commented on board", link: true };
     case "commented:design":
       return { icon: MessageCircle, phrase: "commented on design", link: true };
+    case "commented:task":
+      return { icon: MessageCircle, phrase: "commented on task", link: true };
+    case "reassigned:task":
+      return { icon: UserCog, phrase: "reassigned task", link: true };
+    case "status_changed:task": {
+      const status = (item.metadata?.status as TaskStatus | undefined) ?? null;
+      const label = status ? TASK_STATUS_LABELS[status] : null;
+      return {
+        icon: CheckSquare,
+        phrase: label ? `moved task to ${label} ·` : "updated task status on",
+        link: true,
+      };
+    }
     case "added_member:member":
       return { icon: UserPlus, phrase: "added member" };
     case "removed_member:member":
@@ -114,6 +139,12 @@ function visualForRow(item: ActivityListItem): VerbVisual {
           };
         case "design":
           return { icon: Palette, phrase: `${item.verb} design`, link: true };
+        case "task":
+          return {
+            icon: CheckSquare,
+            phrase: `${item.verb} task`,
+            link: true,
+          };
         default:
           return { icon: Tag, phrase: `${item.verb} ${item.subjectType}` };
       }
@@ -123,6 +154,7 @@ function visualForRow(item: ActivityListItem): VerbVisual {
 function hrefForRow(item: ActivityListItem): string | null {
   if (item.subjectType === "board") return `/boards/${item.subjectId}`;
   if (item.subjectType === "design") return `/designs/${item.subjectId}`;
+  if (item.subjectType === "task") return `/tasks/${item.subjectId}`;
   return null;
 }
 
