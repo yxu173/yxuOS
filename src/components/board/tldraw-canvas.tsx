@@ -6,7 +6,10 @@ import "tldraw/tldraw.css";
 import { saveBoardSnapshot } from "@/app/(app)/boards/actions";
 
 import { DevShapeToolbar } from "./dev-shape-toolbar";
-import { useBoardEditorRef } from "./editor-context";
+import {
+  useBoardEditorRef,
+  useBoardSelectionWriter,
+} from "./editor-context";
 import { customShapeUtils } from "./shapes";
 
 const SAVE_DEBOUNCE_MS = 1500;
@@ -28,10 +31,12 @@ export interface TldrawCanvasProps {
  */
 export function TldrawCanvas({ boardId, initialSnapshot }: TldrawCanvasProps) {
   const editorRef = useBoardEditorRef();
+  const setSelectedShapeIds = useBoardSelectionWriter();
 
   const handleMount = (editor: Editor) => {
     editor.user.updateUserPreferences({ colorScheme: "dark" });
     editorRef.current = editor;
+    setSelectedShapeIds(editor.getSelectedShapeIds());
 
     let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -45,12 +50,21 @@ export function TldrawCanvas({ boardId, initialSnapshot }: TldrawCanvasProps) {
       });
     };
 
-    const unsubscribe = editor.store.listen(
+    const unsubscribeDoc = editor.store.listen(
       () => {
         if (timer) clearTimeout(timer);
         timer = setTimeout(flush, SAVE_DEBOUNCE_MS);
       },
       { source: "user", scope: "document" },
+    );
+
+    // Selection lives in the session scope. Push every change into context
+    // so the comments panel can pin to the current selection reactively.
+    const unsubscribeSession = editor.store.listen(
+      () => {
+        setSelectedShapeIds(editor.getSelectedShapeIds());
+      },
+      { scope: "session" },
     );
 
     return () => {
@@ -59,10 +73,12 @@ export function TldrawCanvas({ boardId, initialSnapshot }: TldrawCanvasProps) {
         // Last-chance save before the editor goes away.
         flush();
       }
-      unsubscribe();
+      unsubscribeDoc();
+      unsubscribeSession();
       if (editorRef.current === editor) {
         editorRef.current = null;
       }
+      setSelectedShapeIds([]);
     };
   };
 

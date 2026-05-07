@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import { member, organization } from "@/db/schema";
+import { member, organization, user } from "@/db/schema";
 
 import type { TeamRole } from "./permissions";
 
@@ -36,5 +36,35 @@ export async function listUserTeams(userId: string): Promise<UserTeam[]> {
     name: row.name,
     slug: row.slug,
     role: row.role as TeamRole,
+  }));
+}
+
+export interface TeamMember {
+  userId: string;
+  name: string;
+  username: string | null;
+}
+
+/**
+ * Lists every member of a team with the minimum fields the UI needs for
+ * @-mention autocomplete. Light enough to call on every board / design
+ * load without paginating.
+ */
+export async function listTeamMembers(teamId: string): Promise<TeamMember[]> {
+  const rows = await db
+    .select({
+      userId: user.id,
+      name: user.name,
+      username: user.username,
+      displayUsername: user.displayUsername,
+    })
+    .from(member)
+    .innerJoin(user, eq(member.userId, user.id))
+    .where(eq(member.organizationId, teamId));
+
+  return rows.map((row) => ({
+    userId: row.userId,
+    name: row.name,
+    username: row.displayUsername ?? row.username,
   }));
 }

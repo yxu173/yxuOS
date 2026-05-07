@@ -197,7 +197,7 @@ export function Chat({ boardId, initialMessages }: ChatProps) {
   };
 
   return (
-    <section className="relative flex h-full w-96 min-w-0 shrink-0 flex-col overflow-hidden border-l border-white/5 bg-zinc-950/40 backdrop-blur">
+    <div className="relative flex h-full w-full min-w-0 flex-col overflow-hidden">
       <div className="flex items-center justify-between border-b border-white/5 px-3 py-2">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
           Chat
@@ -284,7 +284,7 @@ export function Chat({ boardId, initialMessages }: ChatProps) {
           </Button>
         )}
       </form>
-    </section>
+    </div>
   );
 }
 

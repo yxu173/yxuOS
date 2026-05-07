@@ -3,11 +3,12 @@ import type { UIMessage } from "ai";
 import { and, desc, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 
+import { listCommentsForSubject } from "@/app/(app)/comments/actions";
 import { BoardShell } from "@/components/board/board-shell";
 import { db } from "@/db";
 import { boards } from "@/db/schema";
 import { requireActiveTeam } from "@/lib/permissions";
-import { listUserTeams } from "@/lib/teams";
+import { listTeamMembers, listUserTeams } from "@/lib/teams";
 import { mastra } from "@/mastra";
 
 async function loadInitialMessages(
@@ -35,7 +36,7 @@ export default async function BoardPage({
 
   const { session, teamId } = await requireActiveTeam();
 
-  const [board, userBoards, teams] = await Promise.all([
+  const [board, userBoards, teams, members, commentRows] = await Promise.all([
     db.query.boards.findFirst({
       where: and(eq(boards.id, boardId), eq(boards.teamId, teamId)),
       columns: {
@@ -65,6 +66,8 @@ export default async function BoardPage({
       },
     }),
     listUserTeams(session.user.id),
+    listTeamMembers(teamId),
+    listCommentsForSubject("board", boardId),
   ]);
 
   if (!board) {
@@ -93,6 +96,12 @@ export default async function BoardPage({
       initialSnapshot={board.snapshot ?? null}
       boards={userBoards}
       initialMessages={initialMessages}
+      initialComments={commentRows}
+      members={members.map((m) => ({
+        userId: m.userId,
+        name: m.name,
+        username: m.username,
+      }))}
       teams={teams}
       activeTeamId={teamId}
       creator={creator}
