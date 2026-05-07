@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { designComponents } from "@/db/schema";
 import { requireActiveTeam } from "@/lib/permissions";
+import { ensureDefaultProject } from "@/lib/projects";
 
 /* ─── slug helpers ───────────────────────────────────── */
 
@@ -51,6 +52,7 @@ export async function createDesignComponent(input: {
   tree: Record<string, unknown>;
 }): Promise<{ id: string; slug: string }> {
   const { session, teamId } = await requireActiveTeam();
+  const project = await ensureDefaultProject(teamId);
 
   const trimmedName = input.name.trim();
   if (!trimmedName) {
@@ -68,6 +70,7 @@ export async function createDesignComponent(input: {
     .values({
       ownerId: session.user.id,
       teamId,
+      projectId: project.id,
       name: trimmedName,
       slug,
       tree: input.tree,

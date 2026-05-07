@@ -68,6 +68,7 @@ export const auth = betterAuth({
           // runs server-side without a logged-in session yet.
           const orgId = nanoid();
           const memberId = nanoid();
+          const projectId = nanoid();
           const now = new Date();
           const baseSlug = `personal-${createdUser.id.slice(0, 12)}`.toLowerCase();
           await db.insert(schema.organization).values({
@@ -82,6 +83,17 @@ export const auth = betterAuth({
             userId: createdUser.id,
             role: "owner",
             createdAt: now,
+          });
+          // Drop a default "Workspace" project under the new team so the
+          // user lands somewhere the moment they sign in. Subsequent
+          // projects are created from the in-app switcher.
+          await db.insert(schema.projects).values({
+            id: projectId,
+            teamId: orgId,
+            name: "Workspace",
+            slug: "workspace",
+            createdAt: now,
+            updatedAt: now,
           });
         },
       },

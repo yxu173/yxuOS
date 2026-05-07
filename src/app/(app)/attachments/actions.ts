@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { attachments } from "@/db/schema";
 import { env } from "@/lib/env";
 import { requireActiveTeam } from "@/lib/permissions";
+import { ensureDefaultProject } from "@/lib/projects";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB — generous for paste-from-clipboard PNGs.
 const ALLOWED_PREFIX = "image/";
@@ -42,6 +43,7 @@ export async function uploadAttachment(
 ): Promise<UploadAttachmentResult> {
   const { session, teamId } = await requireActiveTeam();
   const token = requireBlobToken();
+  const project = await ensureDefaultProject(teamId);
 
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) {
@@ -67,6 +69,7 @@ export async function uploadAttachment(
 
   await db.insert(attachments).values({
     teamId,
+    projectId: project.id,
     uploaderId: session.user.id,
     name: file.name,
     pathname: blob.pathname,

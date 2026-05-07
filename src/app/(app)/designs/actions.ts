@@ -9,15 +9,18 @@ import { db } from "@/db";
 import { designs } from "@/db/schema";
 import { logActivity } from "@/lib/activity";
 import { requireActiveTeam } from "@/lib/permissions";
+import { ensureDefaultProject } from "@/lib/projects";
 
 export async function createDesign() {
   const { session, teamId } = await requireActiveTeam();
+  const project = await ensureDefaultProject(teamId);
 
   const [design] = await db
     .insert(designs)
     .values({
       ownerId: session.user.id,
       teamId,
+      projectId: project.id,
     })
     .returning({ id: designs.id, name: designs.name });
 

@@ -8,6 +8,7 @@ import { db } from "@/db";
 import { member, tasks } from "@/db/schema";
 import { logActivity } from "@/lib/activity";
 import { requireActiveTeam } from "@/lib/permissions";
+import { ensureDefaultProject } from "@/lib/projects";
 import {
   isValidPriority,
   isValidStatus,
@@ -69,6 +70,7 @@ export async function createTask(
   input: CreateTaskInput,
 ): Promise<{ id: string }> {
   const { session, teamId } = await requireActiveTeam();
+  const project = await ensureDefaultProject(teamId);
 
   const title = input.title.trim().slice(0, MAX_TITLE);
   if (!title) throw new Error("Task title is required");
@@ -107,6 +109,7 @@ export async function createTask(
     .insert(tasks)
     .values({
       teamId,
+      projectId: project.id,
       creatorId: session.user.id,
       assigneeId: input.assigneeId ?? null,
       parentTaskId: input.parentTaskId ?? null,

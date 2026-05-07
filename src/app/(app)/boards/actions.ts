@@ -9,6 +9,7 @@ import { db } from "@/db";
 import { boards } from "@/db/schema";
 import { logActivity } from "@/lib/activity";
 import { requireActiveTeam } from "@/lib/permissions";
+import { ensureDefaultProject } from "@/lib/projects";
 
 /**
  * Creates a new board owned by the active team and redirects to it.
@@ -17,12 +18,14 @@ import { requireActiveTeam } from "@/lib/permissions";
  */
 export async function createBoard() {
   const { session, teamId } = await requireActiveTeam();
+  const project = await ensureDefaultProject(teamId);
 
   const [board] = await db
     .insert(boards)
     .values({
       ownerId: session.user.id,
       teamId,
+      projectId: project.id,
     })
     .returning({ id: boards.id, name: boards.name });
 

@@ -9,6 +9,7 @@ import { db } from "@/db";
 import { designAssets } from "@/db/schema";
 import { env } from "@/lib/env";
 import { requireActiveTeam } from "@/lib/permissions";
+import { ensureDefaultProject } from "@/lib/projects";
 
 const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
 const ALLOWED_MIME_PREFIX = "image/";
@@ -37,6 +38,7 @@ export async function uploadDesignAsset(
 }> {
   const { session, teamId } = await requireActiveTeam();
   const token = requireBlobToken();
+  const project = await ensureDefaultProject(teamId);
 
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) {
@@ -65,6 +67,7 @@ export async function uploadDesignAsset(
     .values({
       ownerId: session.user.id,
       teamId,
+      projectId: project.id,
       name: file.name,
       pathname: blob.pathname,
       url: blob.url,

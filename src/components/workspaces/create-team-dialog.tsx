@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
+import { ensureDefaultProjectForTeam } from "@/lib/projects";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -82,6 +83,9 @@ export function CreateTeamDialog({ open, onOpenChange }: CreateTeamDialogProps) 
       }
       const newId = result.data?.id;
       if (newId) {
+        // Drop a default "Workspace" project so the team has a place
+        // for content the moment the user lands on it.
+        await ensureDefaultProjectForTeam(newId);
         await authClient.organization.setActive({ organizationId: newId });
       }
       onOpenChange(false);
