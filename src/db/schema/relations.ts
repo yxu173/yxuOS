@@ -10,6 +10,7 @@ import {
   session,
   user,
 } from "./auth";
+import { boardFolders } from "./board-folders";
 import { boards } from "./boards";
 import { comments } from "./comments";
 import { designAssets } from "./design-assets";
@@ -64,7 +65,25 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   designComponents: many(designComponents),
   designAssets: many(designAssets),
   attachments: many(attachments),
+  boardFolders: many(boardFolders),
 }));
+
+export const boardFoldersRelations = relations(
+  boardFolders,
+  ({ one, many }) => ({
+    project: one(projects, {
+      fields: [boardFolders.projectId],
+      references: [projects.id],
+    }),
+    parent: one(boardFolders, {
+      fields: [boardFolders.parentFolderId],
+      references: [boardFolders.id],
+      relationName: "board_folder_parent",
+    }),
+    children: many(boardFolders, { relationName: "board_folder_parent" }),
+    boards: many(boards),
+  }),
+);
 
 export const attachmentsRelations = relations(attachments, ({ one }) => ({
   team: one(organization, {
@@ -201,6 +220,10 @@ export const boardsRelations = relations(boards, ({ one }) => ({
   project: one(projects, {
     fields: [boards.projectId],
     references: [projects.id],
+  }),
+  folder: one(boardFolders, {
+    fields: [boards.folderId],
+    references: [boardFolders.id],
   }),
 }));
 

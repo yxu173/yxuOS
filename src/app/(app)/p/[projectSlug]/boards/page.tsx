@@ -1,13 +1,14 @@
 import { and, eq } from "drizzle-orm";
 
+import { createBoard } from "@/app/(app)/boards/actions";
+import { listBoardFoldersForProject } from "@/app/(app)/boards/folder-actions";
+import { BoardFolderTree } from "@/components/board-folders/folder-tree";
 import {
-  createBoard,
-  deleteBoard,
-  renameBoard,
-} from "@/app/(app)/boards/actions";
+  buildFolderTree,
+  type FolderTreeBoard,
+} from "@/components/board-folders/types";
 import { Button } from "@/components/ui/button";
 import { AppTopBar } from "@/components/workspaces/app-top-bar";
-import { WorkspaceGrid } from "@/components/workspaces/workspace-grid";
 import { db } from "@/db";
 import { boards } from "@/db/schema";
 import { requireActiveProject } from "@/lib/permissions";
@@ -24,7 +25,7 @@ export default async function ProjectBoardsIndexPage({ params }: PageProps) {
   const { session, teamId, projectId, projectName } =
     await requireActiveProject(projectSlug);
 
-  const [boardRows, teams, projects] = await Promise.all([
+  const [boardRows, teams, projects, folderRows] = await Promise.all([
     db.query.boards.findMany({
       where: and(
         eq(boards.teamId, teamId),
@@ -33,7 +34,7 @@ export default async function ProjectBoardsIndexPage({ params }: PageProps) {
       columns: {
         id: true,
         name: true,
-        createdAt: true,
+        folderId: true,
         updatedAt: true,
       },
       with: {
@@ -48,23 +49,39 @@ export default async function ProjectBoardsIndexPage({ params }: PageProps) {
     }),
     listUserTeams(session.user.id),
     listProjectsForTeam(teamId),
+    listBoardFoldersForProject(projectId),
   ]);
 
-  const userBoards = boardRows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-    creator: row.owner
-      ? {
-          name: row.owner.name,
-          username: row.owner.displayUsername ?? row.owner.username,
-        }
-      : null,
-  }));
+  const boardEntries: Array<FolderTreeBoard & { folderId: string | null }> =
+    boardRows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      updatedAt: row.updatedAt,
+      folderId: row.folderId,
+      creator: row.owner
+        ? {
+            name: row.owner.name,
+            username: row.owner.displayUsername ?? row.owner.username,
+          }
+        : null,
+    }));
 
-  // Bind the slug at the call site so the form action lands the new
-  // board in the right project.
+  const { roots, rootBoards } = buildFolderTree({
+    folders: folderRows,
+    boards: boardEntries,
+  });
+
+  // Flatten the folder tree into a depth-annotated list for the
+  // per-board "Move to…" submenu.
+  const flatFolders: Array<{ id: string; name: string; depth: number }> = [];
+  const walk = (nodes: typeof roots, depth: number) => {
+    for (const node of nodes) {
+      flatFolders.push({ id: node.id, name: node.name, depth });
+      if (node.children.length > 0) walk(node.children, depth + 1);
+    }
+  };
+  walk(roots, 0);
+
   const createInProject = createBoard.bind(null, projectSlug);
 
   return (
@@ -84,6 +101,7 @@ export default async function ProjectBoardsIndexPage({ params }: PageProps) {
             <h1 className="text-2xl font-semibold tracking-tight">Boards</h1>
             <p className="text-sm text-muted-foreground">
               Whiteboards in <span className="text-zinc-200">{projectName}</span>.
+              Organise them into folders to keep work-streams tidy.
             </p>
           </div>
           <form action={createInProject}>
@@ -91,14 +109,12 @@ export default async function ProjectBoardsIndexPage({ params }: PageProps) {
           </form>
         </header>
 
-        <WorkspaceGrid
-          items={userBoards}
+        <BoardFolderTree
+          roots={roots}
+          rootBoards={rootBoards}
           hrefBase={`/p/${projectSlug}/boards`}
-          itemLabel="board"
-          itemLabelPlural="boards"
-          emptyHint='Hit "New board" to start whiteboarding.'
-          renameAction={renameBoard}
-          deleteAction={deleteBoard}
+          projectSlug={projectSlug}
+          allFolders={flatFolders}
         />
       </main>
     </div>

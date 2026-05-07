@@ -8,6 +8,7 @@
 export * from "./activity-log";
 export * from "./attachments";
 export * from "./auth";
+export * from "./board-folders";
 export * from "./boards";
 export * from "./comments";
 export * from "./design-assets";

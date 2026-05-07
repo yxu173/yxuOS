@@ -2,6 +2,7 @@ import { index, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 import { nanoid } from "nanoid";
 
 import { organization, user } from "./auth";
+import { boardFolders } from "./board-folders";
 import { projects } from "./projects";
 
 const newId = () => nanoid();
@@ -36,6 +37,14 @@ export const boards = pgTable(
     projectId: text("project_id").references(() => projects.id, {
       onDelete: "cascade",
     }),
+    /**
+     * Folder inside the project. Null = root of the project ("Uncategorised").
+     * Setting null on folder delete keeps the boards alive when their
+     * folder is removed.
+     */
+    folderId: text("folder_id").references(() => boardFolders.id, {
+      onDelete: "set null",
+    }),
     threadId: text("thread_id").notNull().$defaultFn(newId),
     snapshot: jsonb("snapshot").$type<Record<string, unknown> | null>(),
     /**
@@ -54,6 +63,7 @@ export const boards = pgTable(
     index("boards_owner_idx").on(t.ownerId),
     index("boards_team_idx").on(t.teamId),
     index("boards_project_idx").on(t.projectId),
+    index("boards_folder_idx").on(t.folderId),
   ],
 );
 
