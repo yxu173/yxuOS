@@ -5,13 +5,22 @@ import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
 
 import { db } from "@/db";
-import { member, user } from "@/db/schema";
+import { member, organization, user } from "@/db/schema";
 import { requireMembership, type TeamRole } from "@/lib/permissions";
 
 const ASSIGNABLE_ROLES = new Set<TeamRole>(["owner", "admin", "member"]);
 
 function normaliseUsername(value: string): string {
   return value.trim().toLowerCase().replace(/^@+/, "");
+}
+
+/**
+ * Personal teams are auto-created on signup with a slug like
+ * `personal-<userId-prefix>`. We refuse to rename or delete them so a
+ * user can never accidentally drop their fallback workspace.
+ */
+function isPersonalSlug(slug: string): boolean {
+  return slug.startsWith("personal-");
 }
 
 /* ─── add member ──────────────────────────────────────── */
@@ -159,6 +168,80 @@ export async function updateMemberRole(
     .where(and(eq(member.id, memberId), eq(member.organizationId, teamId)));
 
   revalidatePath(`/teams/${teamId}`);
+}
+
+/* ─── rename team ─────────────────────────────────────── */
+
+const MAX_TEAM_NAME = 60;
+
+export async function renameTeam(teamId: string, rawName: string) {
+  await requireMembership(teamId, "owner");
+
+  const team = await db.query.organization.findFirst({
+    where: eq(organization.id, teamId),
+    columns: { id: true, slug: true },
+  });
+  if (!team) throw new Error("Team not found");
+  if (isPersonalSlug(team.slug)) {
+    throw new Error("Personal teams can't be renamed");
+  }
+
+  const trimmed = rawName.trim().slice(0, MAX_TEAM_NAME);
+  if (!trimmed) throw new Error("Team name is required");
+
+  await db
+    .update(organization)
+    .set({ name: trimmed })
+    .where(eq(organization.id, teamId));
+
+  revalidatePath(`/teams/${teamId}`);
+  revalidatePath("/boards");
+  revalidatePath("/designs");
+}
+
+/* ─── delete team ─────────────────────────────────────── */
+
+export async function deleteTeam(teamId: string, confirmName: string) {
+  const { session } = await requireMembership(teamId, "owner");
+
+  const team = await db.query.organization.findFirst({
+    where: eq(organization.id, teamId),
+    columns: { id: true, name: true, slug: true },
+  });
+  if (!team) throw new Error("Team not found");
+
+  if (isPersonalSlug(team.slug)) {
+    throw new Error(
+      "Personal teams can't be deleted — they're your fallback workspace",
+    );
+  }
+
+  if (confirmName.trim() !== team.name) {
+    throw new Error("Type the team name exactly to confirm");
+  }
+
+  // Check the user has at least one other team to fall back to. Without
+  // this, deleting their last team would leave them with nowhere to land
+  // after redirect. We pull every membership and pick one in JS — keeps
+  // the query simple and there's never enough teams per user to matter.
+  const memberships = await db.query.member.findMany({
+    where: eq(member.userId, session.user.id),
+    columns: { organizationId: true },
+  });
+  const fallback = memberships.find((m) => m.organizationId !== teamId);
+  if (!fallback) {
+    throw new Error(
+      "Can't delete your only team — create another one first or stay in your personal team",
+    );
+  }
+
+  // Cascading FKs (team_id ON DELETE CASCADE on boards, designs,
+  // components, assets, member, invitation) handle the rest.
+  await db.delete(organization).where(eq(organization.id, teamId));
+
+  revalidatePath("/boards");
+  revalidatePath("/designs");
+  return { fallbackTeamId: fallback.organizationId };
 }
 
 /* ─── leave team ──────────────────────────────────────── */

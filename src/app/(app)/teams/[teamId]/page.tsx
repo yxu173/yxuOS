@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 
 import { TeamMemberList } from "@/components/teams/team-member-list";
 import { TeamAddMemberForm } from "@/components/teams/team-add-member-form";
+import { TeamSettingsForm } from "@/components/teams/team-settings-form";
 import { AppTopBar } from "@/components/workspaces/app-top-bar";
 import { db } from "@/db";
 import { member, organization } from "@/db/schema";
@@ -48,6 +49,8 @@ export default async function TeamPage({
   if (!team) {
     notFound();
   }
+
+  const isPersonal = team.slug.startsWith("personal-");
 
   // Pull user details for every member in one shot.
   const userIds = memberRows.map((row) => row.userId);
@@ -140,6 +143,24 @@ export default async function TeamPage({
               teamId={teamId}
               actorRole={role}
               memberCount={members.length}
+            />
+          </section>
+        ) : null}
+
+        {role === "owner" ? (
+          <section className="flex flex-col gap-4 rounded-lg border border-white/5 bg-white/[0.02] p-4">
+            <div className="flex flex-col gap-1">
+              <h2 className="text-sm font-medium text-zinc-100">
+                Team settings
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                Rename the team or delete it. Both are owner-only.
+              </p>
+            </div>
+            <TeamSettingsForm
+              teamId={teamId}
+              initialName={team.name}
+              isPersonal={isPersonal}
             />
           </section>
         ) : null}
