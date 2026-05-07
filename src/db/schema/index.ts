@@ -6,6 +6,7 @@
  * relations to `relations.ts`.
  */
 export * from "./activity-log";
+export * from "./attachments";
 export * from "./auth";
 export * from "./boards";
 export * from "./comments";

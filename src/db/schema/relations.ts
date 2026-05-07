@@ -1,6 +1,7 @@
 import { relations } from "drizzle-orm";
 
 import { activityLog } from "./activity-log";
+import { attachments } from "./attachments";
 import {
   account,
   invitation,
@@ -35,6 +36,7 @@ export const userRelations = relations(user, ({ many }) => ({
   activityRows: many(activityLog),
   createdTasks: many(tasks, { relationName: "task_creator" }),
   assignedTasks: many(tasks, { relationName: "task_assignee" }),
+  attachments: many(attachments),
   // Better Auth organization plugin
   members: many(member),
   invitations: many(invitation),
@@ -46,6 +48,18 @@ export const organizationRelations = relations(organization, ({ many }) => ({
   comments: many(comments),
   activityRows: many(activityLog),
   tasks: many(tasks),
+  attachments: many(attachments),
+}));
+
+export const attachmentsRelations = relations(attachments, ({ one }) => ({
+  team: one(organization, {
+    fields: [attachments.teamId],
+    references: [organization.id],
+  }),
+  uploader: one(user, {
+    fields: [attachments.uploaderId],
+    references: [user.id],
+  }),
 }));
 
 export const tasksRelations = relations(tasks, ({ one, many }) => ({
