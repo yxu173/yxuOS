@@ -370,6 +370,325 @@ export function findNodesInTree(
   return { matches, totalMatched: total, truncated: total > matches.length };
 }
 
+/* ─── parent / position helpers ────────────────────────── */
+
+/**
+ * Locate the parent of `childId` in the tree. Returns null if the child
+ * is the root or doesn't exist. Used by `move_nodes` (cycle detection)
+ * and by `add_nodes` to resolve `position: "before"|"after"` against a
+ * sibling's parent.
+ */
+export function findParentInTree(
+  root: DesignNode,
+  childId: string,
+): DesignNode | null {
+  if (!hasChildren(root) || !root.children) return null;
+  for (const child of root.children) {
+    if (child.id === childId) return root;
+    const deeper = findParentInTree(child, childId);
+    if (deeper) return deeper;
+  }
+  return null;
+}
+
+/**
+ * Returns true iff `ancestorId` is `nodeId` or an ancestor of `nodeId`
+ * in the tree. Used to refuse cyclic moves (can't reparent a node into
+ * its own subtree).
+ */
+export function isDescendantOrSelf(
+  root: DesignNode,
+  ancestorId: string,
+  nodeId: string,
+): boolean {
+  const subtree = findNodeInTree(root, ancestorId);
+  if (!subtree) return false;
+  return findNodeInTree(subtree, nodeId) !== null;
+}
+
+/* ─── multi-node insertion ─────────────────────────────── */
+
+export type InsertPosition = "append" | "prepend" | "before" | "after";
+
+export interface InsertResult {
+  tree: DesignNode;
+  /** Ids assigned to the freshly inserted nodes, in the same order they
+   *  were passed in. Useful so the caller can return them to the agent. */
+  insertedNodeIds: string[];
+}
+
+export interface InsertError {
+  message: string;
+  hint?: string;
+}
+
+/**
+ * Insert one or more new nodes into the tree.
+ *
+ * - `position: "append" | "prepend"` — `target` is the parent container.
+ * - `position: "before" | "after"` — `target` is a sibling (the new
+ *   nodes become its previous / next siblings inside the same parent).
+ *
+ * The inserted nodes are run through `ensureIds` so every node ends up
+ * with a stable id even if the caller didn't supply one. Returns
+ * `{ tree, insertedNodeIds }` on success or an `InsertError` describing
+ * the failure mode (missing target, leaf parent, before/after the root,
+ * etc.).
+ */
+export function insertNodesIntoTree(
+  root: DesignNode,
+  target: { id: string; position: InsertPosition },
+  nodes: DesignNode[],
+): { result: InsertResult } | { error: InsertError } {
+  if (nodes.length === 0) {
+    return { error: { message: "`nodes` is empty — nothing to insert." } };
+  }
+
+  // Assign fresh ids defensively. Callers (the agent) may or may not
+  // supply ids; either way, every inserted node ends up with one.
+  const prepared = nodes.map((n) => ensureIds(n));
+  const insertedNodeIds = prepared
+    .map((n) => n.id)
+    .filter((id): id is string => Boolean(id));
+
+  // ── append / prepend: target IS the parent ──────────────
+  if (target.position === "append" || target.position === "prepend") {
+    const parent = findNodeInTree(root, target.id);
+    if (!parent) {
+      return {
+        error: {
+          message: `Target node "${target.id}" not found.`,
+          hint: "Call `find_nodes` or `get_artboard` for current ids.",
+        },
+      };
+    }
+    if (!hasChildren(parent)) {
+      return {
+        error: {
+          message: `Cannot insert into a leaf node (type="${parent.type}").`,
+          hint: "Pick a container parent (div, section, nav, card, frame).",
+        },
+      };
+    }
+
+    const tree = updateContainerChildren(root, target.id, (children) =>
+      target.position === "append"
+        ? [...children, ...prepared]
+        : [...prepared, ...children],
+    );
+    if (!tree) {
+      // Shouldn't happen — findNodeInTree just succeeded.
+      return { error: { message: "Failed to insert nodes." } };
+    }
+    return { result: { tree, insertedNodeIds } };
+  }
+
+  // ── before / after: target is a SIBLING; locate its parent ──
+  if (root.id === target.id) {
+    return {
+      error: {
+        message:
+          "Can't insert before/after the artboard root with `add_nodes`.",
+        hint: "Use `add_artboard` for a sibling artboard, or `prepend`/`append` into the root container.",
+      },
+    };
+  }
+  const parent = findParentInTree(root, target.id);
+  if (!parent) {
+    return {
+      error: {
+        message: `Anchor node "${target.id}" not found.`,
+        hint: "Call `find_nodes` or `get_artboard` for current ids.",
+      },
+    };
+  }
+
+  const tree = updateContainerChildren(root, parent.id ?? "", (children) => {
+    const idx = children.findIndex((c) => c.id === target.id);
+    if (idx < 0) return children;
+    const offset = target.position === "after" ? idx + 1 : idx;
+    return [...children.slice(0, offset), ...prepared, ...children.slice(offset)];
+  });
+  if (!tree) {
+    return { error: { message: "Failed to insert nodes." } };
+  }
+  return { result: { tree, insertedNodeIds } };
+}
+
+/**
+ * Internal — replace a container's children via a transformer function.
+ * Returns null if the target node is missing or isn't a container. The
+ * result preserves immutability (only the spine from the root to the
+ * target is rebuilt).
+ *
+ * NOTE: matches by `node.id`, so the caller must have a stable id on the
+ * target. After `ensureIds` runs (every store entry point), every node
+ * has one.
+ */
+function updateContainerChildren(
+  node: DesignNode,
+  targetId: string,
+  transform: (children: DesignNode[]) => DesignNode[],
+): DesignNode | null {
+  if (node.id === targetId) {
+    if (!hasChildren(node)) return null;
+    const nextChildren = transform(node.children ?? []);
+    return { ...node, children: nextChildren } as DesignNode;
+  }
+  if (!hasChildren(node) || !node.children) return null;
+  for (let i = 0; i < node.children.length; i++) {
+    const updated = updateContainerChildren(
+      node.children[i],
+      targetId,
+      transform,
+    );
+    if (updated) {
+      const nextChildren = node.children.slice();
+      nextChildren[i] = updated;
+      return { ...node, children: nextChildren } as DesignNode;
+    }
+  }
+  return null;
+}
+
+/* ─── multi-id delete ─────────────────────────────────── */
+
+/**
+ * Delete every node in `nodeIds` from the tree in a single walk. Returns
+ * `{ tree, deletedNodeIds }`. The root is never deleted — if it appears
+ * in `nodeIds`, the caller should reject the operation upstream.
+ *
+ * If a deleted node has its own children, the entire subtree goes with
+ * it (this is delete, not splice).
+ */
+export function deleteNodesInTree(
+  root: DesignNode,
+  nodeIds: ReadonlySet<string>,
+): { tree: DesignNode; deletedNodeIds: string[] } {
+  const deletedNodeIds: string[] = [];
+
+  function walk(node: DesignNode): DesignNode {
+    if (!hasChildren(node) || !node.children) return node;
+    const filtered: DesignNode[] = [];
+    for (const child of node.children) {
+      if (child.id && nodeIds.has(child.id)) {
+        deletedNodeIds.push(child.id);
+        continue; // drop entire subtree
+      }
+      filtered.push(walk(child));
+    }
+    if (filtered.length === node.children.length) {
+      // Nothing dropped at this level; check whether any descendant
+      // changed by reference equality.
+      let changed = false;
+      for (let i = 0; i < filtered.length; i++) {
+        if (filtered[i] !== node.children[i]) {
+          changed = true;
+          break;
+        }
+      }
+      if (!changed) return node;
+    }
+    return { ...node, children: filtered } as DesignNode;
+  }
+
+  const tree = walk(root);
+  return { tree, deletedNodeIds };
+}
+
+/* ─── multi-node move ──────────────────────────────────── */
+
+export interface MoveError {
+  message: string;
+  hint?: string;
+}
+
+/**
+ * Move one or more nodes into a new parent / sibling position in a
+ * single atomic transformation. Implementation:
+ *
+ * 1. Collect the subtree for each node id (preserving order).
+ * 2. Refuse if the destination is inside any moved subtree (cycle).
+ * 3. Delete the moved nodes from the tree (their old positions go away).
+ * 4. Insert the snapshot subtrees at the new target.
+ *
+ * Re-uses `ensureIds` indirectly via `insertNodesIntoTree`, but since
+ * the snapshots already have ids, no new ids are minted.
+ */
+export function moveNodesInTree(
+  root: DesignNode,
+  nodeIds: string[],
+  target: { id: string; position: InsertPosition },
+):
+  | { tree: DesignNode; movedNodeIds: string[] }
+  | { error: MoveError } {
+  if (nodeIds.length === 0) {
+    return { error: { message: "`nodeIds` is empty — nothing to move." } };
+  }
+  if (nodeIds.includes(root.id ?? "")) {
+    return {
+      error: {
+        message: "Can't move the artboard root.",
+        hint: "Use `update_artboard` for structural changes at the root.",
+      },
+    };
+  }
+
+  // ── Snapshot each subtree in source order ─────────────
+  const snapshots: DesignNode[] = [];
+  for (const id of nodeIds) {
+    const node = findNodeInTree(root, id);
+    if (!node) {
+      return {
+        error: {
+          message: `Node "${id}" not found.`,
+          hint: "Call `find_nodes` or `get_artboard` for current ids.",
+        },
+      };
+    }
+    snapshots.push(node);
+  }
+
+  // ── Cycle check: target can't be inside any moved subtree ──
+  for (const moved of snapshots) {
+    if (!moved.id) continue;
+    if (isDescendantOrSelf(root, moved.id, target.id)) {
+      return {
+        error: {
+          message: `Cannot move node "${moved.id}" into its own descendant.`,
+          hint: "Pick a target outside the moved subtree.",
+        },
+      };
+    }
+  }
+
+  // ── Refuse moving the anchor itself when position is before/after ─
+  if (
+    (target.position === "before" || target.position === "after") &&
+    nodeIds.includes(target.id)
+  ) {
+    return {
+      error: {
+        message:
+          "Can't anchor a move on a node that's also being moved.",
+        hint: "Pick a different anchor or use `position: \"append\"`/`\"prepend\"`.",
+      },
+    };
+  }
+
+  // ── Delete first, then insert. Two passes is fine; trees are tiny. ──
+  const idSet = new Set(nodeIds);
+  const { tree: pruned } = deleteNodesInTree(root, idSet);
+
+  const insertion = insertNodesIntoTree(pruned, target, snapshots);
+  if ("error" in insertion) return { error: insertion.error };
+
+  return {
+    tree: insertion.result.tree,
+    movedNodeIds: insertion.result.insertedNodeIds,
+  };
+}
+
 /* ─── sibling-aware mutations ──────────────────────────── */
 
 /**
