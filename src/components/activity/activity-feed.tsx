@@ -152,9 +152,20 @@ function visualForRow(item: ActivityListItem): VerbVisual {
 }
 
 function hrefForRow(item: ActivityListItem): string | null {
-  if (item.subjectType === "board") return `/boards/${item.subjectId}`;
-  if (item.subjectType === "design") return `/designs/${item.subjectId}`;
-  if (item.subjectType === "task") return `/tasks/${item.subjectId}`;
+  // When the activity row carries a project slug (boards / designs /
+  // tasks resolved via the join in `listRecentActivity`), build the
+  // canonical project-scoped URL. Otherwise fall back to the legacy
+  // path which still redirects.
+  const slug = item.projectSlug;
+  if (item.subjectType === "board") {
+    return slug ? `/p/${slug}/boards/${item.subjectId}` : `/boards/${item.subjectId}`;
+  }
+  if (item.subjectType === "design") {
+    return slug ? `/p/${slug}/designs/${item.subjectId}` : `/designs/${item.subjectId}`;
+  }
+  if (item.subjectType === "task") {
+    return slug ? `/p/${slug}/tasks/${item.subjectId}` : `/tasks/${item.subjectId}`;
+  }
   return null;
 }
 

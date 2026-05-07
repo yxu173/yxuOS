@@ -66,12 +66,18 @@ export default async function HomePage() {
         orderBy: desc(boards.updatedAt),
         limit: RECENT_LIMIT,
         columns: { id: true, name: true, updatedAt: true },
+        with: {
+          project: { columns: { slug: true, name: true } },
+        },
       }),
       db.query.designs.findMany({
         where: eq(designs.teamId, teamId),
         orderBy: desc(designs.updatedAt),
         limit: RECENT_LIMIT,
         columns: { id: true, name: true, updatedAt: true },
+        with: {
+          project: { columns: { slug: true, name: true } },
+        },
       }),
       listUserTeams(session.user.id),
       listRecentActivity(teamId, 8),
@@ -156,8 +162,15 @@ export default async function HomePage() {
         <RecentSection
           title="Recent boards"
           icon={LayoutDashboard}
-          items={recentBoards}
-          hrefBase="/boards"
+          items={recentBoards.map((row) => ({
+            id: row.id,
+            name: row.name,
+            updatedAt: row.updatedAt,
+            project: row.project
+              ? { slug: row.project.slug, name: row.project.name }
+              : null,
+          }))}
+          section="boards"
           allHref="/boards"
           createAction={createBoard}
           createLabel="New board"
@@ -167,8 +180,15 @@ export default async function HomePage() {
         <RecentSection
           title="Recent designs"
           icon={Palette}
-          items={recentDesigns}
-          hrefBase="/designs"
+          items={recentDesigns.map((row) => ({
+            id: row.id,
+            name: row.name,
+            updatedAt: row.updatedAt,
+            project: row.project
+              ? { slug: row.project.slug, name: row.project.name }
+              : null,
+          }))}
+          section="designs"
           allHref="/designs"
           createAction={createDesign}
           createLabel="New design"
@@ -209,13 +229,14 @@ interface RecentItem {
   id: string;
   name: string;
   updatedAt: Date;
+  project: { slug: string; name: string } | null;
 }
 
 function RecentSection({
   title,
   icon: Icon,
   items,
-  hrefBase,
+  section,
   allHref,
   createAction,
   createLabel,
@@ -224,7 +245,8 @@ function RecentSection({
   title: string;
   icon: typeof LayoutDashboard;
   items: RecentItem[];
-  hrefBase: string;
+  /** "boards" | "designs" — used to build the per-item project-scoped href. */
+  section: "boards" | "designs";
   allHref: string;
   createAction: () => Promise<void>;
   createLabel: string;
@@ -261,25 +283,35 @@ function RecentSection({
         </Card>
       ) : (
         <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {items.map((item) => (
-            <li key={item.id}>
-              <Link
-                href={`${hrefBase}/${item.id}`}
-                className="block focus-visible:outline-none"
-              >
-                <Card className="h-24 transition-colors hover:border-foreground/30 focus-visible:border-foreground/40">
-                  <CardHeader>
-                    <CardTitle className="truncate text-sm">
-                      {item.name}
-                    </CardTitle>
-                    <p className="text-xs text-muted-foreground">
-                      Updated {dateFormatter.format(item.updatedAt)}
-                    </p>
-                  </CardHeader>
-                </Card>
-              </Link>
-            </li>
-          ))}
+          {items.map((item) => {
+            const href = item.project
+              ? `/p/${item.project.slug}/${section}/${item.id}`
+              : `/${section}/${item.id}`;
+            return (
+              <li key={item.id}>
+                <Link
+                  href={href}
+                  className="block focus-visible:outline-none"
+                >
+                  <Card className="h-24 transition-colors hover:border-foreground/30 focus-visible:border-foreground/40">
+                    <CardHeader>
+                      <CardTitle className="truncate text-sm">
+                        {item.name}
+                      </CardTitle>
+                      <p className="text-xs text-muted-foreground">
+                        Updated {dateFormatter.format(item.updatedAt)}
+                        {item.project ? (
+                          <span className="ml-1 text-zinc-500">
+                            · {item.project.name}
+                          </span>
+                        ) : null}
+                      </p>
+                    </CardHeader>
+                  </Card>
+                </Link>
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>
