@@ -1,35 +1,22 @@
 "use server";
 
 import { and, eq } from "drizzle-orm";
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
 
 import { db } from "@/db";
 import { designs } from "@/db/schema";
-import { auth } from "@/lib/auth";
+import { requireActiveTeam } from "@/lib/permissions";
 
-async function requireSession() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session) {
-    throw new Error("Unauthorized");
-  }
-  return session;
-}
-
-/**
- * Creates a new design canvas owned by the current user and redirects to it.
- */
 export async function createDesign() {
-  const session = await requireSession();
+  const { session, teamId } = await requireActiveTeam();
 
   const [design] = await db
     .insert(designs)
     .values({
       ownerId: session.user.id,
+      teamId,
     })
     .returning({ id: designs.id });
 
@@ -37,15 +24,11 @@ export async function createDesign() {
   redirect(`/designs/${design.id}`);
 }
 
-/**
- * Persists the latest design canvas snapshot. Called from the canvas client
- * on a debounced cadence (parallel to saveBoardSnapshot).
- */
 export async function saveDesignSnapshot(
   designId: string,
   snapshot: Record<string, unknown>,
 ) {
-  const session = await requireSession();
+  const { teamId } = await requireActiveTeam();
 
   const result = await db
     .update(designs)
@@ -53,7 +36,7 @@ export async function saveDesignSnapshot(
       snapshot,
       updatedAt: new Date(),
     })
-    .where(and(eq(designs.id, designId), eq(designs.ownerId, session.user.id)))
+    .where(and(eq(designs.id, designId), eq(designs.teamId, teamId)))
     .returning({ id: designs.id });
 
   if (result.length === 0) {
@@ -62,7 +45,7 @@ export async function saveDesignSnapshot(
 }
 
 export async function renameDesign(designId: string, name: string) {
-  const session = await requireSession();
+  const { teamId } = await requireActiveTeam();
 
   const trimmed = name.trim().slice(0, 200);
   if (!trimmed) {
@@ -72,27 +55,27 @@ export async function renameDesign(designId: string, name: string) {
   await db
     .update(designs)
     .set({ name: trimmed, updatedAt: new Date() })
-    .where(and(eq(designs.id, designId), eq(designs.ownerId, session.user.id)));
+    .where(and(eq(designs.id, designId), eq(designs.teamId, teamId)));
 
   revalidatePath("/designs");
   revalidatePath(`/designs/${designId}`);
 }
 
 export async function deleteDesign(designId: string) {
-  const session = await requireSession();
+  const { teamId } = await requireActiveTeam();
 
   await db
     .delete(designs)
-    .where(and(eq(designs.id, designId), eq(designs.ownerId, session.user.id)));
+    .where(and(eq(designs.id, designId), eq(designs.teamId, teamId)));
 
   revalidatePath("/designs");
 }
 
 export async function enableDesignShare(designId: string): Promise<string> {
-  const session = await requireSession();
+  const { teamId } = await requireActiveTeam();
 
   const existing = await db.query.designs.findFirst({
-    where: and(eq(designs.id, designId), eq(designs.ownerId, session.user.id)),
+    where: and(eq(designs.id, designId), eq(designs.teamId, teamId)),
     columns: { shareToken: true },
   });
   if (!existing) {
@@ -104,19 +87,19 @@ export async function enableDesignShare(designId: string): Promise<string> {
   await db
     .update(designs)
     .set({ shareToken: token, updatedAt: new Date() })
-    .where(and(eq(designs.id, designId), eq(designs.ownerId, session.user.id)));
+    .where(and(eq(designs.id, designId), eq(designs.teamId, teamId)));
 
   revalidatePath(`/designs/${designId}`);
   return token;
 }
 
 export async function disableDesignShare(designId: string) {
-  const session = await requireSession();
+  const { teamId } = await requireActiveTeam();
 
   await db
     .update(designs)
     .set({ shareToken: null, updatedAt: new Date() })
-    .where(and(eq(designs.id, designId), eq(designs.ownerId, session.user.id)));
+    .where(and(eq(designs.id, designId), eq(designs.teamId, teamId)));
 
   revalidatePath(`/designs/${designId}`);
 }

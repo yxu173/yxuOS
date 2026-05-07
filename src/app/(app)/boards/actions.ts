@@ -1,36 +1,27 @@
 "use server";
 
 import { and, eq } from "drizzle-orm";
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
 
 import { db } from "@/db";
 import { boards } from "@/db/schema";
-import { auth } from "@/lib/auth";
-
-async function requireSession() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session) {
-    throw new Error("Unauthorized");
-  }
-  return session;
-}
+import { requireActiveTeam } from "@/lib/permissions";
 
 /**
- * Creates a new board owned by the current user and redirects to it.
- * Used as a `<form action>` on the boards index.
+ * Creates a new board owned by the active team and redirects to it.
+ * The current user is recorded as the creator (`ownerId`) for "Created
+ * by Alice" badges; access control is by `teamId`.
  */
 export async function createBoard() {
-  const session = await requireSession();
+  const { session, teamId } = await requireActiveTeam();
 
   const [board] = await db
     .insert(boards)
     .values({
       ownerId: session.user.id,
+      teamId,
     })
     .returning({ id: boards.id });
 
@@ -39,14 +30,14 @@ export async function createBoard() {
 }
 
 /**
- * Persists the latest tldraw snapshot for a board. Called from the canvas
- * client component on a debounced cadence.
+ * Persists the latest tldraw snapshot for a board. Any team member can
+ * edit any team board.
  */
 export async function saveBoardSnapshot(
   boardId: string,
   snapshot: Record<string, unknown>,
 ) {
-  const session = await requireSession();
+  const { teamId } = await requireActiveTeam();
 
   const result = await db
     .update(boards)
@@ -54,7 +45,7 @@ export async function saveBoardSnapshot(
       snapshot,
       updatedAt: new Date(),
     })
-    .where(and(eq(boards.id, boardId), eq(boards.ownerId, session.user.id)))
+    .where(and(eq(boards.id, boardId), eq(boards.teamId, teamId)))
     .returning({ id: boards.id });
 
   if (result.length === 0) {
@@ -62,11 +53,8 @@ export async function saveBoardSnapshot(
   }
 }
 
-/**
- * Renames a board. Used by the top bar / inline rename later.
- */
 export async function renameBoard(boardId: string, name: string) {
-  const session = await requireSession();
+  const { teamId } = await requireActiveTeam();
 
   const trimmed = name.trim().slice(0, 200);
   if (!trimmed) {
@@ -76,34 +64,27 @@ export async function renameBoard(boardId: string, name: string) {
   await db
     .update(boards)
     .set({ name: trimmed, updatedAt: new Date() })
-    .where(and(eq(boards.id, boardId), eq(boards.ownerId, session.user.id)));
+    .where(and(eq(boards.id, boardId), eq(boards.teamId, teamId)));
 
   revalidatePath("/boards");
   revalidatePath(`/boards/${boardId}`);
 }
 
-/**
- * Deletes a board. Hard delete for now — restore-from-trash can come later.
- */
 export async function deleteBoard(boardId: string) {
-  const session = await requireSession();
+  const { teamId } = await requireActiveTeam();
 
   await db
     .delete(boards)
-    .where(and(eq(boards.id, boardId), eq(boards.ownerId, session.user.id)));
+    .where(and(eq(boards.id, boardId), eq(boards.teamId, teamId)));
 
   revalidatePath("/boards");
 }
 
-/**
- * Enable a public read-only share link for a board, returning the token.
- * Idempotent — calling twice returns the existing token.
- */
 export async function enableBoardShare(boardId: string): Promise<string> {
-  const session = await requireSession();
+  const { teamId } = await requireActiveTeam();
 
   const existing = await db.query.boards.findFirst({
-    where: and(eq(boards.id, boardId), eq(boards.ownerId, session.user.id)),
+    where: and(eq(boards.id, boardId), eq(boards.teamId, teamId)),
     columns: { shareToken: true },
   });
   if (!existing) {
@@ -111,29 +92,24 @@ export async function enableBoardShare(boardId: string): Promise<string> {
   }
   if (existing.shareToken) return existing.shareToken;
 
-  // 24 chars of url-safe entropy is plenty for an unguessable share id.
   const token = nanoid(24);
 
   await db
     .update(boards)
     .set({ shareToken: token, updatedAt: new Date() })
-    .where(and(eq(boards.id, boardId), eq(boards.ownerId, session.user.id)));
+    .where(and(eq(boards.id, boardId), eq(boards.teamId, teamId)));
 
   revalidatePath(`/boards/${boardId}`);
   return token;
 }
 
-/**
- * Disable the share link by clearing the token. Existing /share/<token>
- * URLs immediately stop working.
- */
 export async function disableBoardShare(boardId: string) {
-  const session = await requireSession();
+  const { teamId } = await requireActiveTeam();
 
   await db
     .update(boards)
     .set({ shareToken: null, updatedAt: new Date() })
-    .where(and(eq(boards.id, boardId), eq(boards.ownerId, session.user.id)));
+    .where(and(eq(boards.id, boardId), eq(boards.teamId, teamId)));
 
   revalidatePath(`/boards/${boardId}`);
 }

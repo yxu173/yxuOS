@@ -1,11 +1,10 @@
 import { handleChatStream } from "@mastra/ai-sdk";
 import { createUIMessageStreamResponse } from "ai";
 import { and, eq } from "drizzle-orm";
-import { headers } from "next/headers";
 
 import { db } from "@/db";
 import { designs } from "@/db/schema";
-import { auth } from "@/lib/auth";
+import { requireActiveTeam } from "@/lib/permissions";
 import { mastra } from "@/mastra";
 
 export async function POST(
@@ -14,18 +13,21 @@ export async function POST(
 ) {
   const { designId } = await params;
 
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session) {
+  let teamId: string;
+  let session: Awaited<ReturnType<typeof requireActiveTeam>>["session"];
+  try {
+    const ctx = await requireActiveTeam();
+    teamId = ctx.teamId;
+    session = ctx.session;
+  } catch {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  // Confirm the design exists and belongs to this user.
+  // Confirm the design exists and is owned by the active team.
   const design = await db.query.designs.findFirst({
     where: and(
       eq(designs.id, designId),
-      eq(designs.ownerId, session.user.id),
+      eq(designs.teamId, teamId),
     ),
     columns: { id: true, threadId: true },
   });

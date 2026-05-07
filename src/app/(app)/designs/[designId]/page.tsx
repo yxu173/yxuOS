@@ -1,11 +1,10 @@
 import { toAISdkMessages } from "@mastra/ai-sdk/ui";
 import type { UIMessage } from "ai";
 import { and, desc, eq } from "drizzle-orm";
-import { headers } from "next/headers";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 
-import { listDesignAssetsForOwner } from "@/app/(app)/designs/asset-actions";
-import { listDesignComponentsForOwner } from "@/app/(app)/designs/component-actions";
+import { listDesignAssetsForTeam } from "@/app/(app)/designs/asset-actions";
+import { listDesignComponentsForTeam } from "@/app/(app)/designs/component-actions";
 import type {
   LibraryAsset,
   LibraryComponent,
@@ -15,7 +14,7 @@ import type { DesignNode } from "@/components/design/design-node";
 import type { Artboard } from "@/components/design/types";
 import { db } from "@/db";
 import { designs } from "@/db/schema";
-import { auth } from "@/lib/auth";
+import { requireActiveTeam } from "@/lib/permissions";
 import { mastra } from "@/mastra";
 
 interface DesignSnapshot {
@@ -43,18 +42,13 @@ export default async function DesignPage({
 }) {
   const { designId } = await params;
 
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session) {
-    redirect("/sign-in");
-  }
+  const { session, teamId } = await requireActiveTeam();
 
   const [design, userDesigns, componentRows, assetRows] = await Promise.all([
     db.query.designs.findFirst({
       where: and(
         eq(designs.id, designId),
-        eq(designs.ownerId, session.user.id),
+        eq(designs.teamId, teamId),
       ),
       columns: {
         id: true,
@@ -65,7 +59,7 @@ export default async function DesignPage({
       },
     }),
     db.query.designs.findMany({
-      where: eq(designs.ownerId, session.user.id),
+      where: eq(designs.teamId, teamId),
       orderBy: desc(designs.updatedAt),
       columns: {
         id: true,
@@ -73,8 +67,8 @@ export default async function DesignPage({
         updatedAt: true,
       },
     }),
-    listDesignComponentsForOwner(session.user.id),
-    listDesignAssetsForOwner(session.user.id),
+    listDesignComponentsForTeam(teamId),
+    listDesignAssetsForTeam(teamId),
   ]);
 
   if (!design) {

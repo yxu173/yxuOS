@@ -1,26 +1,19 @@
 import { eq } from "drizzle-orm";
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { WorkspaceGrid } from "@/components/workspaces/workspace-grid";
 import { WorkspaceTabs } from "@/components/workspaces/workspace-tabs";
 import { db } from "@/db";
 import { boards } from "@/db/schema";
-import { auth } from "@/lib/auth";
+import { requireActiveTeam } from "@/lib/permissions";
 
 import { createBoard, deleteBoard, renameBoard } from "./actions";
 
 export default async function BoardsIndexPage() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session) {
-    redirect("/sign-in");
-  }
+  const { session, teamId } = await requireActiveTeam();
 
   const userBoards = await db.query.boards.findMany({
-    where: eq(boards.ownerId, session.user.id),
+    where: eq(boards.teamId, teamId),
     columns: {
       id: true,
       name: true,

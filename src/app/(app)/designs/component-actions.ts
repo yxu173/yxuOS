@@ -1,22 +1,11 @@
 "use server";
 
 import { and, asc, eq } from "drizzle-orm";
-import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 
 import { db } from "@/db";
 import { designComponents } from "@/db/schema";
-import { auth } from "@/lib/auth";
-
-async function requireSession() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session) {
-    throw new Error("Unauthorized");
-  }
-  return session;
-}
+import { requireActiveTeam } from "@/lib/permissions";
 
 /* ─── slug helpers ───────────────────────────────────── */
 
@@ -61,7 +50,7 @@ export async function createDesignComponent(input: {
   slug?: string;
   tree: Record<string, unknown>;
 }): Promise<{ id: string; slug: string }> {
-  const session = await requireSession();
+  const { session, teamId } = await requireActiveTeam();
 
   const trimmedName = input.name.trim();
   if (!trimmedName) {
@@ -69,12 +58,16 @@ export async function createDesignComponent(input: {
   }
 
   const baseSlug = input.slug ? toSlug(input.slug) : toSlug(trimmedName);
+  // Slugs are unique per-creator (legacy constraint). Until we drop the
+  // owner_id unique index in a future migration, allocate against the
+  // creator's namespace.
   const slug = await uniqueSlugFor(session.user.id, baseSlug);
 
   const [created] = await db
     .insert(designComponents)
     .values({
       ownerId: session.user.id,
+      teamId,
       name: trimmedName,
       slug,
       tree: input.tree,
@@ -89,7 +82,7 @@ export async function renameDesignComponent(
   componentId: string,
   name: string,
 ) {
-  const session = await requireSession();
+  const { teamId } = await requireActiveTeam();
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Component name cannot be empty");
 
@@ -99,7 +92,7 @@ export async function renameDesignComponent(
     .where(
       and(
         eq(designComponents.id, componentId),
-        eq(designComponents.ownerId, session.user.id),
+        eq(designComponents.teamId, teamId),
       ),
     );
 
@@ -110,14 +103,14 @@ export async function updateDesignComponentTree(
   componentId: string,
   tree: Record<string, unknown>,
 ) {
-  const session = await requireSession();
+  const { teamId } = await requireActiveTeam();
   await db
     .update(designComponents)
     .set({ tree, updatedAt: new Date() })
     .where(
       and(
         eq(designComponents.id, componentId),
-        eq(designComponents.ownerId, session.user.id),
+        eq(designComponents.teamId, teamId),
       ),
     );
 
@@ -125,13 +118,13 @@ export async function updateDesignComponentTree(
 }
 
 export async function deleteDesignComponent(componentId: string) {
-  const session = await requireSession();
+  const { teamId } = await requireActiveTeam();
   await db
     .delete(designComponents)
     .where(
       and(
         eq(designComponents.id, componentId),
-        eq(designComponents.ownerId, session.user.id),
+        eq(designComponents.teamId, teamId),
       ),
     );
 
@@ -139,13 +132,13 @@ export async function deleteDesignComponent(componentId: string) {
 }
 
 /**
- * Fetch every component owned by `ownerId`. Used by both the design page
- * (the user's own library) and the public share page (the design owner's
+ * Fetch every component for `teamId`. Used by both the design page (the
+ * active team's library) and the public share page (the design's team
  * library, so component-refs in shared designs still expand).
  */
-export async function listDesignComponentsForOwner(ownerId: string) {
+export async function listDesignComponentsForTeam(teamId: string) {
   return db.query.designComponents.findMany({
-    where: eq(designComponents.ownerId, ownerId),
+    where: eq(designComponents.teamId, teamId),
     orderBy: asc(designComponents.name),
     columns: {
       id: true,

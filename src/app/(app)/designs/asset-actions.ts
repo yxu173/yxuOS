@@ -2,27 +2,16 @@
 
 import { del, put } from "@vercel/blob";
 import { and, asc, eq } from "drizzle-orm";
-import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
 
 import { db } from "@/db";
 import { designAssets } from "@/db/schema";
-import { auth } from "@/lib/auth";
 import { env } from "@/lib/env";
+import { requireActiveTeam } from "@/lib/permissions";
 
 const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
 const ALLOWED_MIME_PREFIX = "image/";
-
-async function requireSession() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session) {
-    throw new Error("Unauthorized");
-  }
-  return session;
-}
 
 function requireBlobToken(): string {
   if (!env.BLOB_READ_WRITE_TOKEN) {
@@ -35,7 +24,7 @@ function requireBlobToken(): string {
 
 /**
  * Uploads a single image file to Vercel Blob and records it in the
- * `design_assets` table.
+ * `design_assets` table scoped to the active team.
  */
 export async function uploadDesignAsset(
   formData: FormData,
@@ -46,7 +35,7 @@ export async function uploadDesignAsset(
   mimeType: string;
   size: number;
 }> {
-  const session = await requireSession();
+  const { session, teamId } = await requireActiveTeam();
   const token = requireBlobToken();
 
   const file = formData.get("file");
@@ -61,7 +50,9 @@ export async function uploadDesignAsset(
   }
 
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_") || "asset";
-  const pathname = `designs/${session.user.id}/${nanoid(10)}-${safeName}`;
+  // Keep the per-team prefix so blobs are easy to reason about in the
+  // dashboard, even though the user uploading is the creator.
+  const pathname = `designs/${teamId}/${nanoid(10)}-${safeName}`;
 
   const blob = await put(pathname, file, {
     access: "public",
@@ -73,6 +64,7 @@ export async function uploadDesignAsset(
     .insert(designAssets)
     .values({
       ownerId: session.user.id,
+      teamId,
       name: file.name,
       pathname: blob.pathname,
       url: blob.url,
@@ -92,13 +84,13 @@ export async function uploadDesignAsset(
 }
 
 export async function deleteDesignAsset(assetId: string) {
-  const session = await requireSession();
+  const { teamId } = await requireActiveTeam();
   const token = requireBlobToken();
 
   const asset = await db.query.designAssets.findFirst({
     where: and(
       eq(designAssets.id, assetId),
-      eq(designAssets.ownerId, session.user.id),
+      eq(designAssets.teamId, teamId),
     ),
     columns: { url: true },
   });
@@ -115,16 +107,16 @@ export async function deleteDesignAsset(assetId: string) {
     .where(
       and(
         eq(designAssets.id, assetId),
-        eq(designAssets.ownerId, session.user.id),
+        eq(designAssets.teamId, teamId),
       ),
     );
 
   revalidatePath("/designs");
 }
 
-export async function listDesignAssetsForOwner(ownerId: string) {
+export async function listDesignAssetsForTeam(teamId: string) {
   return db.query.designAssets.findMany({
-    where: eq(designAssets.ownerId, ownerId),
+    where: eq(designAssets.teamId, teamId),
     orderBy: asc(designAssets.name),
     columns: {
       id: true,

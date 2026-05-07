@@ -1,26 +1,19 @@
 import { eq } from "drizzle-orm";
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { WorkspaceGrid } from "@/components/workspaces/workspace-grid";
 import { WorkspaceTabs } from "@/components/workspaces/workspace-tabs";
 import { db } from "@/db";
 import { designs } from "@/db/schema";
-import { auth } from "@/lib/auth";
+import { requireActiveTeam } from "@/lib/permissions";
 
 import { createDesign, deleteDesign, renameDesign } from "./actions";
 
 export default async function DesignsIndexPage() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session) {
-    redirect("/sign-in");
-  }
+  const { teamId } = await requireActiveTeam();
 
   const userDesigns = await db.query.designs.findMany({
-    where: eq(designs.ownerId, session.user.id),
+    where: eq(designs.teamId, teamId),
     columns: {
       id: true,
       name: true,

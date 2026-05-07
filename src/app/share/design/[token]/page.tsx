@@ -2,8 +2,8 @@ import { eq } from "drizzle-orm";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { listDesignAssetsForOwner } from "@/app/(app)/designs/asset-actions";
-import { listDesignComponentsForOwner } from "@/app/(app)/designs/component-actions";
+import { listDesignAssetsForTeam } from "@/app/(app)/designs/asset-actions";
+import { listDesignComponentsForTeam } from "@/app/(app)/designs/component-actions";
 import {
   ComponentLibraryProvider,
   type LibraryAsset,
@@ -34,20 +34,20 @@ export default async function SharedDesignPage({
       id: true,
       name: true,
       snapshot: true,
-      ownerId: true,
+      teamId: true,
     },
   });
 
-  if (!design) {
+  if (!design || !design.teamId) {
     notFound();
   }
 
-  // Pull the design owner's component library + uploaded assets so
-  // component-refs and image src references in the shared design expand
-  // correctly without authenticating the visitor.
+  // Pull the design's team library + uploaded assets so component-refs
+  // and image src references in the shared design expand correctly
+  // without authenticating the visitor.
   const [componentRows, assetRows] = await Promise.all([
-    listDesignComponentsForOwner(design.ownerId),
-    listDesignAssetsForOwner(design.ownerId),
+    listDesignComponentsForTeam(design.teamId),
+    listDesignAssetsForTeam(design.teamId),
   ]);
   const components: LibraryComponent[] = componentRows.map((row) => ({
     id: row.id,

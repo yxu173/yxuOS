@@ -1,11 +1,10 @@
 import { handleChatStream } from "@mastra/ai-sdk";
 import { createUIMessageStreamResponse } from "ai";
 import { and, eq } from "drizzle-orm";
-import { headers } from "next/headers";
 
 import { db } from "@/db";
 import { boards } from "@/db/schema";
-import { auth } from "@/lib/auth";
+import { requireActiveTeam } from "@/lib/permissions";
 import { mastra } from "@/mastra";
 
 export async function POST(
@@ -14,17 +13,19 @@ export async function POST(
 ) {
   const { boardId } = await params;
 
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-  if (!session) {
+  let teamId: string;
+  let session: Awaited<ReturnType<typeof requireActiveTeam>>["session"];
+  try {
+    const ctx = await requireActiveTeam();
+    teamId = ctx.teamId;
+    session = ctx.session;
+  } catch {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  // Confirm the board exists and belongs to this user — never leak that a
-  // foreign id exists.
+  // Confirm the board exists and is owned by the active team.
   const board = await db.query.boards.findFirst({
-    where: and(eq(boards.id, boardId), eq(boards.ownerId, session.user.id)),
+    where: and(eq(boards.id, boardId), eq(boards.teamId, teamId)),
     columns: { id: true, threadId: true },
   });
   if (!board) {
