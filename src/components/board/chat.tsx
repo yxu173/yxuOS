@@ -16,8 +16,9 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { ScrollToBottomPill } from "@/components/chat/scroll-to-bottom-pill";
+import { useChatAutoScroll } from "@/components/chat/use-chat-auto-scroll";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
@@ -46,7 +47,6 @@ export function Chat({ boardId, initialMessages }: ChatProps) {
   const editorRef = useBoardEditorRef();
   const [input, setInput] = useState("");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const { messages, sendMessage, status, error, addToolOutput, stop } = useChat(
     {
@@ -147,16 +147,13 @@ export function Chat({ boardId, initialMessages }: ChatProps) {
 
   const isStreaming = status === "streaming" || status === "submitted";
 
+  // Smart auto-scroll: pin to bottom only while the user is already there.
+  const { containerRef, isAtBottom, onScroll, scrollToBottom } =
+    useChatAutoScroll([messages, isStreaming]);
+
   useEffect(() => {
     composerRef.current?.focus();
   }, []);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({
-      behavior: "smooth",
-      block: "end",
-    });
-  }, [messages]);
 
   const submit = () => {
     const text = input.trim();
@@ -173,7 +170,7 @@ export function Chat({ boardId, initialMessages }: ChatProps) {
   };
 
   return (
-    <section className="flex h-full w-96 shrink-0 flex-col overflow-hidden border-l border-white/5 bg-zinc-950/40 backdrop-blur">
+    <section className="relative flex h-full w-96 min-w-0 shrink-0 flex-col overflow-hidden border-l border-white/5 bg-zinc-950/40 backdrop-blur">
       <div className="flex items-center justify-between border-b border-white/5 px-3 py-2">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
           Chat
@@ -190,23 +187,36 @@ export function Chat({ boardId, initialMessages }: ChatProps) {
         </span>
       </div>
 
-      <ScrollArea className="flex-1">
-        <div className="flex min-w-0 flex-col gap-4 px-3 py-3">
+      <div
+        ref={containerRef}
+        onScroll={onScroll}
+        className="chat-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
+      >
+        <div className="flex min-w-0 flex-col gap-5 px-3 py-4">
           {messages.length === 0 ? (
             <EmptyState />
           ) : (
-            messages.map((message) => (
-              <MessageRow key={message.id} message={message} />
+            messages.map((message, index) => (
+              <MessageRow
+                key={message.id}
+                message={message}
+                isLast={index === messages.length - 1}
+              />
             ))
           )}
           {error ? (
-            <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300 [overflow-wrap:anywhere]">
+            <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300 break-words">
               {error.message ?? "Something went wrong."}
             </p>
           ) : null}
-          <div ref={messagesEndRef} />
         </div>
-      </ScrollArea>
+      </div>
+
+      <ScrollToBottomPill
+        visible={!isAtBottom}
+        onClick={() => scrollToBottom()}
+        hint={isStreaming ? "Agent is replying ↓" : "Jump to latest"}
+      />
 
       <form
         onSubmit={(event) => {
@@ -278,15 +288,29 @@ function EmptyState() {
   );
 }
 
-function MessageRow({ message }: { message: UIMessage }) {
+function MessageRow({
+  message,
+  isLast,
+}: {
+  message: UIMessage;
+  isLast: boolean;
+}) {
   const isUser = message.role === "user";
   return (
     <div
       className={cn(
         "flex min-w-0",
-        isUser ? "justify-end" : "justify-start",
+        isUser ? "justify-end" : "flex-col items-stretch",
+        // Hairline separator between consecutive agent messages.
+        !isUser && !isLast && "border-b border-white/5 pb-4",
       )}
     >
+      {!isUser ? (
+        <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+          <Sparkles className="size-3" />
+          Architect
+        </div>
+      ) : null}
       <div
         className={cn(
           "flex min-w-0 flex-col gap-2 text-sm leading-relaxed",

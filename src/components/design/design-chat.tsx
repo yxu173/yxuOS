@@ -19,8 +19,9 @@ import {
 import { useEffect, useRef, useState } from "react";
 
 import { ChatMarkdown } from "@/components/board/chat-markdown";
+import { ScrollToBottomPill } from "@/components/chat/scroll-to-bottom-pill";
+import { useChatAutoScroll } from "@/components/chat/use-chat-auto-scroll";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
@@ -74,7 +75,6 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
   const [pending, setPending] = useState<PendingFile[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const library = useComponentLibrary();
 
@@ -189,16 +189,14 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
 
   const isStreaming = status === "streaming" || status === "submitted";
 
+  // Smart auto-scroll: pin to bottom only while the user is already there
+  // so they can scroll up to read history without being yanked back.
+  const { containerRef, isAtBottom, onScroll, scrollToBottom } =
+    useChatAutoScroll([messages, isStreaming]);
+
   useEffect(() => {
     composerRef.current?.focus();
   }, []);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({
-      behavior: "smooth",
-      block: "end",
-    });
-  }, [messages]);
 
   const submit = async () => {
     const text = input.trim();
@@ -296,7 +294,7 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
   };
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden">
+    <div className="relative flex h-full w-full min-w-0 flex-col overflow-hidden">
       <div className="flex items-center justify-end border-b border-white/5 px-3 py-1.5">
         <span
           className={cn(
@@ -310,23 +308,36 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
         </span>
       </div>
 
-      <ScrollArea className="flex-1">
-        <div className="flex min-w-0 flex-col gap-4 px-3 py-3">
+      <div
+        ref={containerRef}
+        onScroll={onScroll}
+        className="chat-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
+      >
+        <div className="flex min-w-0 flex-col gap-5 px-3 py-4">
           {messages.length === 0 ? (
             <EmptyState />
           ) : (
-            messages.map((message) => (
-              <MessageRow key={message.id} message={message} />
+            messages.map((message, index) => (
+              <MessageRow
+                key={message.id}
+                message={message}
+                isLast={index === messages.length - 1}
+              />
             ))
           )}
           {error ? (
-            <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300 [overflow-wrap:anywhere]">
+            <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300 break-words">
               {error.message ?? "Something went wrong."}
             </p>
           ) : null}
-          <div ref={messagesEndRef} />
         </div>
-      </ScrollArea>
+      </div>
+
+      <ScrollToBottomPill
+        visible={!isAtBottom}
+        onClick={() => scrollToBottom()}
+        hint={isStreaming ? "Agent is replying ↓" : "Jump to latest"}
+      />
 
       <form
         onSubmit={(event) => {
@@ -454,15 +465,31 @@ function EmptyState() {
   );
 }
 
-function MessageRow({ message }: { message: UIMessage }) {
+function MessageRow({
+  message,
+  isLast,
+}: {
+  message: UIMessage;
+  isLast: boolean;
+}) {
   const isUser = message.role === "user";
   return (
     <div
       className={cn(
         "flex min-w-0",
-        isUser ? "justify-end" : "justify-start",
+        isUser ? "justify-end" : "flex-col items-stretch",
+        // Hairline separator between consecutive agent messages so big
+        // multi-message exchanges stay readable. Skip the rule on the
+        // last item to keep the bottom of the list clean.
+        !isUser && !isLast && "border-b border-white/5 pb-4",
       )}
     >
+      {!isUser ? (
+        <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+          <Sparkles className="size-3" />
+          Designer
+        </div>
+      ) : null}
       <div
         className={cn(
           "flex min-w-0 flex-col gap-2 text-sm leading-relaxed",
