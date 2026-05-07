@@ -22,9 +22,12 @@ import {
  * The current user is recorded as the creator (`ownerId`) for "Created
  * by Alice" badges; access control is by `teamId`.
  */
-export async function createBoard(projectSlug?: string) {
+export async function createBoard(projectSlug?: string | FormData) {
+  // When used as a `<form action={createBoard}>` handler, Next passes a
+  // FormData instance as the first argument. Only treat strings as a slug.
+  const slug = typeof projectSlug === "string" ? projectSlug : null;
   const { session, teamId, projectId, projectSlug: resolvedSlug } =
-    await requireActiveProject(projectSlug ?? null);
+    await requireActiveProject(slug);
 
   const [board] = await db
     .insert(boards)

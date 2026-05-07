@@ -13,9 +13,12 @@ import {
   requireActiveTeam,
 } from "@/lib/permissions";
 
-export async function createDesign(projectSlug?: string) {
+export async function createDesign(projectSlug?: string | FormData) {
+  // When used as a `<form action={createDesign}>` handler, Next passes a
+  // FormData instance as the first argument. Only treat strings as a slug.
+  const slug = typeof projectSlug === "string" ? projectSlug : null;
   const { session, teamId, projectId, projectSlug: resolvedSlug } =
-    await requireActiveProject(projectSlug ?? null);
+    await requireActiveProject(slug);
 
   const [design] = await db
     .insert(designs)

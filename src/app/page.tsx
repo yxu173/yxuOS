@@ -248,7 +248,8 @@ function RecentSection({
   /** "boards" | "designs" — used to build the per-item project-scoped href. */
   section: "boards" | "designs";
   allHref: string;
-  createAction: () => Promise<void>;
+  // Wired to a `<form action={...}>`, so Next will pass a FormData instance.
+  createAction: (formData: FormData) => Promise<void>;
   createLabel: string;
   emptyHint: string;
 }) {
