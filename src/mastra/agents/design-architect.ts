@@ -142,6 +142,31 @@ Treat it as source of truth. Describe it in one line, then design.
   memory: new Memory({
     options: {
       lastMessages: 30,
+      // Thread-scoped working memory: each design has its own thread,
+      // and brand decisions made on one design shouldn't leak into
+      // another. The agent maintains this Markdown record across
+      // turns — replaces having to re-state context every message.
+      workingMemory: {
+        enabled: true,
+        scope: "thread",
+        template: `# Design context
+
+## Brand
+- **Product / domain**:
+- **Accent color**:
+- **Typography**:
+- **Voice / tone**:
+
+## In-flight
+- **Active artboard**:
+- **Reusable components saved this session**:
+- **Open thread / next iteration**:
+
+## User preferences
+- **Density**: (compact | comfortable | spacious)
+- **Dark mode**: (yes | no)
+- **Notes**:`,
+      },
     },
   }),
   tools: designCanvasTools,
