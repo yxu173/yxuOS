@@ -1,5 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import {
+  Activity,
   ArrowRight,
   LayoutDashboard,
   Palette,
@@ -9,11 +10,13 @@ import {
 import { headers } from "next/headers";
 import Link from "next/link";
 
+import { ActivityFeed } from "@/components/activity/activity-feed";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { AppTopBar } from "@/components/workspaces/app-top-bar";
 import { db } from "@/db";
 import { boards, designs, member } from "@/db/schema";
+import { listRecentActivity } from "@/lib/activity-list";
 import { auth } from "@/lib/auth";
 import { listUserTeams } from "@/lib/teams";
 
@@ -51,7 +54,7 @@ export default async function HomePage() {
     return <SignedOutLanding />;
   }
 
-  const [recentBoards, recentDesigns, teams] = await Promise.all([
+  const [recentBoards, recentDesigns, teams, activity] = await Promise.all([
     db.query.boards.findMany({
       where: eq(boards.teamId, teamId),
       orderBy: desc(boards.updatedAt),
@@ -65,6 +68,7 @@ export default async function HomePage() {
       columns: { id: true, name: true, updatedAt: true },
     }),
     listUserTeams(session.user.id),
+    listRecentActivity(teamId, 8),
   ]);
 
   const activeTeam = teams.find((t) => t.id === teamId);
@@ -114,6 +118,30 @@ export default async function HomePage() {
           createLabel="New design"
           emptyHint="Mock up a landing page, dashboard, or component spec."
         />
+
+        <section className="flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <h2 className="flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-zinc-400">
+              <Activity className="size-3.5" />
+              Recent activity
+            </h2>
+            {activity.length > 0 ? (
+              <Button asChild size="sm" variant="ghost">
+                <Link
+                  href={`/teams/${teamId}`}
+                  className="gap-1"
+                >
+                  See all <ArrowRight className="size-3.5" />
+                </Link>
+              </Button>
+            ) : null}
+          </div>
+          <ActivityFeed
+            items={activity}
+            compact
+            emptyHint="When teammates create or update boards and designs, you'll see it here."
+          />
+        </section>
       </main>
     </div>
   );

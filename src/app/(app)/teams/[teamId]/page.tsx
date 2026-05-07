@@ -2,12 +2,14 @@ import { asc, eq } from "drizzle-orm";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { ActivityFeed } from "@/components/activity/activity-feed";
 import { TeamMemberList } from "@/components/teams/team-member-list";
 import { TeamAddMemberForm } from "@/components/teams/team-add-member-form";
 import { TeamSettingsForm } from "@/components/teams/team-settings-form";
 import { AppTopBar } from "@/components/workspaces/app-top-bar";
 import { db } from "@/db";
 import { member, organization } from "@/db/schema";
+import { listRecentActivity } from "@/lib/activity-list";
 import { requireMembership, type TeamRole } from "@/lib/permissions";
 import { listUserTeams } from "@/lib/teams";
 
@@ -28,7 +30,7 @@ export default async function TeamPage({
     notFound();
   }
 
-  const [team, memberRows, teams] = await Promise.all([
+  const [team, memberRows, teams, activity] = await Promise.all([
     db.query.organization.findFirst({
       where: eq(organization.id, teamId),
       columns: { id: true, name: true, slug: true },
@@ -44,6 +46,7 @@ export default async function TeamPage({
       .where(eq(member.organizationId, teamId))
       .orderBy(asc(member.createdAt)),
     listUserTeams(session.user.id),
+    listRecentActivity(teamId, 50),
   ]);
 
   if (!team) {
@@ -146,6 +149,16 @@ export default async function TeamPage({
             />
           </section>
         ) : null}
+
+        <section className="flex flex-col gap-4">
+          <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-400">
+            Activity ({activity.length})
+          </h2>
+          <ActivityFeed
+            items={activity}
+            emptyHint="No team activity yet."
+          />
+        </section>
 
         {role === "owner" ? (
           <section className="flex flex-col gap-4 rounded-lg border border-white/5 bg-white/[0.02] p-4">
