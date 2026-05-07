@@ -11,6 +11,7 @@ import { WorkspaceGrid } from "@/components/workspaces/workspace-grid";
 import { db } from "@/db";
 import { boards } from "@/db/schema";
 import { requireActiveProject } from "@/lib/permissions";
+import { listProjectsForTeam } from "@/lib/projects";
 import { listUserTeams } from "@/lib/teams";
 
 interface PageProps {
@@ -23,7 +24,7 @@ export default async function ProjectBoardsIndexPage({ params }: PageProps) {
   const { session, teamId, projectId, projectName } =
     await requireActiveProject(projectSlug);
 
-  const [boardRows, teams] = await Promise.all([
+  const [boardRows, teams, projects] = await Promise.all([
     db.query.boards.findMany({
       where: and(
         eq(boards.teamId, teamId),
@@ -46,6 +47,7 @@ export default async function ProjectBoardsIndexPage({ params }: PageProps) {
       },
     }),
     listUserTeams(session.user.id),
+    listProjectsForTeam(teamId),
   ]);
 
   const userBoards = boardRows.map((row) => ({
@@ -74,6 +76,7 @@ export default async function ProjectBoardsIndexPage({ params }: PageProps) {
         userEmail={session.user.email}
         active="boards"
         projectSlug={projectSlug}
+        projects={projects}
       />
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-8 p-8">
         <header className="flex items-baseline justify-between">

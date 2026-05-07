@@ -28,7 +28,8 @@ export type ActivitySubjectType =
   | "comment"
   | "member"
   | "team"
-  | "task";
+  | "task"
+  | "project";
 
 export interface LogActivityInput {
   teamId: string;

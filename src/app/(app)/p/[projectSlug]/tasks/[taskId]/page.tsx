@@ -21,6 +21,7 @@ import { StatusPicker } from "@/components/tasks/status-picker";
 import { TaskRow } from "@/components/tasks/task-row";
 import { AppTopBar } from "@/components/workspaces/app-top-bar";
 import { requireActiveProject } from "@/lib/permissions";
+import { listProjectsForTeam } from "@/lib/projects";
 import { listTeamMembers, listUserTeams } from "@/lib/teams";
 
 const dateFormatter = new Intl.DateTimeFormat("en", {
@@ -39,9 +40,10 @@ export default async function TaskDetailPage({ params }: TaskPageParams) {
 
   const { session, teamId } = await requireActiveProject(projectSlug);
 
-  const [task, teams, members, comments] = await Promise.all([
+  const [task, teams, projects, members, comments] = await Promise.all([
     getTaskDetail(taskId),
     listUserTeams(session.user.id),
+    listProjectsForTeam(teamId),
     listTeamMembers(teamId),
     listCommentsForSubject("task", taskId),
   ]);
@@ -77,6 +79,7 @@ export default async function TaskDetailPage({ params }: TaskPageParams) {
         userEmail={session.user.email}
         active="tasks"
         projectSlug={projectSlug}
+        projects={projects}
       />
 
       <main className="mx-auto grid w-full max-w-6xl gap-8 p-8 md:grid-cols-[1fr_280px]">

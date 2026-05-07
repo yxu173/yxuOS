@@ -3,6 +3,7 @@ import { CreateTaskDialog } from "@/components/tasks/create-task-dialog";
 import { TaskList } from "@/components/tasks/task-list";
 import { AppTopBar } from "@/components/workspaces/app-top-bar";
 import { requireActiveProject } from "@/lib/permissions";
+import { listProjectsForTeam } from "@/lib/projects";
 import { listTeamMembers, listUserTeams } from "@/lib/teams";
 
 export const metadata = {
@@ -19,9 +20,10 @@ export default async function ProjectTasksIndexPage({ params }: PageProps) {
   const { session, teamId, projectId, projectName } =
     await requireActiveProject(projectSlug);
 
-  const [tasks, teams, members] = await Promise.all([
+  const [tasks, teams, projects, members] = await Promise.all([
     listTopLevelTasks(teamId, projectId),
     listUserTeams(session.user.id),
+    listProjectsForTeam(teamId),
     listTeamMembers(teamId),
   ]);
 
@@ -40,6 +42,7 @@ export default async function ProjectTasksIndexPage({ params }: PageProps) {
         userEmail={session.user.email}
         active="tasks"
         projectSlug={projectSlug}
+        projects={projects}
       />
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-8">
         <header className="flex items-baseline justify-between">

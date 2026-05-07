@@ -1,8 +1,10 @@
 import { CheckSquare, LayoutDashboard, Palette } from "lucide-react";
 import Link from "next/link";
 
+import type { ProjectListItem } from "@/lib/projects";
 import { cn } from "@/lib/utils";
 
+import { ProjectSwitcher } from "./project-switcher";
 import { UserMenu } from "./user-menu";
 import {
   WorkspaceSwitcher,
@@ -29,6 +31,11 @@ export interface AppTopBarProps {
    * undefined; nav still works via the legacy redirect.
    */
   projectSlug?: string;
+  /**
+   * Project switcher source. Pages that have an active project pass the
+   * full list so the dropdown is one click away.
+   */
+  projects?: ProjectListItem[];
 }
 
 interface SectionLinkSpec {
@@ -75,6 +82,7 @@ export function AppTopBar({
   userEmail,
   active,
   projectSlug,
+  projects,
 }: AppTopBarProps) {
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b border-white/5 bg-zinc-950/60 px-3 backdrop-blur">
@@ -86,6 +94,17 @@ export function AppTopBar({
       </Link>
       <span className="text-zinc-600">/</span>
       <WorkspaceSwitcher teams={teams} activeTeamId={activeTeamId} />
+
+      {projects && projectSlug ? (
+        <>
+          <span className="text-zinc-600">/</span>
+          <ProjectSwitcher
+            projects={projects}
+            activeProjectSlug={projectSlug}
+            activeSection={active}
+          />
+        </>
+      ) : null}
 
       <nav
         aria-label="Sections"
