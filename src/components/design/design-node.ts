@@ -51,6 +51,13 @@ export interface ButtonNode extends BaseNode {
   label: string;
   variant?: "primary" | "secondary" | "ghost" | "outline";
   size?: "sm" | "md" | "lg";
+  /**
+   * Optional prototype link — clicking this button conceptually
+   * "navigates" to the target artboard. Visualized as an arrow in
+   * flow-view; ignored otherwise. Stored on the node so it travels
+   * with `duplicate_node` / `extract_component` / `move_nodes`.
+   */
+  flowTo?: { artboardId: string };
 }
 
 export interface ImageNode extends BaseNode {
@@ -86,6 +93,13 @@ export interface LinkNode extends BaseNode {
   type: "link";
   label: string;
   href?: string;
+  /**
+   * Same shape as ButtonNode.flowTo — the link's "click target" in
+   * the prototype graph. `href` and `flowTo` may coexist; the
+   * renderer treats `href` as the rendered DOM attribute and
+   * `flowTo` as the canvas-only prototype edge.
+   */
+  flowTo?: { artboardId: string };
 }
 
 export interface DividerNode extends BaseNode {

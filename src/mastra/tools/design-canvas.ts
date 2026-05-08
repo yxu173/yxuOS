@@ -32,6 +32,17 @@ const baseNode = {
   style: cssSchema,
 };
 
+const flowToSchema = z
+  .object({
+    artboardId: z
+      .string()
+      .describe("Target artboard's id (from `query_canvas`)."),
+  })
+  .optional()
+  .describe(
+    "Prototype link — clicking this button/link conceptually navigates to the target artboard. Drawn as an arrow in flow-view; ignored otherwise. Co-located on the node so it travels with `duplicate_node`, `move_nodes`, and `extract_component`.",
+  );
+
 const designNodeSchema: z.ZodTypeAny = z.lazy(() =>
   z.discriminatedUnion("type", [
     z.object({
@@ -83,6 +94,7 @@ const designNodeSchema: z.ZodTypeAny = z.lazy(() =>
       label: z.string(),
       variant: z.enum(["primary", "secondary", "ghost", "outline"]).optional(),
       size: z.enum(["sm", "md", "lg"]).optional(),
+      flowTo: flowToSchema,
     }),
     z.object({
       type: z.literal("image"),
@@ -113,6 +125,7 @@ const designNodeSchema: z.ZodTypeAny = z.lazy(() =>
       ...baseNode,
       label: z.string(),
       href: z.string().optional(),
+      flowTo: flowToSchema,
     }),
     z.object({
       type: z.literal("divider"),
