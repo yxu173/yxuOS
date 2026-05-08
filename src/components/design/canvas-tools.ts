@@ -27,6 +27,7 @@ import type {
 import type { DesignNode } from "./design-node";
 import {
   cloneSubtreeWithFreshIds,
+  collectFlowEdgesFromArtboards,
   deleteNodesInTree,
   duplicateNodeInTree,
   findNodeInTree,
@@ -36,8 +37,10 @@ import {
   patchNodeInTree,
   regenerateIds,
   replaceNodeWithComponentRef,
+  setNodeFlowTo,
   validateTree,
   type FindNodePredicate,
+  type FlowEdgeRow,
   type InsertPosition,
   type NodeMatch,
   type NodePatch,
@@ -1357,6 +1360,140 @@ function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${bytes} B`;
+}
+
+/* ─── connect_artboards / disconnect_artboards / list_flows ─ */
+
+export interface ConnectArtboardsInput {
+  artboardId: string;
+  nodeId: string;
+  toArtboardId: string;
+  idempotencyKey?: string;
+}
+
+export function executeConnectArtboards(
+  input: ConnectArtboardsInput,
+): ToolResult<{
+  artboardId: string;
+  nodeId: string;
+  toArtboardId: string;
+}> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
+    const sourceArtboard = state.artboards.find(
+      (a) => a.id === input.artboardId,
+    );
+    if (!sourceArtboard) {
+      return fail(
+        "not_found",
+        `Source artboard "${input.artboardId}" not found.`,
+        "Call `query_canvas` to refresh artboard ids.",
+      );
+    }
+    if (!state.artboards.some((a) => a.id === input.toArtboardId)) {
+      return fail(
+        "not_found",
+        `Target artboard "${input.toArtboardId}" not found.`,
+        "Call `query_canvas` to refresh artboard ids.",
+      );
+    }
+    if (!sourceArtboard.design) {
+      return fail(
+        "preconditions_failed",
+        `Artboard "${sourceArtboard.name}" is empty — no node to connect.`,
+      );
+    }
+
+    // Distinguish "node missing" from "node is wrong type" so the
+    // hint is actionable. setNodeFlowTo returns null for both, so we
+    // peek with findNodeInTree first.
+    const node = findNodeInTree(sourceArtboard.design, input.nodeId);
+    if (!node) {
+      return fail(
+        "not_found",
+        `Node "${input.nodeId}" not found in artboard "${sourceArtboard.name}".`,
+        "Call `find_nodes` or `get_artboard` for current ids.",
+      );
+    }
+    if (node.type !== "button" && node.type !== "link") {
+      return fail(
+        "preconditions_failed",
+        `Only buttons and links can carry a flow link (got type="${node.type}").`,
+        "Pick a button or link node, or wrap the action with one.",
+      );
+    }
+
+    const nextTree = setNodeFlowTo(sourceArtboard.design, input.nodeId, {
+      artboardId: input.toArtboardId,
+    });
+    if (!nextTree) {
+      // Defensive — we already validated both branches above.
+      return fail("internal", "Failed to apply flow link.");
+    }
+    state.updateArtboard(input.artboardId, { design: nextTree });
+    return ok({
+      artboardId: input.artboardId,
+      nodeId: input.nodeId,
+      toArtboardId: input.toArtboardId,
+    });
+  });
+}
+
+export interface DisconnectArtboardsInput {
+  artboardId: string;
+  nodeId: string;
+  idempotencyKey?: string;
+}
+
+export function executeDisconnectArtboards(
+  input: DisconnectArtboardsInput,
+): ToolResult<{ artboardId: string; nodeId: string }> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
+    const ab = state.artboards.find((a) => a.id === input.artboardId);
+    if (!ab) {
+      return fail("not_found", `Artboard "${input.artboardId}" not found.`);
+    }
+    if (!ab.design) {
+      return fail(
+        "preconditions_failed",
+        `Artboard "${ab.name}" is empty — nothing to disconnect.`,
+      );
+    }
+    const node = findNodeInTree(ab.design, input.nodeId);
+    if (!node) {
+      return fail(
+        "not_found",
+        `Node "${input.nodeId}" not found in artboard "${ab.name}".`,
+        "Call `find_nodes` or `get_artboard` for current ids.",
+      );
+    }
+    if (node.type !== "button" && node.type !== "link") {
+      // Already not flowing anywhere, but be explicit about it so the
+      // agent knows it's dealing with a non-flow node.
+      return fail(
+        "preconditions_failed",
+        `Node type="${node.type}" can't carry a flow link in the first place.`,
+      );
+    }
+    const nextTree = setNodeFlowTo(ab.design, input.nodeId, null);
+    if (!nextTree) {
+      return fail("internal", "Failed to remove flow link.");
+    }
+    state.updateArtboard(input.artboardId, { design: nextTree });
+    return ok({ artboardId: input.artboardId, nodeId: input.nodeId });
+  });
+}
+
+export interface ListFlowsOutput {
+  flows: FlowEdgeRow[];
+}
+
+export function executeListFlows(): ToolResult<ListFlowsOutput> {
+  const state = useDesignCanvas.getState();
+  return ok({
+    flows: collectFlowEdgesFromArtboards(state.artboards),
+  });
 }
 
 /* ─── helpers ──────────────────────────────────────────── */

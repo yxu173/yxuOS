@@ -855,6 +855,72 @@ export const saveAttachmentAsAssetTool = createTool({
   ),
 });
 
+/* ─── flows ────────────────────────────────────────────── */
+
+export const connectArtboardsTool = createTool({
+  id: "connect_artboards",
+  description:
+    "Wire a button or link to a target artboard so it shows as a prototype-flow arrow when the user toggles flow-view. Sets `flowTo: { artboardId }` on the source node. Use for 'when this button is clicked, go to the dashboard', 'wire the onboarding flow', 'connect login → home'. The arrow is purely visual — clicking the button on the canvas doesn't actually navigate. The flow edge travels with `duplicate_node`, `move_nodes`, and `extract_component`, so wiring once is enough.",
+  inputSchema: z.object({
+    artboardId: z
+      .string()
+      .describe("Source artboard's id (where the button/link lives)."),
+    nodeId: z
+      .string()
+      .describe(
+        "Source node's id — must be a `button` or `link` node. Anything else returns `preconditions_failed`.",
+      ),
+    toArtboardId: z
+      .string()
+      .describe("Target artboard's id — where clicking would navigate."),
+    idempotencyKey: idempotencyKeyField,
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      artboardId: z.string(),
+      nodeId: z.string(),
+      toArtboardId: z.string(),
+    }),
+  ),
+});
+
+export const disconnectArtboardsTool = createTool({
+  id: "disconnect_artboards",
+  description:
+    "Remove a flow link from a button/link. Inverse of `connect_artboards`. Use for 'unhook this button from the dashboard', 'clear all the prototype flows from this screen' (call it once per node), etc.",
+  inputSchema: z.object({
+    artboardId: z.string(),
+    nodeId: z.string(),
+    idempotencyKey: idempotencyKeyField,
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      artboardId: z.string(),
+      nodeId: z.string(),
+    }),
+  ),
+});
+
+export const listFlowsTool = createTool({
+  id: "list_flows",
+  description:
+    "Read every prototype-flow edge across all artboards. Returns `{ sourceArtboardId, sourceNodeId, sourceLabel, sourceType, toArtboardId }[]` so you can answer 'what's wired up?', verify a flow exists before connecting again, or describe the prototype to the user. Cheap — pure tree walk, no DOM.",
+  inputSchema: z.object({}),
+  outputSchema: toolResultSchema(
+    z.object({
+      flows: z.array(
+        z.object({
+          sourceArtboardId: z.string(),
+          sourceNodeId: z.string(),
+          sourceLabel: z.string(),
+          sourceType: z.enum(["button", "link"]),
+          toArtboardId: z.string(),
+        }),
+      ),
+    }),
+  ),
+});
+
 /* ─── update_component ─────────────────────────────────── */
 
 export const updateComponentTool = createTool({
@@ -904,4 +970,7 @@ export const designCanvasTools = {
   list_components: listComponentsTool,
   list_assets: listAssetsTool,
   save_attachment_as_asset: saveAttachmentAsAssetTool,
+  connect_artboards: connectArtboardsTool,
+  disconnect_artboards: disconnectArtboardsTool,
+  list_flows: listFlowsTool,
 };

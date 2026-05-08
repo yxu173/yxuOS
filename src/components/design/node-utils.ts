@@ -679,6 +679,101 @@ export function deleteNodesInTree(
   return { tree, deletedNodeIds };
 }
 
+/* ─── flow edges (button/link → artboard) ─────────────── */
+
+/**
+ * Set or clear `flowTo` on a single node. Pass `null` for `flowTo`
+ * to remove the link. Returns `null` if the target id is missing or
+ * the node isn't a button/link (so the caller can surface a useful
+ * tool error). Style and other fields are preserved.
+ */
+export function setNodeFlowTo(
+  root: DesignNode,
+  targetId: string,
+  flowTo: { artboardId: string } | null,
+): DesignNode | null {
+  // Internal walker — finds the node, validates type, returns the
+  // patched root or null (with a discriminator on the failure mode
+  // through a side channel). We keep this simple: not-found + wrong-
+  // type both return null, and the caller distinguishes via a separate
+  // `findNodeInTree` call when it needs to.
+  function walk(node: DesignNode): DesignNode | null {
+    if (node.id === targetId) {
+      if (node.type !== "button" && node.type !== "link") {
+        return null; // wrong type
+      }
+      const next = { ...node } as DesignNode & { flowTo?: { artboardId: string } };
+      if (flowTo) {
+        (next as { flowTo?: { artboardId: string } }).flowTo = flowTo;
+      } else {
+        delete (next as { flowTo?: { artboardId: string } }).flowTo;
+      }
+      return next;
+    }
+    if (hasChildren(node) && node.children) {
+      for (let i = 0; i < node.children.length; i++) {
+        const patched = walk(node.children[i]);
+        if (patched) {
+          const nextChildren = node.children.slice();
+          nextChildren[i] = patched;
+          return { ...node, children: nextChildren } as DesignNode;
+        }
+      }
+    }
+    return null;
+  }
+  return walk(root);
+}
+
+/**
+ * Walk every artboard's tree and collect each node that has a
+ * `flowTo` set. Pure data extraction; no React or DOM.
+ *
+ * Returns `{ sourceArtboardId, sourceNodeId, sourceLabel,
+ * sourceType, toArtboardId }` per edge. The label is whatever
+ * appears next to the user (button.label / link.label) so the
+ * agent's `list_flows` output reads naturally.
+ */
+export interface FlowEdgeRow {
+  sourceArtboardId: string;
+  sourceNodeId: string;
+  sourceLabel: string;
+  sourceType: "button" | "link";
+  toArtboardId: string;
+}
+
+export function collectFlowEdgesFromArtboards(
+  artboards: Array<{ id: string; design: DesignNode | null }>,
+): FlowEdgeRow[] {
+  const out: FlowEdgeRow[] = [];
+  for (const ab of artboards) {
+    if (!ab.design) continue;
+    walkNode(ab.design, ab.id, out);
+  }
+  return out;
+}
+
+function walkNode(node: DesignNode, artboardId: string, out: FlowEdgeRow[]) {
+  if (
+    (node.type === "button" || node.type === "link") &&
+    node.flowTo &&
+    node.id
+  ) {
+    out.push({
+      sourceArtboardId: artboardId,
+      sourceNodeId: node.id,
+      sourceLabel: node.label,
+      sourceType: node.type,
+      toArtboardId: node.flowTo.artboardId,
+    });
+  }
+  if ("children" in node && Array.isArray(node.children)) {
+    for (const child of node.children) {
+      walkNode(child, artboardId, out);
+    }
+  }
+}
+
 /* ─── multi-node move ──────────────────────────────────── */
 
 export interface MoveError {

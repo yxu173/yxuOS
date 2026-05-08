@@ -34,6 +34,9 @@ import {
   executeGetArtboard,
   executeListAssets,
   executeListComponents,
+  executeConnectArtboards,
+  executeDisconnectArtboards,
+  executeListFlows,
   executeListTokens,
   executeMoveNodes,
   executePatchNode,
@@ -75,6 +78,9 @@ const TOOL_LABELS: Record<string, string> = {
   apply_theme: "Applying theme",
   list_tokens: "Reading design tokens",
   set_tokens: "Writing design tokens",
+  connect_artboards: "Wiring flow",
+  disconnect_artboards: "Removing flow",
+  list_flows: "Reading flows",
   extract_component: "Saving component",
   update_component: "Updating component",
   list_components: "Reading component library",
@@ -350,6 +356,23 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
               break;
             case "list_assets":
               emit(executeListAssets(library.assets));
+              break;
+            case "connect_artboards":
+              emit(
+                executeConnectArtboards(
+                  toolCall.input as Parameters<typeof executeConnectArtboards>[0],
+                ),
+              );
+              break;
+            case "disconnect_artboards":
+              emit(
+                executeDisconnectArtboards(
+                  toolCall.input as Parameters<typeof executeDisconnectArtboards>[0],
+                ),
+              );
+              break;
+            case "list_flows":
+              emit(executeListFlows());
               break;
             default:
               fatal(`Unknown tool: ${toolCall.toolName}`);
@@ -917,9 +940,25 @@ function describeToolResult(
       return "Read component library";
     case "list_assets":
       return "Read uploaded assets";
+    case "connect_artboards":
+      return data
+        ? `Wired flow → ${truncateId(data.toArtboardId)}`
+        : "Wired flow";
+    case "disconnect_artboards":
+      return "Removed flow";
+    case "list_flows": {
+      const count = data?.flows?.length ?? 0;
+      return `Read flows · ${count}`;
+    }
     default:
       return null;
   }
+}
+
+/** Truncate a long id for compact sidebar display. */
+function truncateId(id: string): string {
+  if (id.length <= 10) return id;
+  return `${id.slice(0, 4)}…${id.slice(-4)}`;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
