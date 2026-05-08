@@ -21,9 +21,20 @@ interface DesignCanvasState {
   /** Selected artboard ids (currently single-select but typed as array
    * for future shift-click multi-select). */
   selection: string[];
-  /** Selected node inside an artboard — `id` of a DesignNode. Drives the
-   * inspector panel. */
+  /**
+   * The currently "active" picked node inside an artboard — drives the
+   * inspector panel and serves as the `selectedNodeId` returned by
+   * `query_canvas`. Always equal to the LAST id appended to
+   * `selectedNodeIds` (or `null` if none).
+   */
   selectedNodeId: string | null;
+  /**
+   * Every picked node, in pick order. Single-click replaces the set;
+   * shift-click toggles the clicked id in/out additively. The chat
+   * composer reads this to populate its "pinned elements" chip row;
+   * the renderer reads it to decide which nodes get the blue ring.
+   */
+  selectedNodeIds: string[];
   /**
    * Toggle for flow-view: when true, an SVG overlay draws prototype
    * arrows from each `flowTo` source to its target artboard. UI-only
@@ -40,7 +51,18 @@ interface DesignCanvasState {
   setSelection: (ids: string[]) => void;
   selectOnly: (id: string) => void;
   clearSelection: () => void;
-  selectNode: (id: string | null) => void;
+  /**
+   * Pick a node inside an artboard. With `additive: true` (shift-click),
+   * toggles the id in/out of `selectedNodeIds`; without it, replaces the
+   * set with `[id]`. Passing `null` clears every pick.
+   *
+   * `selectedNodeId` always tracks the most-recently-added entry of
+   * `selectedNodeIds` so single-pick consumers (inspector,
+   * `query_canvas`) keep working unchanged.
+   */
+  selectNode: (id: string | null, additive?: boolean) => void;
+  /** Clear every node pick without touching artboard selection. */
+  clearNodeSelection: () => void;
 
   /* ─── Artboards ─────────────────────────── */
   setArtboards: (artboards: Artboard[]) => void;
@@ -98,6 +120,7 @@ export const useDesignCanvas = create<DesignCanvasState>()(
   camera: { x: 120, y: 120, zoom: 0.5 },
   selection: [],
   selectedNodeId: null,
+  selectedNodeIds: [],
   flowViewEnabled: false,
 
   setCamera: (next) =>
@@ -133,9 +156,46 @@ export const useDesignCanvas = create<DesignCanvasState>()(
     })),
 
   setSelection: (ids) => set({ selection: ids }),
-  selectOnly: (id) => set({ selection: [id], selectedNodeId: null }),
-  clearSelection: () => set({ selection: [], selectedNodeId: null }),
-  selectNode: (id) => set({ selectedNodeId: id }),
+  selectOnly: (id) =>
+    set({ selection: [id], selectedNodeId: null, selectedNodeIds: [] }),
+  clearSelection: () =>
+    set({ selection: [], selectedNodeId: null, selectedNodeIds: [] }),
+  /**
+   * Single (non-additive) pick replaces the set with `[id]`; additive
+   * pick (shift-click) toggles the id in/out. Passing `null`
+   * unconditionally clears every pick — used by Esc, the inspector's
+   * Deselect button, and post-mutation cleanups.
+   *
+   * `selectedNodeId` always tracks the LAST entry of `selectedNodeIds`
+   * so single-pick consumers (inspector / `query_canvas`) see the
+   * "active" element without having to know about the array.
+   */
+  selectNode: (id, additive = false) =>
+    set((state) => {
+      if (id === null) {
+        return { selectedNodeId: null, selectedNodeIds: [] };
+      }
+      if (!additive) {
+        return { selectedNodeId: id, selectedNodeIds: [id] };
+      }
+      // Additive: toggle. If already in the set, drop it; otherwise
+      // append and make it the active one.
+      const idx = state.selectedNodeIds.indexOf(id);
+      if (idx >= 0) {
+        const nextIds = [
+          ...state.selectedNodeIds.slice(0, idx),
+          ...state.selectedNodeIds.slice(idx + 1),
+        ];
+        return {
+          selectedNodeIds: nextIds,
+          selectedNodeId: nextIds.length > 0 ? nextIds[nextIds.length - 1]! : null,
+        };
+      }
+      const nextIds = [...state.selectedNodeIds, id];
+      return { selectedNodeIds: nextIds, selectedNodeId: id };
+    }),
+  clearNodeSelection: () =>
+    set({ selectedNodeId: null, selectedNodeIds: [] }),
 
   setArtboards: (artboards) => set({ artboards: normaliseArtboards(artboards) }),
   addArtboard: (artboard) =>
@@ -161,7 +221,12 @@ export const useDesignCanvas = create<DesignCanvasState>()(
     set((state) => ({
       artboards: state.artboards.filter((a) => a.id !== id),
       selection: state.selection.filter((s) => s !== id),
+      // Wiping every node pick is correct here: the picked nodes
+      // belonged to artboards that may have just been removed, and the
+      // chat composer can't render chips for ids that aren't on the
+      // canvas anyway.
       selectedNodeId: null,
+      selectedNodeIds: [],
     })),
 
   updateNodeInArtboard: (artboardId, nodeId, patch) =>
@@ -173,15 +238,25 @@ export const useDesignCanvas = create<DesignCanvasState>()(
       }),
     })),
   deleteNodeInArtboard: (artboardId, nodeId) =>
-    set((state) => ({
-      artboards: state.artboards.map((a) => {
-        if (a.id !== artboardId || !a.design) return a;
-        const next = deleteNodeInTree(a.design, nodeId);
-        return { ...a, design: next };
-      }),
-      selectedNodeId:
-        state.selectedNodeId === nodeId ? null : state.selectedNodeId,
-    })),
+    set((state) => {
+      const remainingIds = state.selectedNodeIds.filter((s) => s !== nodeId);
+      return {
+        artboards: state.artboards.map((a) => {
+          if (a.id !== artboardId || !a.design) return a;
+          const next = deleteNodeInTree(a.design, nodeId);
+          return { ...a, design: next };
+        }),
+        selectedNodeIds: remainingIds,
+        // Active id falls back to the new last picked element (or
+        // null if the user just deleted the only pinned one).
+        selectedNodeId:
+          remainingIds.length > 0
+            ? remainingIds[remainingIds.length - 1]!
+            : state.selectedNodeId === nodeId
+              ? null
+              : state.selectedNodeId,
+      };
+    }),
 
   setFlowViewEnabled: (enabled) => set({ flowViewEnabled: enabled }),
     }),

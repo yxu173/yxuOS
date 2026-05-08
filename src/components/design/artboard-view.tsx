@@ -31,7 +31,7 @@ export function ArtboardView({
   const isSelected = useDesignCanvas((state) =>
     state.selection.includes(artboard.id),
   );
-  const selectedNodeId = useDesignCanvas((state) => state.selectedNodeId);
+  const selectedNodeIds = useDesignCanvas((state) => state.selectedNodeIds);
   const selectNode = useDesignCanvas((state) => state.selectNode);
   const deviceLabel =
     artboard.device === "custom"
@@ -85,8 +85,8 @@ export function ArtboardView({
         {artboard.design ? (
           <div className="h-full w-full overflow-hidden">
             <DesignRendererProvider
-              selectedNodeId={selectedNodeId}
-              onNodeClick={(nodeId) => selectNode(nodeId)}
+              selectedNodeIds={selectedNodeIds}
+              onNodeClick={(nodeId, additive) => selectNode(nodeId, additive)}
             >
               <DesignRenderer node={artboard.design} />
             </DesignRendererProvider>

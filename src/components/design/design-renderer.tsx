@@ -26,8 +26,12 @@ import { useTokens } from "./token-context";
 import { resolveStyle, resolveStyleValue } from "./tokens";
 
 interface RenderContext {
-  selectedNodeId: string | null;
-  onNodeClick: ((nodeId: string) => void) | null;
+  /** Every picked node id; the renderer paints a selection ring on
+   *  every match. */
+  selectedNodeIds: readonly string[];
+  /** Click handler — receives the node id and whether shift was held
+   *  (additive multi-pick). `null` disables interactivity. */
+  onNodeClick: ((nodeId: string, additive: boolean) => void) | null;
   library: Map<string, LibraryComponent>;
   /** Pre-merged token map. Style values that look like
    *  `"{token.path}"` are resolved against this. */
@@ -52,7 +56,8 @@ function interactiveProps(
   ctx: RenderContext,
   defaults: CSSProperties = {},
 ): InteractiveProps {
-  const isSelected = !!node.id && ctx.selectedNodeId === node.id;
+  const isSelected =
+    !!node.id && ctx.selectedNodeIds.includes(node.id);
   const outlineStyle: CSSProperties = isSelected
     ? {
         boxShadow:
@@ -75,7 +80,9 @@ function interactiveProps(
         ? (event) => {
             event.stopPropagation();
             event.preventDefault();
-            ctx.onNodeClick!(node.id!);
+            // Shift-click = additive multi-pick. Without shift the
+            // pick replaces the set with just this node.
+            ctx.onNodeClick!(node.id!, event.shiftKey);
           }
         : undefined,
     style: {

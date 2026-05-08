@@ -1,29 +1,43 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, useContext, useMemo } from "react";
 
 interface DesignRendererContextValue {
-  /** Currently-selected node id within the active artboard. */
-  selectedNodeId: string | null;
   /**
-   * Click handler — fires when a node is clicked. Receives the node's id.
-   * `null` disables interactivity (used for the read-only share view).
+   * Every picked node id in pick order. The renderer draws the blue
+   * selection ring on every node whose id is in this list, so multi-
+   * pick lights up multiple elements at once. Empty array = nothing
+   * picked.
    */
-  onNodeClick: ((nodeId: string) => void) | null;
+  selectedNodeIds: readonly string[];
+  /**
+   * Click handler — fires when a node is clicked. Receives the
+   * node's id and a flag indicating whether the click was additive
+   * (shift was held). `null` disables interactivity (used for the
+   * read-only share view).
+   */
+  onNodeClick: ((nodeId: string, additive: boolean) => void) | null;
 }
 
 const DesignRendererContext = createContext<DesignRendererContextValue>({
-  selectedNodeId: null,
+  selectedNodeIds: [],
   onNodeClick: null,
 });
 
 export function DesignRendererProvider({
-  selectedNodeId,
+  selectedNodeIds,
   onNodeClick,
   children,
 }: DesignRendererContextValue & { children: React.ReactNode }) {
+  // Memoise so the context value identity stays stable when the
+  // selection didn't actually change — saves cascade re-renders
+  // through every NodeRenderer when a sibling's style changes.
+  const value = useMemo<DesignRendererContextValue>(
+    () => ({ selectedNodeIds, onNodeClick }),
+    [selectedNodeIds, onNodeClick],
+  );
   return (
-    <DesignRendererContext.Provider value={{ selectedNodeId, onNodeClick }}>
+    <DesignRendererContext.Provider value={value}>
       {children}
     </DesignRendererContext.Provider>
   );
