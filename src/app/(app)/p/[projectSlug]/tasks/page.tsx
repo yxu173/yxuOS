@@ -2,8 +2,10 @@ import { listTaskBoardsForProject } from "@/app/(app)/tasks/board-actions";
 import { listTopLevelTasks } from "@/app/(app)/tasks/actions";
 import { CreateTaskDialog } from "@/components/tasks/create-task-dialog";
 import { TaskBoardStrip } from "@/components/tasks/task-board-strip";
+import { TaskBoardView } from "@/components/tasks/task-board-view";
 import { TaskFiltersBar } from "@/components/tasks/task-filters-bar";
 import { TaskList } from "@/components/tasks/task-list";
+import { TaskViewToggle } from "@/components/tasks/task-view-toggle";
 import { AppTopBar } from "@/components/workspaces/app-top-bar";
 import { requireActiveProject } from "@/lib/permissions";
 import { listProjectsForTeam } from "@/lib/projects";
@@ -11,7 +13,9 @@ import {
   countActiveFilters,
   parseTaskFilters,
 } from "@/lib/tasks/task-filters";
+import { parseTaskView } from "@/lib/tasks/task-view";
 import { listTeamMembers, listUserTeams } from "@/lib/teams";
+import { cn } from "@/lib/utils";
 
 export const metadata = {
   title: "Tasks · yxuOS",
@@ -66,6 +70,7 @@ export default async function ProjectTasksIndexPage({
     ? requestedBoardIdRaw[0]
     : requestedBoardIdRaw;
   const filters = parseTaskFilters(rawSearch);
+  const view = parseTaskView(rawSearch);
 
   const { session, teamId, projectId, projectName } =
     await requireActiveProject(projectSlug);
@@ -121,8 +126,17 @@ export default async function ProjectTasksIndexPage({
         projectSlug={projectSlug}
         projects={projects}
       />
-      <main className="mx-auto flex w-full max-w-5xl flex-col gap-5 p-8">
-        <header className="flex items-baseline justify-between">
+      <main
+        // Drop the fixed `max-w-5xl` cap when in board view — the
+        // kanban needs as much horizontal room as the screen will
+        // give it. List view stays narrow so titles don't stretch
+        // across an ultrawide.
+        className={cn(
+          "mx-auto flex w-full flex-col gap-5 p-8",
+          view === "board" ? "max-w-[1600px]" : "max-w-5xl",
+        )}
+      >
+        <header className="flex items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
             <p className="text-sm text-muted-foreground">
@@ -137,11 +151,14 @@ export default async function ProjectTasksIndexPage({
               .
             </p>
           </div>
-          <CreateTaskDialog
-            members={memberOptions}
-            projectSlug={projectSlug}
-            taskBoardId={activeBoardId}
-          />
+          <div className="flex items-center gap-3">
+            <TaskViewToggle current={view} />
+            <CreateTaskDialog
+              members={memberOptions}
+              projectSlug={projectSlug}
+              taskBoardId={activeBoardId}
+            />
+          </div>
         </header>
 
         <TaskBoardStrip
@@ -158,7 +175,7 @@ export default async function ProjectTasksIndexPage({
           doneCount={doneCount}
         />
 
-        {tasks.length === 0 ? (
+        {tasks.length === 0 && view === "list" ? (
           <section className="grid h-72 place-items-center rounded-lg border border-dashed border-white/10 bg-white/[0.02] text-sm text-muted-foreground">
             <div className="flex flex-col items-center gap-2 text-center">
               {hasActiveFilters ? (
@@ -185,6 +202,13 @@ export default async function ProjectTasksIndexPage({
               )}
             </div>
           </section>
+        ) : view === "board" ? (
+          // The board view always renders every column (even when
+          // empty) because the empty columns *are* the workflow:
+          // they signal where work needs to flow next. So we hand
+          // the whole task array straight in, no empty-state
+          // short-circuit.
+          <TaskBoardView tasks={tasks} members={memberOptions} />
         ) : (
           <TaskList tasks={tasks} members={memberOptions} />
         )}
