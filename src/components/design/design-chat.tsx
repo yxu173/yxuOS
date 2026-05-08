@@ -34,17 +34,22 @@ import {
   executeGetArtboard,
   executeListAssets,
   executeListComponents,
+  executeListTokens,
   executeMoveNodes,
   executePatchNode,
   executePatchNodes,
   executeQueryCanvas,
   executeSaveAttachmentAsAsset,
   executeScreenshotArtboard,
+  executeSetTokens,
   executeUpdateArtboard,
   executeUpdateComponent,
   type ChatFileLookup,
+  type TokenReadContext,
+  type TokenWriteContext,
 } from "./canvas-tools";
 import { useComponentLibrary } from "./component-library-context";
+import { useTokens } from "./token-context";
 
 export interface DesignChatProps {
   designId: string;
@@ -68,6 +73,8 @@ const TOOL_LABELS: Record<string, string> = {
   screenshot_artboard: "Capturing screenshot",
   save_attachment_as_asset: "Saving attachment to library",
   apply_theme: "Applying theme",
+  list_tokens: "Reading design tokens",
+  set_tokens: "Writing design tokens",
   extract_component: "Saving component",
   update_component: "Updating component",
   list_components: "Reading component library",
@@ -100,6 +107,7 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const library = useComponentLibrary();
+  const tokens = useTokens();
   const router = useRouter();
 
   // Mirror `messages` into a ref so async tool dispatch can read the
@@ -107,6 +115,14 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
   // change. save_attachment_as_asset uses this to look up FileUIParts
   // by filename without the model having to echo their bytes.
   const messagesRef = useRef<UIMessage[]>(initialMessages ?? []);
+
+  // Same trick for tokens — list_tokens and set_tokens fire from the
+  // long-lived useChat closure, but the live tokens map can change
+  // after the closure was captured (e.g. another tab updated team
+  // tokens, or an earlier set_tokens call already pushed an
+  // optimistic patch this turn). Writing the ref in an effect (not in
+  // render) keeps react-hooks/refs happy.
+  const tokensRef = useRef(tokens);
 
   const { messages, sendMessage, status, error, addToolOutput, stop } =
     useChat({
@@ -117,6 +133,21 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
       async onToolCall({ toolCall }) {
         if (toolCall.dynamic) return;
+
+        // Snapshot tokens / register-fns at dispatch time. tokensRef
+        // tracks the freshest TokenContextValue (overlays included).
+        const buildTokenReadContext = (): TokenReadContext => {
+          const t = tokensRef.current;
+          return { team: t.team, design: t.design, merged: t.merged };
+        };
+        const buildTokenWriteContext = (): TokenWriteContext => {
+          const t = tokensRef.current;
+          return {
+            designId,
+            registerOptimisticDesignTokens: t.registerOptimisticDesignTokens,
+            registerOptimisticTeamTokens: t.registerOptimisticTeamTokens,
+          };
+        };
 
         // Helper: emit a tool result envelope. Tool-level errors come back
         // INSIDE the envelope (`{ ok: false, error }`) — only catastrophic
@@ -264,13 +295,27 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
                 ),
               );
               break;
-            case "apply_theme":
-              emit(
-                executeApplyTheme(
-                  toolCall.input as Parameters<typeof executeApplyTheme>[0],
-                ),
+            case "apply_theme": {
+              const output = await executeApplyTheme(
+                toolCall.input as Parameters<typeof executeApplyTheme>[0],
+                buildTokenWriteContext(),
               );
+              emit(output);
+              if (output.ok) router.refresh();
               break;
+            }
+            case "list_tokens":
+              emit(executeListTokens(buildTokenReadContext()));
+              break;
+            case "set_tokens": {
+              const output = await executeSetTokens(
+                toolCall.input as Parameters<typeof executeSetTokens>[0],
+                buildTokenWriteContext(),
+              );
+              emit(output);
+              if (output.ok) router.refresh();
+              break;
+            }
             case "extract_component": {
               const output = await executeExtractComponent(
                 toolCall.input as Parameters<typeof executeExtractComponent>[0],
@@ -324,6 +369,11 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  // Same for tokens — see tokensRef declaration above.
+  useEffect(() => {
+    tokensRef.current = tokens;
+  }, [tokens]);
 
   // Smart auto-scroll: pin to bottom only while the user is already there
   // so they can scroll up to read history without being yanked back.
@@ -825,13 +875,36 @@ function describeToolResult(
       return data?.name
         ? `Saved "${data.name}" to library`
         : "Saved attachment to library";
-    case "apply_theme":
-      if (data) {
-        return `Themed ${data.patchCount} element${
-          data.patchCount === 1 ? "" : "s"
-        }`;
+    case "apply_theme": {
+      const tokens: string[] = data?.tokensWritten ?? [];
+      if (tokens.length > 0) {
+        // Strip the namespace prefix so the sidebar shows the leaf
+        // ("accent" instead of "color.accent") — tighter on a 380-px
+        // panel.
+        const leaves = tokens.map((t) => t.split(".").slice(-1)[0]);
+        return `Themed · ${leaves.join(", ")}`;
       }
       return "Applied theme";
+    }
+    case "list_tokens": {
+      const designCount = data?.design ? Object.keys(data.design).length : 0;
+      const teamCount = data?.team ? Object.keys(data.team).length : 0;
+      return `Read tokens · ${designCount} design / ${teamCount} team`;
+    }
+    case "set_tokens": {
+      const written: string[] = data?.writtenKeys ?? [];
+      const cleared: string[] = data?.clearedKeys ?? [];
+      const scope = data?.scope ?? input?.scope ?? "design";
+      const parts: string[] = [];
+      if (written.length > 0) {
+        parts.push(`set ${written.length}`);
+      }
+      if (cleared.length > 0) {
+        parts.push(`cleared ${cleared.length}`);
+      }
+      const summary = parts.length > 0 ? parts.join(", ") : "no-op";
+      return `Tokens (${scope}) · ${summary}`;
+    }
     case "extract_component":
       return data?.componentSlug
         ? `Saved component "${data.componentSlug}"`

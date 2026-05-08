@@ -8,6 +8,10 @@ import {
   updateDesignComponentBySlug,
 } from "@/app/(app)/designs/component-actions";
 import {
+  patchDesignTokens,
+  patchTeamDesignTokens,
+} from "@/app/(app)/designs/token-actions";
+import {
   fail,
   ok,
   withIdempotency,
@@ -22,7 +26,6 @@ import type {
 } from "./component-library-context";
 import type { DesignNode } from "./design-node";
 import {
-  applyThemeToTree,
   cloneSubtreeWithFreshIds,
   deleteNodesInTree,
   duplicateNodeInTree,
@@ -401,32 +404,214 @@ export interface ApplyThemeInput {
   idempotencyKey?: string;
 }
 
-export function executeApplyTheme(
+/**
+ * `apply_theme` is now thin sugar over `set_tokens(scope: "design", …)`.
+ * Each `theme` field maps to a well-known token path:
+ *
+ *   accent           → color.accent
+ *   accentForeground → color.accentForeground
+ *   radius           → radius.md
+ *   fontFamily       → font.family
+ *
+ * Re-skin happens at the renderer level: every node whose style
+ * references one of these tokens (e.g. `\"{color.accent}\"`) reads
+ * the new value on the next paint. Inline literals (raw hex codes,
+ * raw numbers) are unchanged — that's a deliberate trade for
+ * predictability over the old heuristic-walk behavior.
+ *
+ * Server write is idempotent and patch-style; passing an unset field
+ * doesn't clobber anything.
+ */
+export async function executeApplyTheme(
   input: ApplyThemeInput,
-): ToolResult<{
-  artboardId: string;
-  patchedNodeIds: string[];
-  patchCount: number;
-}> {
-  return withIdempotency(input.idempotencyKey, () => {
-    const state = useDesignCanvas.getState();
-    const ab = state.artboards.find((a) => a.id === input.artboardId);
-    if (!ab) {
-      return fail("not_found", `Artboard "${input.artboardId}" not found.`);
+  ctx: TokenWriteContext,
+): Promise<
+  ToolResult<{
+    artboardId: string;
+    tokensWritten: string[];
+  }>
+> {
+  return withIdempotencyAsync(input.idempotencyKey, async () => {
+    // Build the token patch from the legacy theme fields.
+    const patch: Record<string, string | number | null> = {};
+    const writtenKeys: string[] = [];
+    if (input.theme.accent !== undefined) {
+      patch["color.accent"] = input.theme.accent;
+      writtenKeys.push("color.accent");
     }
-    if (!ab.design) {
+    if (input.theme.accentForeground !== undefined) {
+      patch["color.accentForeground"] = input.theme.accentForeground;
+      writtenKeys.push("color.accentForeground");
+    }
+    if (input.theme.radius !== undefined) {
+      patch["radius.md"] = input.theme.radius;
+      writtenKeys.push("radius.md");
+    }
+    if (input.theme.fontFamily !== undefined) {
+      patch["font.family"] = input.theme.fontFamily;
+      writtenKeys.push("font.family");
+    }
+
+    if (writtenKeys.length === 0) {
       return fail(
-        "preconditions_failed",
-        `Artboard "${ab.name}" is empty.`,
-        "Use `add_artboard` first.",
+        "invalid_input",
+        "apply_theme called with no fields set.",
+        "Pass at least one of `accent` / `accentForeground` / `radius` / `fontFamily`.",
       );
     }
-    const { tree, patchedNodeIds } = applyThemeToTree(ab.design, input.theme);
-    state.updateArtboard(input.artboardId, { design: tree });
+
+    try {
+      await patchDesignTokens({
+        designId: ctx.designId,
+        patch,
+      });
+    } catch (err) {
+      return fail(
+        "internal",
+        err instanceof Error ? err.message : "Failed to write tokens.",
+      );
+    }
+
+    // Optimistic push — every artboard that uses these token refs
+    // re-skins on the next React frame, no router.refresh() round-trip.
+    ctx.registerOptimisticDesignTokens(patch);
+
     return ok({
       artboardId: input.artboardId,
-      patchedNodeIds,
-      patchCount: patchedNodeIds.length,
+      tokensWritten: writtenKeys,
+    });
+  });
+}
+
+/* ─── list_tokens / set_tokens ─────────────────────────── */
+
+export interface TokenWriteContext {
+  designId: string;
+  registerOptimisticDesignTokens: (
+    patch: Record<string, string | number | null>,
+  ) => void;
+  registerOptimisticTeamTokens: (
+    patch: Record<string, string | number | null>,
+  ) => void;
+}
+
+export interface TokenReadContext {
+  team: Record<string, string | number>;
+  design: Record<string, string | number>;
+  merged: Record<string, string | number>;
+}
+
+export interface ListTokensOutput {
+  team: Record<string, string | number>;
+  design: Record<string, string | number>;
+  merged: Record<string, string | number>;
+  commonPaths: string[];
+}
+
+const COMMON_PATHS_FOR_AGENT = [
+  "color.accent",
+  "color.accentForeground",
+  "color.background",
+  "color.foreground",
+  "color.muted",
+  "color.border",
+  "font.family",
+  "font.size.h1",
+  "font.size.h2",
+  "font.size.body",
+  "radius.sm",
+  "radius.md",
+  "radius.lg",
+  "spacing.section",
+  "spacing.gutter",
+];
+
+/**
+ * Read-only view of the design's token set. Pure context read — no
+ * mutation, no idempotency wrapper needed.
+ */
+export function executeListTokens(
+  ctx: TokenReadContext,
+): ToolResult<ListTokensOutput> {
+  return ok({
+    team: ctx.team,
+    design: ctx.design,
+    merged: ctx.merged,
+    commonPaths: COMMON_PATHS_FOR_AGENT,
+  });
+}
+
+export interface SetTokensInput {
+  scope: "design" | "team";
+  patch: Record<string, string | number | null>;
+  idempotencyKey?: string;
+}
+
+export interface SetTokensOutput {
+  scope: "design" | "team";
+  tokens: Record<string, string | number>;
+  writtenKeys: string[];
+  clearedKeys: string[];
+}
+
+/**
+ * Write design tokens at either the per-design or team scope. The
+ * patch is applied server-side first; on success we push the same
+ * patch into the optimistic overlay so the renderer re-skins
+ * immediately.
+ */
+export async function executeSetTokens(
+  input: SetTokensInput,
+  ctx: TokenWriteContext,
+): Promise<ToolResult<SetTokensOutput>> {
+  return withIdempotencyAsync(input.idempotencyKey, async () => {
+    if (Object.keys(input.patch).length === 0) {
+      return fail(
+        "invalid_input",
+        "Empty patch — nothing to write.",
+        "Pass at least one key in `patch`.",
+      );
+    }
+
+    const writtenKeys: string[] = [];
+    const clearedKeys: string[] = [];
+    for (const [k, v] of Object.entries(input.patch)) {
+      if (v === null) clearedKeys.push(k);
+      else writtenKeys.push(k);
+    }
+
+    let serverResult: { tokens: Record<string, string | number> };
+    try {
+      if (input.scope === "design") {
+        serverResult = await patchDesignTokens({
+          designId: ctx.designId,
+          patch: input.patch,
+        });
+      } else {
+        serverResult = await patchTeamDesignTokens({
+          patch: input.patch,
+        });
+      }
+    } catch (err) {
+      return fail(
+        "internal",
+        err instanceof Error ? err.message : "Failed to write tokens.",
+      );
+    }
+
+    // Optimistic overlay push — keeps the canvas in sync before
+    // router.refresh() round-trips.
+    if (input.scope === "design") {
+      ctx.registerOptimisticDesignTokens(input.patch);
+    } else {
+      ctx.registerOptimisticTeamTokens(input.patch);
+    }
+
+    return ok({
+      scope: input.scope,
+      tokens: serverResult.tokens,
+      writtenKeys,
+      clearedKeys,
     });
   });
 }

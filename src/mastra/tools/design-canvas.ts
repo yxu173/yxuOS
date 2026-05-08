@@ -339,34 +339,38 @@ export const duplicateNodeTool = createTool({
 export const applyThemeTool = createTool({
   id: "apply_theme",
   description:
-    "Re-theme an entire artboard in one call. Patches every primary button to use the accent color, every link/icon-as-accent to use it too, applies the radius to buttons/cards/inputs, and sets the root container's font family. Use for 'rebrand to emerald', 'make the radius softer', 'switch to Inter'. Returns the count of nodes that were touched.",
+    "Re-theme the entire design by writing well-known design tokens (`color.accent`, `color.accentForeground`, `radius.md`, `font.family`). The renderer reads tokens live, so every node whose style references one of these tokens (e.g. `style.backgroundColor: \"{color.accent}\"`) re-skins on the next paint — no per-node walk needed. NOTE: only nodes that USE token references are affected; inline literal values (`backgroundColor: \"#10b981\"`) are unchanged. For old artboards built before tokens existed, follow up with a few `patch_nodes` calls or have the agent re-emit critical sections referencing the new tokens. Use for 'rebrand to emerald', 'make the radius softer', 'switch to Inter'.",
   inputSchema: z.object({
-    artboardId: z.string(),
+    artboardId: z
+      .string()
+      .describe(
+        "Kept for backwards compatibility — tokens are design-scoped (not per-artboard) so this just confirms which design's tokens to write.",
+      ),
     theme: z
       .object({
         accent: z
           .string()
           .optional()
           .describe(
-            "Accent color (any CSS color: `#10b981`, `emerald`, `rgb(16,185,129)`). Applied to primary buttons' background, link colors, and accent icon nodes.",
+            "Accent color (any CSS color). Writes to `color.accent` token.",
           ),
         accentForeground: z
           .string()
           .optional()
           .describe(
-            "Text color for primary buttons against `accent`. Defaults to white.",
+            "Text color for primary buttons against `accent`. Writes to `color.accentForeground`.",
           ),
         radius: z
           .number()
           .min(0)
           .max(48)
           .optional()
-          .describe("Border-radius (px) for buttons, cards, inputs."),
+          .describe("Border-radius (px). Writes to `radius.md` token."),
         fontFamily: z
           .string()
           .optional()
           .describe(
-            "CSS font-family stack applied to the root node (e.g. `Inter, system-ui, sans-serif`).",
+            "CSS font-family stack. Writes to `font.family` token.",
           ),
       })
       .describe("Provide only the fields you want to apply."),
@@ -375,8 +379,63 @@ export const applyThemeTool = createTool({
   outputSchema: toolResultSchema(
     z.object({
       artboardId: z.string(),
-      patchedNodeIds: z.array(z.string()),
-      patchCount: z.number(),
+      tokensWritten: z.array(z.string()),
+    }),
+  ),
+});
+
+/* ─── list_tokens / set_tokens ─────────────────────────── */
+
+const tokenValueSchema = z
+  .union([z.string(), z.number()])
+  .describe(
+    "Token value: a CSS color string, font-family string, pixel number, etc. The renderer feeds this directly into React `style` so any value React accepts on the matching style key works.",
+  );
+
+const tokenPatchValueSchema = z
+  .union([z.string(), z.number(), z.null()])
+  .describe(
+    "Patch value: a fresh value to set, or `null` to remove the token (lets a wider scope or literal win again).",
+  );
+
+export const listTokensTool = createTool({
+  id: "list_tokens",
+  description:
+    "Read the active design's token set. Returns the team-default tokens, the per-design overrides, and a `merged` view (design wins per-key) plus a list of common token paths the prompt encourages. Use this BEFORE composing a new design (so you can reference existing tokens like `\"{color.accent}\"` instead of hard-coding hex), and BEFORE `set_tokens` so you don't clobber existing values you didn't mean to.",
+  inputSchema: z.object({}),
+  outputSchema: toolResultSchema(
+    z.object({
+      team: z.record(z.string(), tokenValueSchema),
+      design: z.record(z.string(), tokenValueSchema),
+      merged: z.record(z.string(), tokenValueSchema),
+      commonPaths: z.array(z.string()),
+    }),
+  ),
+});
+
+export const setTokensTool = createTool({
+  id: "set_tokens",
+  description:
+    "Write design tokens. Two scopes: `\"design\"` patches per-design tokens (the design row's `tokens` jsonb); `\"team\"` patches the team's brand baseline (the `team_design_tokens` row). The patch is a flat `{ \"dotted.path\": value | null }` map — set new values or use `null` to clear a key. Returns the merged token map after the write. Token paths are free-form (any dotted string), but prefer the common namespaces — `color.*`, `font.*`, `radius.*`, `spacing.*`. Use this when the user asks for a brand change, a rebrand, or wants a token reusable across designs (`scope: \"team\"`). For one-off color tweaks on a single node, prefer `patch_node`.",
+  inputSchema: z.object({
+    scope: z
+      .enum(["design", "team"])
+      .describe(
+        "`\"design\"` for per-design overrides; `\"team\"` for the team-default baseline (every design picks them up).",
+      ),
+    patch: z
+      .record(z.string(), tokenPatchValueSchema)
+      .describe(
+        "Flat patch keyed on dotted token path. e.g. { \"color.accent\": \"#10b981\", \"radius.md\": 12, \"old.token\": null }.",
+      ),
+    idempotencyKey: idempotencyKeyField,
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      scope: z.enum(["design", "team"]),
+      tokens: z.record(z.string(), tokenValueSchema),
+      writtenKeys: z.array(z.string()),
+      clearedKeys: z.array(z.string()),
     }),
   ),
 });
@@ -825,6 +884,8 @@ export const designCanvasTools = {
   duplicate_node: duplicateNodeTool,
   screenshot_artboard: screenshotArtboardTool,
   apply_theme: applyThemeTool,
+  list_tokens: listTokensTool,
+  set_tokens: setTokensTool,
   extract_component: extractComponentTool,
   update_component: updateComponentTool,
   list_components: listComponentsTool,
