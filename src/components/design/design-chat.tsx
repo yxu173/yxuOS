@@ -38,9 +38,11 @@ import {
   executePatchNode,
   executePatchNodes,
   executeQueryCanvas,
+  executeSaveAttachmentAsAsset,
   executeScreenshotArtboard,
   executeUpdateArtboard,
   executeUpdateComponent,
+  type ChatFileLookup,
 } from "./canvas-tools";
 import { useComponentLibrary } from "./component-library-context";
 
@@ -64,6 +66,7 @@ const TOOL_LABELS: Record<string, string> = {
   move_nodes: "Moving elements",
   duplicate_node: "Duplicating element",
   screenshot_artboard: "Capturing screenshot",
+  save_attachment_as_asset: "Saving attachment to library",
   apply_theme: "Applying theme",
   extract_component: "Saving component",
   update_component: "Updating component",
@@ -98,6 +101,12 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const library = useComponentLibrary();
   const router = useRouter();
+
+  // Mirror `messages` into a ref so async tool dispatch can read the
+  // latest stream snapshot without retriggering useChat on every
+  // change. save_attachment_as_asset uses this to look up FileUIParts
+  // by filename without the model having to echo their bytes.
+  const messagesRef = useRef<UIMessage[]>(initialMessages ?? []);
 
   const { messages, sendMessage, status, error, addToolOutput, stop } =
     useChat({
@@ -200,6 +209,33 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
                 ),
               );
               break;
+            case "save_attachment_as_asset": {
+              // Snapshot every FileUIPart visible in the conversation
+              // so the executor can resolve `filename` → bytes without
+              // the model having to echo a multi-megabyte data URL.
+              const chatFiles = collectChatFiles(messagesRef.current);
+              const output = await executeSaveAttachmentAsAsset(
+                toolCall.input as Parameters<
+                  typeof executeSaveAttachmentAsAsset
+                >[0],
+                chatFiles,
+              );
+              emit(output);
+              if (output.ok) {
+                // Optimistic library push — the agent and any image
+                // node referencing the new url see the asset
+                // immediately, before router.refresh() round-trips.
+                library.registerOptimisticAsset({
+                  id: output.data.id,
+                  name: output.data.name,
+                  url: output.data.url,
+                  mimeType: output.data.mimeType,
+                  size: output.data.size,
+                });
+                router.refresh();
+              }
+              break;
+            }
             case "add_nodes":
               emit(
                 executeAddNodes(
@@ -280,6 +316,14 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
     });
 
   const isStreaming = status === "streaming" || status === "submitted";
+
+  // Keep messagesRef in sync with the live `messages` array so the
+  // async tool-dispatch closure (defined once when useChat mounts)
+  // always reads the latest snapshot. Without this, save_attachment_
+  // as_asset would never see freshly attached files.
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   // Smart auto-scroll: pin to bottom only while the user is already there
   // so they can scroll up to read history without being yanked back.
@@ -669,6 +713,32 @@ async function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+/**
+ * Walk every UIMessage and pull out FileUIParts as a flat
+ * `ChatFileLookup[]` for the save_attachment_as_asset executor. Only
+ * parts with a `filename` and a `url` are kept (anonymous file parts
+ * are unreachable by the agent's filename-based lookup anyway).
+ */
+function collectChatFiles(messages: UIMessage[]): ChatFileLookup[] {
+  const result: ChatFileLookup[] = [];
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.type !== "file") continue;
+      // FileUIPart shape: { type: "file", url, mediaType?, filename? }.
+      // Cast is local — the AI SDK types this as a discriminated
+      // union but we only need a few fields.
+      const filePart = part as FileUIPartLike;
+      if (!filePart.filename || !filePart.url) continue;
+      result.push({
+        filename: filePart.filename,
+        mediaType: filePart.mediaType,
+        url: filePart.url,
+      });
+    }
+  }
+  return result;
+}
+
 function describeToolResult(
   toolName: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -751,6 +821,10 @@ function describeToolResult(
       }
       return "Captured screenshot";
     }
+    case "save_attachment_as_asset":
+      return data?.name
+        ? `Saved "${data.name}" to library`
+        : "Saved attachment to library";
     case "apply_theme":
       if (data) {
         return `Themed ${data.patchCount} element${

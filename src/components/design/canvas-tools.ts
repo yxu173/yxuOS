@@ -2,6 +2,7 @@
 
 import { nanoid } from "nanoid";
 
+import { saveDesignAssetFromDataUrl } from "@/app/(app)/designs/asset-actions";
 import {
   createDesignComponent,
   updateDesignComponentBySlug,
@@ -943,6 +944,92 @@ export async function executeUpdateComponent(
     });
 
     return ok({ componentSlug: input.componentSlug });
+  });
+}
+
+/* ─── save_attachment_as_asset ─────────────────────────── */
+
+export interface SaveAttachmentAsAssetInput {
+  filename: string;
+  name?: string;
+  idempotencyKey?: string;
+}
+
+export interface SaveAttachmentAsAssetOutput {
+  id: string;
+  url: string;
+  name: string;
+  mimeType: string;
+  size: number;
+}
+
+/**
+ * Lookup shape passed in by the chat dispatcher — every recent
+ * FileUIPart with its original data URL, plus the filename used to
+ * find it. Keeping it as a flat array (instead of a deep
+ * `UIMessage[]`) lets the executor stay decoupled from the AI SDK
+ * UIMessage type.
+ */
+export interface ChatFileLookup {
+  filename: string;
+  mediaType?: string;
+  url: string;
+}
+
+/**
+ * Persist a chat-attached image into `design_assets` so the agent can
+ * reference it via its public Blob URL on the same turn.
+ *
+ * Architecture note: the agent passes only the `filename`, not the
+ * data URL itself. Echoing megabytes of base64 through tool args
+ * would burn tokens and risk truncation — instead the chat dispatcher
+ * (which has direct access to the message stream) finds the matching
+ * FileUIPart locally and hands the bytes to this executor. The model
+ * never has to quote the bytes back.
+ */
+export async function executeSaveAttachmentAsAsset(
+  input: SaveAttachmentAsAssetInput,
+  chatFiles: ChatFileLookup[],
+): Promise<ToolResult<SaveAttachmentAsAssetOutput>> {
+  return withIdempotencyAsync(input.idempotencyKey, async () => {
+    // Find the most recent FileUIPart whose filename matches. Most
+    // recent wins because the user might re-paste the same file with
+    // different bytes during a long conversation.
+    const match = [...chatFiles]
+      .reverse()
+      .find((f) => f.filename === input.filename);
+    if (!match) {
+      return fail(
+        "not_found",
+        `No attachment named "${input.filename}" in the recent chat history.`,
+        "The user must have attached the image in a message you can see. Check the filename — it must match exactly.",
+      );
+    }
+    if (!match.url.startsWith("data:")) {
+      // Already a public URL — must have been persisted by something
+      // else. Treat that as a precondition violation rather than
+      // silently re-uploading from a remote URL (which would need a
+      // fetch + auth dance we don't want here).
+      return fail(
+        "preconditions_failed",
+        `Attachment "${input.filename}" is already a public URL, not a data URL.`,
+        "Use it directly as `image.src` in a design tree — no need to save again.",
+      );
+    }
+
+    let saved: SaveAttachmentAsAssetOutput;
+    try {
+      saved = await saveDesignAssetFromDataUrl({
+        dataUrl: match.url,
+        filename: input.name?.trim() || input.filename,
+      });
+    } catch (err) {
+      return fail(
+        "internal",
+        err instanceof Error ? err.message : "Failed to save asset.",
+      );
+    }
+    return ok(saved);
   });
 }
 

@@ -128,7 +128,7 @@ function ComponentsEmptyState() {
 /* ─── Assets sub-tab ─────────────────────────────────── */
 
 function AssetsSection() {
-  const { assets } = useComponentLibrary();
+  const { assets, registerOptimisticAsset } = useComponentLibrary();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -143,7 +143,18 @@ function AssetsSection() {
         try {
           const formData = new FormData();
           formData.append("file", file);
-          await uploadDesignAsset(formData);
+          // Push the saved row into the optimistic overlay so the
+          // asset shows up in the panel immediately (and any agent
+          // call to `list_assets` on a parallel turn picks it up)
+          // without waiting for revalidatePath('/designs') to flush.
+          const saved = await uploadDesignAsset(formData);
+          registerOptimisticAsset({
+            id: saved.id,
+            name: saved.name,
+            url: saved.url,
+            mimeType: saved.mimeType,
+            size: saved.size,
+          });
         } catch (err) {
           setError(err instanceof Error ? err.message : "Upload failed");
           break;

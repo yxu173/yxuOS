@@ -751,6 +751,38 @@ export const screenshotArtboardTool = createTool({
   },
 });
 
+/* ─── save_attachment_as_asset ─────────────────────────── */
+
+export const saveAttachmentAsAssetTool = createTool({
+  id: "save_attachment_as_asset",
+  description:
+    "Persist an image the user attached in this chat (paperclip / paste / drag-and-drop) into the team's asset library so you can reference it from `image` nodes via its public URL. After this tool succeeds, you can use the returned `url` immediately in `add_artboard` / `add_nodes` / `patch_node` — and `list_assets` will include it on subsequent turns. Use this whenever the user attaches a logo, brand image, or photo and you intend to put it in the design. Pass the EXACT `filename` of the FileUIPart you want to save (e.g. \"stride-logo.svg\"); the client looks the bytes up by filename in the recent message history.",
+  inputSchema: z.object({
+    filename: z
+      .string()
+      .min(1)
+      .describe(
+        "Filename of the user-attached image, exactly as shown on the FileUIPart in the message history (e.g. 'logo.png').",
+      ),
+    name: z
+      .string()
+      .optional()
+      .describe(
+        "Optional display name for the saved asset. Defaults to the filename — only override if the user gave it a different label.",
+      ),
+    idempotencyKey: idempotencyKeyField,
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      id: z.string(),
+      url: z.string(),
+      name: z.string(),
+      mimeType: z.string(),
+      size: z.number(),
+    }),
+  ),
+});
+
 /* ─── update_component ─────────────────────────────────── */
 
 export const updateComponentTool = createTool({
@@ -797,4 +829,5 @@ export const designCanvasTools = {
   update_component: updateComponentTool,
   list_components: listComponentsTool,
   list_assets: listAssetsTool,
+  save_attachment_as_asset: saveAttachmentAsAssetTool,
 };
