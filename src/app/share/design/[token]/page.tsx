@@ -11,9 +11,10 @@ import {
 } from "@/components/design/component-library-context";
 import { DesignRenderer } from "@/components/design/design-renderer";
 import type { DesignNode } from "@/components/design/design-node";
+import { TokenProvider } from "@/components/design/token-context";
 import type { Artboard } from "@/components/design/types";
 import { db } from "@/db";
-import { designs } from "@/db/schema";
+import { designs, teamDesignTokens } from "@/db/schema";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +36,7 @@ export default async function SharedDesignPage({
       name: true,
       snapshot: true,
       teamId: true,
+      tokens: true,
     },
   });
 
@@ -44,10 +46,15 @@ export default async function SharedDesignPage({
 
   // Pull the design's team library + uploaded assets so component-refs
   // and image src references in the shared design expand correctly
-  // without authenticating the visitor.
-  const [componentRows, assetRows] = await Promise.all([
+  // without authenticating the visitor. Tokens fetched in parallel so
+  // any token-referenced styles resolve correctly.
+  const [componentRows, assetRows, teamTokenRow] = await Promise.all([
     listDesignComponentsForTeam(design.teamId),
     listDesignAssetsForTeam(design.teamId),
+    db.query.teamDesignTokens.findFirst({
+      where: eq(teamDesignTokens.teamId, design.teamId),
+      columns: { tokens: true },
+    }),
   ]);
   const components: LibraryComponent[] = componentRows.map((row) => ({
     id: row.id,
@@ -69,7 +76,13 @@ export default async function SharedDesignPage({
   // Render artboards stacked vertically with their device labels — no
   // pan/zoom/edit, just the actual designs at full size for read-only
   // viewing.
+  const initialTokens = {
+    team: teamTokenRow?.tokens ?? {},
+    design: design.tokens ?? {},
+  };
+
   return (
+    <TokenProvider team={initialTokens.team} design={initialTokens.design}>
     <ComponentLibraryProvider components={components} assets={assets}>
       <div className="min-h-screen bg-zinc-950 text-zinc-100">
         <header className="sticky top-0 z-10 flex h-12 items-center gap-2 border-b border-white/5 bg-zinc-950/80 px-3 backdrop-blur">
@@ -126,6 +139,7 @@ export default async function SharedDesignPage({
         )}
       </div>
     </ComponentLibraryProvider>
+    </TokenProvider>
   );
 }
 

@@ -14,7 +14,7 @@ import { DesignShell } from "@/components/design/design-shell";
 import type { DesignNode } from "@/components/design/design-node";
 import type { Artboard } from "@/components/design/types";
 import { db } from "@/db";
-import { designs } from "@/db/schema";
+import { designs, teamDesignTokens } from "@/db/schema";
 import { requireActiveProject } from "@/lib/permissions";
 import { listTeamMembers, listUserTeams } from "@/lib/teams";
 import { mastra } from "@/mastra";
@@ -55,6 +55,7 @@ export default async function DesignPage({
     teams,
     members,
     commentRows,
+    teamTokenRow,
   ] = await Promise.all([
     db.query.designs.findFirst({
       where: and(
@@ -68,6 +69,7 @@ export default async function DesignPage({
         snapshot: true,
         threadId: true,
         shareToken: true,
+        tokens: true,
       },
       with: {
         owner: {
@@ -96,6 +98,10 @@ export default async function DesignPage({
     listUserTeams(session.user.id),
     listTeamMembers(teamId),
     listCommentsForSubject("design", designId),
+    db.query.teamDesignTokens.findFirst({
+      where: eq(teamDesignTokens.teamId, teamId),
+      columns: { tokens: true },
+    }),
   ]);
 
   if (!design) {
@@ -130,6 +136,11 @@ export default async function DesignPage({
       }
     : null;
 
+  const initialTokens = {
+    team: teamTokenRow?.tokens ?? {},
+    design: design.tokens ?? {},
+  };
+
   return (
     <DesignShell
       designId={design.id}
@@ -149,6 +160,7 @@ export default async function DesignPage({
       designsHrefBase={`/p/${projectSlug}/designs`}
       components={components}
       assets={assets}
+      initialTokens={initialTokens}
       teams={teams}
       activeTeamId={teamId}
       creator={creator}

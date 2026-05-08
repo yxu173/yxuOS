@@ -22,11 +22,16 @@ import type {
   FrameNode,
 } from "./design-node";
 import { useDesignRendererContext } from "./design-renderer-context";
+import { useTokens } from "./token-context";
+import { resolveStyle, resolveStyleValue } from "./tokens";
 
 interface RenderContext {
   selectedNodeId: string | null;
   onNodeClick: ((nodeId: string) => void) | null;
   library: Map<string, LibraryComponent>;
+  /** Pre-merged token map. Style values that look like
+   *  `"{token.path}"` are resolved against this. */
+  tokens: Record<string, string | number>;
 }
 
 interface InteractiveProps {
@@ -54,6 +59,15 @@ function interactiveProps(
           "0 0 0 2px #3b82f6, 0 0 0 4px rgba(59, 130, 246, 0.25)",
       }
     : {};
+  // Resolve `{token.path}` references on the node-level style ONLY —
+  // defaults and the selection outline are already concrete literals,
+  // and resolving them every call would be a small waste. The merge
+  // order matches React's rightmost-wins semantics: defaults < node
+  // style (resolved) < selection outline.
+  const resolvedStyle = resolveStyle(
+    node.style as Record<string, unknown> | undefined,
+    ctx.tokens,
+  );
   return {
     "data-node-id": node.id,
     onPointerDown:
@@ -64,7 +78,11 @@ function interactiveProps(
             ctx.onNodeClick!(node.id!);
           }
         : undefined,
-    style: { ...defaults, ...node.style, ...outlineStyle },
+    style: {
+      ...defaults,
+      ...(resolvedStyle as CSSProperties | undefined),
+      ...outlineStyle,
+    },
   };
 }
 
@@ -77,14 +95,15 @@ export function DesignRenderer({ node }: { node: DesignNode | null }) {
 }
 
 function NodeRenderer({ node }: { node: DesignNode }): JSX.Element {
-  // Read the renderer + library contexts exactly once per NodeRenderer
-  // instance so the type-switch below isn't full of conditional hook
-  // calls.
+  // Read every context we need exactly once per NodeRenderer instance
+  // so the type-switch below isn't full of conditional hook calls.
   const rendererCtx = useDesignRendererContext();
   const library = useComponentLibrary();
+  const tokens = useTokens();
   const ctx: RenderContext = {
     ...rendererCtx,
     library: library.bySlug,
+    tokens: tokens.merged,
   };
 
   switch (node.type) {
@@ -255,11 +274,18 @@ function ImageRenderer({
   // Placeholder.
   const lookupName = node.placeholderIcon ?? "image";
   const placeholderIconEl = renderLucideIcon(lookupName, { size: 32 });
+  // placeholderColor is a leaf prop, not part of `style`, so resolve
+  // here too — the agent may use a token ref like `{color.muted}`.
+  const placeholderColorRaw = node.placeholderColor ?? "#e4e4e7";
+  const placeholderColor =
+    typeof resolveStyleValue(placeholderColorRaw, ctx.tokens) === "string"
+      ? (resolveStyleValue(placeholderColorRaw, ctx.tokens) as string)
+      : placeholderColorRaw;
   const placeholderDefaults: CSSProperties = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    background: node.placeholderColor ?? "#e4e4e7",
+    background: placeholderColor,
     color: "#a1a1aa",
     borderRadius: 8,
     minWidth: 80,
@@ -311,9 +337,16 @@ function InputRenderer({
 
 function IconRenderer({ node, ctx }: { node: IconNode; ctx: RenderContext }) {
   const props = interactiveProps(node, ctx, {});
+  // `color` is an icon-level prop (not in style) — resolve token
+  // refs here too, otherwise `color: "{color.accent}"` would render
+  // literally.
+  const resolvedColor =
+    typeof node.color === "string"
+      ? (resolveStyleValue(node.color, ctx.tokens) as string)
+      : node.color;
   return renderLucideIcon(node.name, {
     size: node.size ?? 18,
-    color: node.color,
+    color: resolvedColor,
     style: props.style,
     "data-node-id": props["data-node-id"],
     onPointerDown: props.onPointerDown,

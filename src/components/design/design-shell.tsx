@@ -24,6 +24,7 @@ import {
 import { DesignName } from "./design-name";
 import { DesignShareDialog } from "./design-share-dialog";
 import { DesignRightPanel } from "./right-panel";
+import { TokenProvider } from "./token-context";
 import type { Artboard } from "./types";
 import { useDesignPersistence } from "./use-design-persistence";
 
@@ -44,6 +45,16 @@ export interface DesignShellProps {
   projectSlug?: string;
   components: LibraryComponent[];
   assets: LibraryAsset[];
+  /**
+   * Initial design tokens — server-fetched team defaults +
+   * per-design overrides. The provider keeps an optimistic overlay
+   * on top so set_tokens / apply_theme propagate before
+   * router.refresh() round-trips.
+   */
+  initialTokens: {
+    team: Record<string, string | number>;
+    design: Record<string, string | number>;
+  };
   teams: WorkspaceSwitcherTeam[];
   activeTeamId: string;
   creator: { name: string; username: string | null } | null;
@@ -64,6 +75,7 @@ export function DesignShell({
   projectSlug,
   components,
   assets,
+  initialTokens,
   teams,
   activeTeamId,
   creator,
@@ -137,6 +149,7 @@ export function DesignShell({
   }, []);
 
   return (
+    <TokenProvider team={initialTokens.team} design={initialTokens.design}>
     <ComponentLibraryProvider components={components} assets={assets}>
       <div className="fixed inset-0 flex flex-col bg-zinc-950 text-zinc-100">
       <WorkspaceTopBar
@@ -183,6 +196,7 @@ export function DesignShell({
       </div>
       </div>
     </ComponentLibraryProvider>
+    </TokenProvider>
   );
 }
 
