@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarClock, CheckSquare2 } from "lucide-react";
+import { CalendarClock, CheckSquare2, ClipboardList } from "lucide-react";
 import Link from "next/link";
 import { useMemo } from "react";
 
@@ -166,7 +166,10 @@ function TaskCard({
 
       {/* Meta strip — only renders if at least one piece of meta is
           present, so plain tasks stay genuinely minimal. */}
-      {task.dueDate || task.subtaskCount > 0 || member ? (
+      {task.dueDate ||
+      task.subtaskCount > 0 ||
+      member ||
+      task.sourcePlan ? (
         <div className="flex items-center gap-2 pl-5 text-[11px] text-zinc-500">
           {task.dueDate ? (
             <span
@@ -187,6 +190,15 @@ function TaskCard({
             >
               <CheckSquare2 className="size-3" />
               {task.doneSubtaskCount}/{task.subtaskCount}
+            </span>
+          ) : null}
+          {task.sourcePlan ? (
+            <span
+              className="inline-flex items-center gap-1 text-amber-300"
+              title={`From plan: ${task.sourcePlan.title}`}
+            >
+              <ClipboardList className="size-3" />
+              plan
             </span>
           ) : null}
           <span className="ml-auto">

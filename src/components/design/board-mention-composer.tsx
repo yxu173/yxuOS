@@ -17,22 +17,45 @@ import {
   createBoardMentionExtension,
   type BoardMentionConfig,
 } from "./board-mention-extension";
+import type { MentionKind } from "./board-mention-suggestion";
 
 /**
- * Imperative handle the parent (`design-chat.tsx`) calls into:
+ * Per-kind id buckets. Returned from
+ * {@link BoardMentionComposerHandle.getMentionedIdsByKind} so the
+ * design-chat client can ship `{boards, research, plans}` to its
+ * API route in a single request body.
+ *
+ * Order within each array preserves the order the user mentioned
+ * them — relevant when the agent reads the digest blocks (the
+ * digests are concatenated in the same order so the user's intent
+ * "look at A first, then B" survives).
+ */
+export interface MentionedIdsByKind {
+  boards: string[];
+  research: string[];
+  plans: string[];
+}
+
+/**
+ * Imperative handle the parent (e.g. `design-chat.tsx`) calls into.
  *
  *  - `focus()` — pull focus into the editor on mount, after a paste,
  *    or after a `clear()`.
  *  - `clear()` — wipe the doc back to empty after a successful send.
  *  - `getText()` — plain text the user typed (mentions render as
  *    `@<label>` per `renderText` in the extension).
- *  - `getMentionedBoardIds()` — flat, dedup'd list of `data-id`s
- *    pulled out of every `mention` node currently in the doc.
+ *  - `getMentionedIdsByKind()` — flat, dedup'd, kind-bucketed list
+ *    of `data-id`s pulled out of every `mention` node currently in
+ *    the doc.
+ *  - `getMentionedBoardIds()` — back-compat shim; equivalent to
+ *    `getMentionedIdsByKind().boards`. Kept so consumers that only
+ *    care about boards can stay compact.
  */
 export interface BoardMentionComposerHandle {
   focus: () => void;
   clear: () => void;
   getText: () => string;
+  getMentionedIdsByKind: () => MentionedIdsByKind;
   getMentionedBoardIds: () => string[];
   isEmpty: () => boolean;
 }
@@ -53,13 +76,17 @@ export interface BoardMentionComposerProps {
 const MAX_MENTIONS = 3;
 
 /**
- * Tiptap-based composer for the design chat. Used in place of a plain
- * `<Textarea>` so we can inline `@board` mention chips.
+ * Tiptap-based composer with `@`-mention support across boards,
+ * research notes, and plans (a single popover, grouped sections).
  *
  * The editor is intentionally minimal: paragraphs only (no headings,
- * lists, blockquotes, code blocks — `chat-style` configuration of
- * StarterKit). It feels like a textarea but renders mention chips and
- * supports Enter-to-submit / Shift-Enter for newline.
+ * lists, blockquotes, code blocks). It feels like a textarea but
+ * renders mention chips and supports Enter-to-submit / Shift-Enter
+ * for newline.
+ *
+ * Historical name: "BoardMentionComposer". Kept for API stability —
+ * the new generalized behaviour is backwards-compatible at the call
+ * site.
  */
 export const BoardMentionComposer = forwardRef<
   BoardMentionComposerHandle,
@@ -106,14 +133,9 @@ export const BoardMentionComposer = forwardRef<
   });
 
   const editor = useEditor({
-    // Server-render guard recommended by Tiptap so Next.js doesn't
-    // mount the editor on the server (the dom is browser-only).
     immediatelyRender: false,
     extensions: [
       StarterKit.configure({
-        // We don't want the chat composer to look like a markdown
-        // editor — strip the block tools that don't belong in a
-        // single-line chat input.
         heading: false,
         bulletList: false,
         orderedList: false,
@@ -124,16 +146,12 @@ export const BoardMentionComposer = forwardRef<
       }),
       Placeholder.configure({
         placeholder: placeholder ?? "Describe what to design…",
-        // Show the placeholder in the empty document only, not in
-        // every empty paragraph (it's a single-paragraph composer).
         showOnlyWhenEditable: true,
       }),
       mentionExtension,
     ],
     editorProps: {
       attributes: {
-        // Match the look of the previous Textarea: same min-height,
-        // same padding, same focus ring removal — feels native.
         class: cn(
           "prose-tiptap chat-composer min-h-9 max-h-40 w-full resize-none overflow-y-auto",
           "bg-zinc-900/80 px-3 py-2 text-sm text-zinc-100 outline-none",
@@ -142,10 +160,6 @@ export const BoardMentionComposer = forwardRef<
       },
       handleKeyDown(_view, event) {
         if (event.key === "Enter" && !event.shiftKey) {
-          // Don't intercept Enter while the suggestion popover is
-          // open — its `onKeyDown` already swallowed the event in
-          // that case. We only handle Enter when no suggestion is
-          // visible (i.e. plain submit).
           if (isSuggestionOpen()) return false;
           event.preventDefault();
           onSubmitRef.current?.();
@@ -164,9 +178,18 @@ export const BoardMentionComposer = forwardRef<
       },
     },
     onUpdate({ editor }) {
-      const ids = collectMentionIds(editor.getJSON());
-      selectedIdsRef.current = ids;
-      onChange?.({ isEmpty: editor.isEmpty, mentionCount: ids.length });
+      const buckets = collectMentionsByKind(editor.getJSON());
+      // Flat selected list drives the popover dedupe; kind-bucketed
+      // list is exposed via the imperative handle below.
+      selectedIdsRef.current = [
+        ...buckets.boards,
+        ...buckets.research,
+        ...buckets.plans,
+      ];
+      onChange?.({
+        isEmpty: editor.isEmpty,
+        mentionCount: selectedIdsRef.current.length,
+      });
     },
   });
 
@@ -179,8 +202,12 @@ export const BoardMentionComposer = forwardRef<
         selectedIdsRef.current = [];
       },
       getText: () => (editor ? editor.getText().trim() : ""),
+      getMentionedIdsByKind: () =>
+        editor
+          ? collectMentionsByKind(editor.getJSON())
+          : { boards: [], research: [], plans: [] },
       getMentionedBoardIds: () =>
-        editor ? collectMentionIds(editor.getJSON()) : [],
+        editor ? collectMentionsByKind(editor.getJSON()).boards : [],
       isEmpty: () => (editor ? editor.isEmpty : true),
     }),
     [editor],
@@ -201,31 +228,61 @@ export const BoardMentionComposer = forwardRef<
 /* ─── Helpers ──────────────────────────────────────────── */
 
 /**
- * Walk a Tiptap JSON document and collect every `mention` node's id
- * attribute, dedup'd. Used for both the per-message payload and the
- * already-mentioned dimming inside the suggestion popover.
+ * Walk a Tiptap JSON document and collect every `mention` node's
+ * `id` attr, bucketed by `kind`. Used for both the per-message
+ * payload and the already-mentioned dimming inside the suggestion
+ * popover.
+ *
+ * Ids are dedup'd within each bucket; insertion order (= order the
+ * user typed them) is preserved.
  */
-function collectMentionIds(doc: unknown): string[] {
-  const ids = new Set<string>();
+function collectMentionsByKind(doc: unknown): MentionedIdsByKind {
+  const buckets: Record<MentionKind, string[]> = {
+    board: [],
+    research: [],
+    plan: [],
+  };
+  const seen: Record<MentionKind, Set<string>> = {
+    board: new Set(),
+    research: new Set(),
+    plan: new Set(),
+  };
   function visit(node: unknown) {
     if (!node || typeof node !== "object") return;
-    const obj = node as { type?: string; attrs?: { id?: unknown }; content?: unknown[] };
+    const obj = node as {
+      type?: string;
+      attrs?: { id?: unknown; kind?: unknown };
+      content?: unknown[];
+    };
     if (obj.type === "mention" && typeof obj.attrs?.id === "string") {
-      ids.add(obj.attrs.id);
+      const kind = normalizeKind(obj.attrs.kind);
+      if (!seen[kind].has(obj.attrs.id)) {
+        seen[kind].add(obj.attrs.id);
+        buckets[kind].push(obj.attrs.id);
+      }
     }
     if (Array.isArray(obj.content)) {
       for (const child of obj.content) visit(child);
     }
   }
   visit(doc);
-  return Array.from(ids);
+  return {
+    boards: buckets.board,
+    research: buckets.research,
+    plans: buckets.plan,
+  };
+}
+
+function normalizeKind(value: unknown): MentionKind {
+  if (value === "research" || value === "plan") return value;
+  return "board";
 }
 
 /**
  * Detect whether the suggestion plugin is currently rendering its
- * popover. The decoration node carries `data-suggestion` (set by
- * tiptap's Mention extension by default) — testing for it in the
- * live DOM is cheaper than wiring a piece of React state through.
+ * popover. Tiptap's Mention extension marks the decoration node
+ * with `data-mention-suggestion-char` — testing for it in the live
+ * DOM is cheaper than wiring a piece of React state through.
  */
 function isSuggestionOpen(): boolean {
   return !!document.querySelector(

@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckSquare2 } from "lucide-react";
+import { CheckSquare2, ClipboardList } from "lucide-react";
 import Link from "next/link";
 
 import type {
@@ -46,6 +46,16 @@ export function TaskRow({ task, members }: TaskRowProps) {
       >
         {task.title}
       </span>
+
+      {task.sourcePlan ? (
+        <span
+          className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/20 bg-amber-500/[0.04] px-1.5 py-0.5 text-[10px] text-amber-300"
+          title={`From plan: ${task.sourcePlan.title}`}
+        >
+          <ClipboardList className="size-3" />
+          plan
+        </span>
+      ) : null}
 
       {task.subtaskCount > 0 ? (
         <span

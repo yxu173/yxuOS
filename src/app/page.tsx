@@ -21,6 +21,7 @@ import { db } from "@/db";
 import { boards, designs, member } from "@/db/schema";
 import { listRecentActivity } from "@/lib/activity-list";
 import { auth } from "@/lib/auth";
+import { listProjectsForTeam } from "@/lib/projects";
 import { listMyOpenTasks } from "@/lib/tasks/list-my-tasks";
 import { listUserTeams } from "@/lib/teams";
 import { cn } from "@/lib/utils";
@@ -59,8 +60,14 @@ export default async function HomePage() {
     return <SignedOutLanding />;
   }
 
-  const [recentBoards, recentDesigns, teams, activity, myTasks] =
-    await Promise.all([
+  const [
+    recentBoards,
+    recentDesigns,
+    teams,
+    activity,
+    myTasks,
+    projects,
+  ] = await Promise.all([
       db.query.boards.findMany({
         where: eq(boards.teamId, teamId),
         orderBy: desc(boards.updatedAt),
@@ -82,6 +89,9 @@ export default async function HomePage() {
       listUserTeams(session.user.id),
       listRecentActivity(teamId, 8),
       listMyOpenTasks(session.user.id, teamId, 6),
+      // Powers the Agents▾ project picker when the user has no
+      // active project (e.g. on the home page or `/tasks` global).
+      listProjectsForTeam(teamId),
     ]);
 
   const activeTeam = teams.find((t) => t.id === teamId);
@@ -94,6 +104,7 @@ export default async function HomePage() {
         activeTeamId={teamId}
         userName={session.user.name}
         userEmail={session.user.email}
+        projects={projects}
       />
 
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-10 p-8">

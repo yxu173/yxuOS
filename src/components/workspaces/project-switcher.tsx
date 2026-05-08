@@ -22,8 +22,8 @@ import { CreateProjectDialog } from "./create-project-dialog";
 export interface ProjectSwitcherProps {
   projects: ProjectListItem[];
   activeProjectSlug: string;
-  /** Section we're currently in — used so switching project keeps you on the same surface (boards / designs / tasks). */
-  activeSection?: "boards" | "designs" | "tasks";
+  /** Section we're currently in — used so switching project keeps you on the same surface (boards / designs / tasks / agents). */
+  activeSection?: "boards" | "designs" | "tasks" | "agents";
 }
 
 /**
@@ -52,7 +52,12 @@ export function ProjectSwitcher({
 
   const switchTo = (slug: string) => {
     if (slug === activeProjectSlug) return;
-    router.push(`/p/${slug}/${section}`);
+    // The "agents" pill is a dropdown header, not a route segment.
+    // When switching projects from inside an agent surface we land
+    // on /research as the canonical agent home; from there the user
+    // can navigate further. Other sections map 1:1 to URL segments.
+    const target = section === "agents" ? "research" : section;
+    router.push(`/p/${slug}/${target}`);
   };
 
   return (

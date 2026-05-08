@@ -1,4 +1,4 @@
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ClipboardList } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -68,6 +68,10 @@ export default async function TaskDetailPage({ params }: TaskPageParams) {
     assignee: s.assignee,
     subtaskCount: 0,
     doneSubtaskCount: 0,
+    // Subtasks rendered in the detail page never carry their own
+    // "From plan" badge — the badge belongs to the parent task that
+    // materialised; the subtask is just nested context.
+    sourcePlan: null,
   }));
 
   return (
@@ -100,6 +104,19 @@ export default async function TaskDetailPage({ params }: TaskPageParams) {
                   className="hover:text-zinc-200"
                 >
                   Parent: {task.parentTask.title}
+                </Link>
+              </>
+            ) : null}
+            {task.sourcePlan ? (
+              <>
+                <span className="text-zinc-600">·</span>
+                <Link
+                  href={`/p/${projectSlug}/plans/${task.sourcePlan.id}`}
+                  className="inline-flex items-center gap-1 rounded border border-amber-500/20 bg-amber-500/[0.04] px-1.5 py-0.5 text-amber-300 hover:bg-amber-500/[0.08]"
+                  title={`Created from plan: ${task.sourcePlan.title}`}
+                >
+                  <ClipboardList className="size-3" />
+                  From plan: {task.sourcePlan.title}
                 </Link>
               </>
             ) : null}

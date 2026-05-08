@@ -16,14 +16,20 @@ export interface RichTextRenderProps {
   body: string;
   className?: string;
   /**
-   * When set, every `<span data-mention-kind="board" data-id="…">`
-   * produced by the editor is rewritten into an `<a>` linking to that
-   * board's page in the given project. Use this in task / comment
-   * surfaces where the user expects the chip to be clickable.
+   * When set, every `<span data-mention-kind="…" data-id="…">`
+   * produced by the editor is rewritten into an `<a>` linking to the
+   * appropriate page in the given project.
    *
-   * Leave undefined for surfaces (e.g. previews, share pages) where
-   * the chip is informational only — the inline span still renders
-   * with its `.mention-board` styling, just not as a link.
+   *   - `kind="board"`    → `/p/<slug>/boards/<id>`
+   *   - `kind="research"` → `/p/<slug>/research/<id>`
+   *   - `kind="plan"`     → `/p/<slug>/plans/<id>`
+   *
+   * Use this in task / comment surfaces where the user expects the
+   * chip to be clickable. Leave undefined for surfaces (previews,
+   * share pages) where the chip is informational only — the inline
+   * span still renders with its `.mention-board` styling, just not
+   * as a link. The prop name is `linkBoardMentions` for API stability;
+   * the implementation handles every supported kind.
    */
   linkBoardMentions?: { projectSlug: string };
 }
@@ -58,7 +64,7 @@ export function RichTextRender({
       ? body
       : (marked.parse(body) as string);
     return linkProjectSlug
-      ? rewriteBoardMentionSpans(parsed, linkProjectSlug)
+      ? rewriteMentionSpans(parsed, linkProjectSlug)
       : parsed;
   }, [body, linkProjectSlug]);
 
@@ -76,34 +82,49 @@ export function RichTextRender({
 }
 
 /**
- * Walk the rendered HTML and turn `<span data-mention-kind="board"
- * data-id="…">` chips into anchor tags pointing at the board's page
+ * Walk the rendered HTML and turn `<span data-mention-kind="…"
+ * data-id="…">` chips into anchor tags pointing at the target page
  * inside the given project.
  *
  * The editor produces a tight, well-formed shape:
- *   `<span class="..." data-mention-kind="board" data-id="abc">@Foo</span>`
+ *   `<span class="..." data-mention-kind="<kind>" data-id="abc">@Foo</span>`
  * (attribute order may vary depending on tiptap's renderer). A regex
- * is sufficient and keeps this as a server-renderable string
- * transform — no DOMParser, no client-only effect, hydration-safe.
+ * is sufficient and keeps this a server-renderable string transform —
+ * no DOMParser, no client-only effect, hydration-safe.
  *
- * Defensive: if `data-id` is missing or empty, we leave the span
- * untouched. Mention names are pulled from the inner text content
- * verbatim and used only as the link's visible label, so an injected
- * tag would land inside the `<a>` and stay quoted.
+ * Defensive: if `data-id` is missing/empty, or `data-mention-kind` is
+ * a value we don't recognise, we leave the span untouched so a
+ * future kind doesn't render as a broken link.
+ *
+ * Mention names are pulled from the inner text content verbatim and
+ * used only as the link's visible label, so an injected tag would
+ * land inside the `<a>` and stay quoted.
  */
-function rewriteBoardMentionSpans(html: string, projectSlug: string): string {
+function rewriteMentionSpans(html: string, projectSlug: string): string {
+  // We match any mention span, not just `kind="board"`, then dispatch
+  // by attribute below. The regex is loose on `[^>]*?` to tolerate
+  // arbitrary attribute order between the two we care about.
   const SPAN_RE =
-    /<span\b([^>]*\bdata-mention-kind="board"[^>]*)>([\s\S]*?)<\/span>/gi;
-  return html.replace(SPAN_RE, (match, attrs: string, inner: string) => {
-    const idMatch = attrs.match(/\bdata-id="([^"]+)"/);
-    const id = idMatch?.[1];
-    if (!id) return match;
-    const safeProject = encodeURIComponent(projectSlug);
-    const safeId = encodeURIComponent(id);
-    // We rebuild the attribute set so external classes / titles set on
-    // the span (e.g. styling overrides) survive into the anchor. The
-    // `href` is appended last so it can't be overridden by a stale
-    // attribute the editor accidentally wrote into the span.
-    return `<a ${attrs} href="/p/${safeProject}/boards/${safeId}">${inner}</a>`;
-  });
+    /<span\b([^>]*\bdata-mention-kind="(board|research|plan)"[^>]*)>([\s\S]*?)<\/span>/gi;
+  return html.replace(
+    SPAN_RE,
+    (match, attrs: string, kind: string, inner: string) => {
+      const idMatch = attrs.match(/\bdata-id="([^"]+)"/);
+      const id = idMatch?.[1];
+      if (!id) return match;
+      const safeProject = encodeURIComponent(projectSlug);
+      const safeId = encodeURIComponent(id);
+      const subpath =
+        kind === "research"
+          ? "research"
+          : kind === "plan"
+            ? "plans"
+            : "boards";
+      // We rebuild the attribute set so external classes / titles set
+      // on the span (e.g. styling overrides) survive into the anchor.
+      // The `href` is appended last so it can't be overridden by a
+      // stale attribute the editor accidentally wrote into the span.
+      return `<a ${attrs} href="/p/${safeProject}/${subpath}/${safeId}">${inner}</a>`;
+    },
+  );
 }

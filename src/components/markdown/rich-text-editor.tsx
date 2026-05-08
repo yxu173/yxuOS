@@ -64,15 +64,18 @@ export interface RichTextEditorProps {
    */
   borderless?: boolean;
   /**
-   * When set, enables `@board-name` mentions inside the editor.
+   * When set, enables `@`-mentions inside the editor across all
+   * three kinds (boards, research notes, plans). The popover groups
+   * results by kind and the saved HTML carries
+   * `<span data-mention-kind="<kind>" data-id="…">@<name></span>`
+   * for each chip; `RichTextRender` rewrites those into the
+   * appropriate clickable link.
    *
-   *  - `projectSlug` — used to boost boards from the same project to
-   *    the top of the suggestion list and (in `RichTextRender`) to
-   *    build clickable links.
-   *  - The mention extension is registered with the editor's schema
-   *    so saved HTML carries `<span data-mention-kind="board"
-   *    data-id="…">@<name></span>` nodes; nothing else needs to
-   *    change for round-tripping.
+   *  - `projectSlug` — used to boost items from the same project to
+   *    the top of the suggestion list and to build clickable links.
+   *
+   * The legacy prop name (`boardMentions`) is kept for back-compat
+   * — the underlying behaviour is now general.
    *
    * Leave undefined to opt out (default for plain comments / notes).
    */
@@ -122,16 +125,20 @@ export function RichTextEditor({
   // over this scalar.)
   const mentionsProjectSlug = boardMentions?.projectSlug ?? null;
 
-  // Stable search callback for the board-mention popover. Closes over
-  // `projectSlug` so the same project's boards float to the top of the
-  // suggestion list. Built lazily — if `boardMentions` is undefined we
-  // never call this and never register the extension.
+  // Stable search callback for the cross-mention popover. Closes
+  // over `projectSlug` so the same project's items float to the top
+  // of the suggestion list. Built lazily — if `boardMentions` is
+  // undefined we never call this and never register the extension.
+  //
+  // The legacy callback name `searchBoards` is preserved (it's the
+  // shape the extension config expects) but it now returns items of
+  // any mention kind — the popover decides how to group them.
   const searchBoards = useCallback(
     async (query: string): Promise<BoardMentionItem[]> => {
       if (!mentionsProjectSlug) return [];
       try {
         const url = new URL(
-          "/api/mentions/boards",
+          "/api/mentions/search",
           window.location.origin,
         );
         if (query) url.searchParams.set("q", query);
@@ -140,8 +147,13 @@ export function RichTextEditor({
           credentials: "same-origin",
         });
         if (!res.ok) return [];
-        const json = (await res.json()) as { boards?: BoardMentionItem[] };
-        return json.boards ?? [];
+        const json = (await res.json()) as {
+          items?: BoardMentionItem[];
+          boards?: BoardMentionItem[];
+        };
+        // New shape carries `items`; legacy `boards` shape kept as a
+        // fallback so a stale deploy doesn't break the editor.
+        return json.items ?? json.boards ?? [];
       } catch {
         return [];
       }

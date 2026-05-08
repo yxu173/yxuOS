@@ -20,7 +20,12 @@ export type ActivityVerb =
   | "added_member"
   | "removed_member"
   | "left"
-  | "renamed_team";
+  | "renamed_team"
+  // plan / row mutations — the agent emits these constantly so they
+  // get first-class verbs rather than overloaded `updated`.
+  | "added"
+  | "removed"
+  | "executed";
 
 export type ActivitySubjectType =
   | "board"
@@ -29,7 +34,9 @@ export type ActivitySubjectType =
   | "member"
   | "team"
   | "task"
-  | "project";
+  | "project"
+  | "research_note"
+  | "task_plan";
 
 export interface LogActivityInput {
   teamId: string;

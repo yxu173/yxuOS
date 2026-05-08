@@ -1,9 +1,11 @@
 import { CheckSquare, LayoutDashboard, Palette } from "lucide-react";
 import Link from "next/link";
 
+import { QuickSearchHint } from "@/components/quick-search/quick-search-hint";
 import type { ProjectListItem } from "@/lib/projects";
 import { cn } from "@/lib/utils";
 
+import { AgentsDropdown } from "./agents-dropdown";
 import { ProjectSwitcher } from "./project-switcher";
 import { UserMenu } from "./user-menu";
 import {
@@ -11,7 +13,11 @@ import {
   type WorkspaceSwitcherTeam,
 } from "./workspace-switcher";
 
-export type AppTopBarSection = "boards" | "designs" | "tasks";
+export type AppTopBarSection =
+  | "boards"
+  | "designs"
+  | "tasks"
+  | "agents";
 
 export interface AppTopBarProps {
   teams: WorkspaceSwitcherTeam[];
@@ -129,11 +135,18 @@ export function AppTopBar({
             </Link>
           );
         })}
+        <AgentsDropdown
+          projectSlug={projectSlug}
+          active={active === "agents"}
+          projects={projects ?? []}
+        />
       </nav>
 
-      <div className="ml-auto">
+      <div className="ml-auto flex items-center gap-2">
+        <QuickSearchHint />
         <UserMenu userName={userName} userEmail={userEmail} />
       </div>
     </header>
   );
 }
+

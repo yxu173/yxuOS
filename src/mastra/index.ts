@@ -5,6 +5,8 @@ import { env } from "@/lib/env";
 
 import { boardArchitect } from "./agents/board-architect";
 import { designArchitect } from "./agents/design-architect";
+import { planner } from "./agents/planner";
+import { researcher } from "./agents/researcher";
 
 /**
  * Single Mastra instance shared by every server component / route handler.
@@ -20,5 +22,5 @@ export const mastra = new Mastra({
     connectionString: env.DATABASE_URL,
     schemaName: "mastra",
   }),
-  agents: { boardArchitect, designArchitect },
+  agents: { boardArchitect, designArchitect, researcher, planner },
 });

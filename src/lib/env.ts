@@ -52,6 +52,12 @@ const envSchema = z.object({
   // ─── Mastra ────────────────────────────────────────────
   MASTRA_TELEMETRY_DISABLED: z.preprocess(empty, z.string().optional()),
 
+  // ─── Researcher agent (Exa web search) ──────────────────────
+  // Required for the Researcher agent's `web_search` tool. Without it,
+  // the tool returns a graceful error and the agent falls back to
+  // workspace-only research. Get one at https://exa.ai/.
+  EXA_API_KEY: z.preprocess(empty, z.string().optional()),
+
   // ─── Vercel Blob (object storage for the design asset library) ─
   // Required to upload images via the Library tab. Without it,
   // `uploadDesignAsset` throws a clear error in the UI.

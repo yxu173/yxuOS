@@ -428,16 +428,24 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
   const searchBoards = useCallback(
     async (query: string): Promise<BoardMentionItem[]> => {
       try {
+        // Hits the unified search endpoint that returns boards,
+        // research notes, and plans together — the popover groups
+        // them by kind. We pass `designId` so the design's project
+        // floats to the top across all three kinds.
         const url = new URL(
-          "/api/mentions/boards",
+          "/api/mentions/search",
           window.location.origin,
         );
         if (query) url.searchParams.set("q", query);
         url.searchParams.set("designId", designId);
         const res = await fetch(url.toString(), { credentials: "same-origin" });
         if (!res.ok) return [];
-        const json = (await res.json()) as { boards?: BoardMentionItem[] };
-        return json.boards ?? [];
+        const json = (await res.json()) as { items?: BoardMentionItem[] };
+        if (json.items) return json.items;
+        // Back-compat fallback for any cached deploy still serving
+        // the old `/boards`-shaped response.
+        const legacy = json as unknown as { boards?: BoardMentionItem[] };
+        return legacy.boards ?? [];
       } catch {
         return [];
       }
@@ -465,7 +473,20 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
     if (isStreaming) return;
     const composer = composerRef.current;
     const text = composer?.getText() ?? "";
-    const mentionedBoardIds = composer?.getMentionedBoardIds() ?? [];
+    // Pull all mentions bucketed by kind. The chat API route accepts
+    // the bucketed shape and builds digests per kind. We still
+    // compute the legacy flat board-id list for the empty-message
+    // guard below — sending a message with only mentions is OK.
+    const mentions =
+      composer?.getMentionedIdsByKind() ?? {
+        boards: [],
+        research: [],
+        plans: [],
+      };
+    const totalMentions =
+      mentions.boards.length +
+      mentions.research.length +
+      mentions.plans.length;
     // Pinned elements alone are enough to send — the chips ARE the
     // user's intent ("look at this and tell me what to do with it").
     const pinnedIds = useDesignCanvas.getState().selectedNodeIds;
@@ -473,7 +494,7 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
       !text &&
       pending.length === 0 &&
       pinnedIds.length === 0 &&
-      mentionedBoardIds.length === 0
+      totalMentions === 0
     ) {
       return;
     }
@@ -528,16 +549,27 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
         text: finalText,
         files: files.length > 0 ? files : undefined,
       },
-      // The /api/design-chat/[designId] route reads `mentionedBoardIds`
-      // off the request body, looks up each board for the active team,
-      // builds a digest of the snapshot (sticky notes, frames,
-      // markdown card source, mermaid source, arrow connections),
-      // and prepends it to the user message before forwarding to the
-      // agent. None of that is visible to the user — the persisted
-      // text gets stripped client-side and replaced with chips, see
-      // `renderUserMessageText`.
-      mentionedBoardIds.length > 0
-        ? { body: { mentionedBoardIds } }
+      // The /api/design-chat/[designId] route reads `mentions` off
+      // the request body — a `{boards, research, plans}` bucketed
+      // shape — looks up each entity for the active team, builds a
+      // per-kind digest (board snapshots, research-note bodies,
+      // plan rows), and prepends the concatenated blob to the user
+      // message before forwarding to the agent. None of that is
+      // visible to the user; the persisted text gets stripped
+      // client-side and replaced with chips (see
+      // `renderUserMessageText`).
+      //
+      // We also pass `mentionedBoardIds` for one release as a
+      // back-compat shim — if a stale frame (e.g. a service worker
+      // cache) is still POSTing the old shape, the server can
+      // continue accepting it without breaking sends.
+      totalMentions > 0
+        ? {
+            body: {
+              mentions,
+              mentionedBoardIds: mentions.boards,
+            },
+          }
         : undefined,
     );
 

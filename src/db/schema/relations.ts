@@ -18,7 +18,9 @@ import { designComponents } from "./design-components";
 import { designFolders } from "./design-folders";
 import { designs } from "./designs";
 import { projects } from "./projects";
+import { researchNotes } from "./research-notes";
 import { taskBoards } from "./task-boards";
+import { taskPlanRows, taskPlans } from "./task-plans";
 import { tasks } from "./tasks";
 import { teamDesignTokens } from "./team-design-tokens";
 
@@ -85,6 +87,64 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   boardFolders: many(boardFolders),
   designFolders: many(designFolders),
   taskBoards: many(taskBoards),
+  researchNotes: many(researchNotes),
+  taskPlans: many(taskPlans),
+}));
+
+export const researchNotesRelations = relations(
+  researchNotes,
+  ({ one, many }) => ({
+    team: one(organization, {
+      fields: [researchNotes.teamId],
+      references: [organization.id],
+    }),
+    project: one(projects, {
+      fields: [researchNotes.projectId],
+      references: [projects.id],
+    }),
+    author: one(user, {
+      fields: [researchNotes.authorId],
+      references: [user.id],
+    }),
+    // Plans handed off from this note. The fk lives on `task_plans`
+    // (sourceNoteId), so the note is the parent here.
+    derivedPlans: many(taskPlans),
+  }),
+);
+
+export const taskPlansRelations = relations(taskPlans, ({ one, many }) => ({
+  team: one(organization, {
+    fields: [taskPlans.teamId],
+    references: [organization.id],
+  }),
+  project: one(projects, {
+    fields: [taskPlans.projectId],
+    references: [projects.id],
+  }),
+  author: one(user, {
+    fields: [taskPlans.authorId],
+    references: [user.id],
+  }),
+  sourceNote: one(researchNotes, {
+    fields: [taskPlans.sourceNoteId],
+    references: [researchNotes.id],
+  }),
+  rows: many(taskPlanRows),
+}));
+
+export const taskPlanRowsRelations = relations(taskPlanRows, ({ one }) => ({
+  plan: one(taskPlans, {
+    fields: [taskPlanRows.planId],
+    references: [taskPlans.id],
+  }),
+  assignee: one(user, {
+    fields: [taskPlanRows.assigneeId],
+    references: [user.id],
+  }),
+  createdTask: one(tasks, {
+    fields: [taskPlanRows.createdTaskId],
+    references: [tasks.id],
+  }),
 }));
 
 export const taskBoardsRelations = relations(taskBoards, ({ one, many }) => ({

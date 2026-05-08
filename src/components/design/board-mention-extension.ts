@@ -2,33 +2,37 @@
 
 import Mention from "@tiptap/extension-mention";
 import { ReactRenderer } from "@tiptap/react";
-import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion";
-import { createRoot, type Root } from "react-dom/client";
+import type {
+  SuggestionKeyDownProps,
+  SuggestionProps,
+} from "@tiptap/suggestion";
 import { createElement, type ComponentType } from "react";
+import { createRoot, type Root } from "react-dom/client";
 
 import {
   BoardMentionList,
   type BoardMentionItem,
   type BoardMentionListHandle,
   type BoardMentionListProps,
+  type MentionKind,
 } from "./board-mention-suggestion";
 
 /**
- * Configuration the consumer (the design-chat composer) supplies to
- * the Mention extension factory below. Kept tiny on purpose:
+ * Configuration the consumer (the design-chat composer, the rich-text
+ * editor) supplies to the Mention extension factory below. Kept tiny
+ * on purpose:
  *
  *  - `searchBoards` — the network call (or anything else) that
- *    returns the suggestion items for a given query string. Wrapping
- *    it on the consumer side means tests can swap in a fake without
- *    intercepting fetch.
+ *    returns suggestion items for a query string. The name is
+ *    historical; the items can now be of any {@link MentionKind}.
  *
- *  - `getSelectedIds` — read-only snapshot of which boards are
- *    already mentioned in the current message; the dropdown dims
- *    those rows and refuses to insert duplicates.
+ *  - `getSelectedIds` — read-only snapshot of which items are
+ *    already mentioned in the current message. Dropdown dims those
+ *    rows and refuses to insert duplicates.
  *
  *  - `getCapReached` — `true` once the user has hit the per-message
- *    mention cap (3). The dropdown switches to a read-only
- *    "remove one to add another" notice in that state.
+ *    mention cap. The dropdown switches to a read-only "remove one
+ *    to add another" notice in that state.
  */
 export interface BoardMentionConfig {
   searchBoards: (query: string) => Promise<BoardMentionItem[]>;
@@ -37,41 +41,79 @@ export interface BoardMentionConfig {
 }
 
 /**
- * Build a configured Mention extension instance for the design chat.
+ * Build a configured Mention extension for any consumer.
  *
- * - Trigger char: `@`.
- * - The popover is a React component rendered into a free-floating
- *   `<div>` we anchor to the caret rect each frame. We render with
- *   `react-dom/client`'s `createRoot` so the popover lives in its own
- *   React subtree, independent of the editor host.
- * - The mention node renders as `@<board-name>` in the editor and
- *   carries a `data-id` we read at submit time to build the
- *   `mentionedBoardIds` payload. (See `extractBoardMentions` in
- *   `design-chat.tsx`.)
+ * The mention node carries three attrs:
+ *   - `id`    — opaque entity id (board / research note / plan).
+ *   - `label` — the display name at insertion time. Used for
+ *     `renderText` (`@<label>`) and as the visible chip text.
+ *   - `kind`  — discriminator (`board`, `research`, `plan`). Persisted
+ *     in the saved HTML as `data-mention-kind` so the read-only
+ *     renderer can rewrite it into the correct link.
+ *
+ * Trigger char: `@`. The popover groups results by kind.
  */
 export function createBoardMentionExtension(config: BoardMentionConfig) {
-  return Mention.configure({
+  return Mention.extend({
+    /**
+     * Extend the default Mention attribute set with `kind`. Tiptap
+     * round-trips it through `renderHTML` so the saved DOM carries
+     * `data-mention-kind="<kind>"` and `data-id="<id>"` — the
+     * renderer reads both back when rewriting chips into anchors.
+     */
+    addAttributes() {
+      return {
+        ...this.parent?.(),
+        kind: {
+          default: "board",
+          parseHTML: (element) =>
+            element.getAttribute("data-mention-kind") ?? "board",
+          renderHTML: (attrs) => {
+            // The static `data-mention-kind="board"` from the
+            // extension's HTMLAttributes provides a reasonable
+            // fallback; we override per-node here.
+            const kind = (attrs.kind as MentionKind) ?? "board";
+            return { "data-mention-kind": kind };
+          },
+        },
+      };
+    },
+  }).configure({
     HTMLAttributes: {
       class:
         "mention-board inline-flex items-center rounded bg-zinc-700/60 px-1 py-0.5 text-zinc-100",
+      // Kind is overridden per-node by the attribute above; the
+      // static value is just the safest fallback for legacy mentions
+      // that predate the kind attr.
       "data-mention-kind": "board",
     },
     renderText({ node }) {
       const label = node.attrs.label ?? node.attrs.id ?? "";
+      // Same `@<label>` shape regardless of kind. Agents prompted
+      // with this text will pick up the chip via the digest we ship
+      // alongside it; visually distinguishing the kind in plain
+      // text would create noise (`@board:Foo` vs `@research:Bar`)
+      // that the user didn't type.
       return `@${label}`;
     },
     deleteTriggerWithBackspace: true,
     suggestion: {
       char: "@",
-      // Boards have spaces in their names ("Onboarding flow"), but
-      // the popover already filters live — keeping this `false` means
-      // the user types `@on`, picks the row, gets the chip. Allowing
-      // spaces would force them to press Escape to escape the trigger
-      // and ruin the freeform text experience.
+      // Names can have spaces ("Onboarding flow"), but the popover
+      // already filters live. `@on` → pick → chip is the desired
+      // flow; allowing spaces would force Escape to bail out and
+      // ruin freeform text.
       allowSpaces: false,
-      // The standard Mention command — replaces the in-flight
-      // suggestion text with a real `mention` node carrying our attrs.
       command: ({ editor, range, props }) => {
+        // Tiptap's MentionNodeAttrs doesn't know about our `kind`
+        // extension attr — we widened the popover's command shape
+        // ourselves. Cast through the loose suggestion-props type so
+        // we can read `kind` without fighting the upstream typings.
+        const attrs = props as unknown as {
+          id: string;
+          label?: string;
+          kind?: MentionKind;
+        };
         const nodeAfter = editor.view.state.selection.$to.nodeAfter;
         const overrideSpace = nodeAfter?.text?.startsWith(" ");
         if (overrideSpace) {
@@ -83,7 +125,11 @@ export function createBoardMentionExtension(config: BoardMentionConfig) {
           .insertContentAt(range, [
             {
               type: "mention",
-              attrs: { id: props.id, label: props.label },
+              attrs: {
+                id: attrs.id,
+                label: attrs.label,
+                kind: attrs.kind ?? "board",
+              },
             },
             { type: "text", text: " " },
           ])
@@ -150,11 +196,6 @@ function createSuggestionRenderer(
 
   const root: Root = createRoot(host);
 
-  // ReactRenderer would normally manage this, but we already have a
-  // root + host — we just use it as the imperative-handle holder so
-  // we can forward key events to the list. (`ReactRenderer` exposes
-  // `ref.current.onKeyDown` for the same reason; we bypass it to
-  // keep the mounting story explicit.)
   const handleRef: { current: BoardMentionListHandle | null } = {
     current: null,
   };
@@ -164,10 +205,11 @@ function createSuggestionRenderer(
     latestProps = props;
     const rect = props.clientRect?.();
     if (rect) {
-      // Anchor below the caret with a small gap. Flip above when
-      // there's not enough room below — keeps the popover on screen
-      // for users typing near the bottom of the viewport.
-      const popoverHeightEstimate = 220;
+      // The cross-mention popover is taller (3 sections + headers)
+      // than the board-only one, so the height estimate is bumped a
+      // bit. We still flip above when the bottom of the popover
+      // would clip the viewport.
+      const popoverHeightEstimate = 320;
       const wouldOverflowBottom =
         rect.bottom + popoverHeightEstimate > window.innerHeight;
       const top = wouldOverflowBottom
@@ -183,15 +225,12 @@ function createSuggestionRenderer(
       selectedIds: config.getSelectedIds(),
     };
     root.render(
-      createElement(
-        BoardMentionListWithRef,
-        {
-          ...componentProps,
-          forwardedRef: (h) => {
-            handleRef.current = h;
-          },
+      createElement(BoardMentionListWithRef, {
+        ...componentProps,
+        forwardedRef: (h) => {
+          handleRef.current = h;
         },
-      ),
+      }),
     );
   };
 
@@ -217,12 +256,6 @@ function createSuggestionRenderer(
 
 /* ─── Forward-ref bridge ───────────────────────────────── */
 
-/**
- * Tiny adapter so we can hand a callback ref through `createElement`
- * (the JSX-style `ref={…}` syntax is awkward here because we're
- * outside of JSX). The list itself uses `forwardRef`, so we route
- * `forwardedRef` → `ref` once and pass the rest through.
- */
 const BoardMentionListWithRef: ComponentType<
   BoardMentionListProps & {
     forwardedRef: (h: BoardMentionListHandle | null) => void;

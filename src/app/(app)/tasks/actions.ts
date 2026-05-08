@@ -18,7 +18,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { db } from "@/db";
-import { member, tasks } from "@/db/schema";
+import { member, taskPlanRows, taskPlans, tasks } from "@/db/schema";
 import { logActivity } from "@/lib/activity";
 import {
   requireActiveProject,
@@ -355,6 +355,13 @@ export interface TaskListRow {
   /** Subtask count on the same team. 0 for tasks without subtasks. */
   subtaskCount: number;
   doneSubtaskCount: number;
+  /**
+   * When this task was materialised from a plan row, the plan that
+   * produced it. Null otherwise. We only resolve this for the row
+   * shown in the list (one extra batched query) so the UI can render
+   * a small “From plan: X” badge without an n+1.
+   */
+  sourcePlan: { id: string; title: string } | null;
 }
 
 /**
@@ -506,6 +513,30 @@ export async function listTopLevelTasks(
     counts.set(row.parentTaskId, entry);
   }
 
+  // Resolve `sourcePlan` for any task in this list that was
+  // materialised from a plan row. One batched join — plans are rare
+  // relative to total tasks so most rows produce a no-op lookup,
+  // but the join is cheap and avoids n+1 lookups in the renderer.
+  const planLinks = await db
+    .select({
+      taskId: taskPlanRows.createdTaskId,
+      planId: taskPlans.id,
+      planTitle: taskPlans.title,
+    })
+    .from(taskPlanRows)
+    .innerJoin(taskPlans, eq(taskPlanRows.planId, taskPlans.id))
+    .where(
+      and(
+        eq(taskPlans.teamId, teamId),
+        inArray(taskPlanRows.createdTaskId, ids),
+      ),
+    );
+  const planByTask = new Map<string, { id: string; title: string }>();
+  for (const link of planLinks) {
+    if (!link.taskId) continue;
+    planByTask.set(link.taskId, { id: link.planId, title: link.planTitle });
+  }
+
   return rows.map((row) => ({
     id: row.id,
     title: row.title,
@@ -524,6 +555,7 @@ export async function listTopLevelTasks(
       : null,
     subtaskCount: counts.get(row.id)?.total ?? 0,
     doneSubtaskCount: counts.get(row.id)?.done ?? 0,
+    sourcePlan: planByTask.get(row.id) ?? null,
   }));
 }
 
@@ -543,6 +575,12 @@ export interface TaskDetail {
     id: string;
     title: string;
   } | null;
+  /**
+   * If the task was created by the planner from a `task_plan_row`,
+   * the plan that produced it (id + title). Null when the task was
+   * created directly by a human in the create-task dialog.
+   */
+  sourcePlan: { id: string; title: string } | null;
   creator: {
     userId: string;
     name: string;
@@ -608,6 +646,26 @@ export async function getTaskDetail(taskId: string): Promise<TaskDetail | null> 
     },
   });
 
+  // Resolve the source plan, if any. One row per task at most
+  // (`task_plan_rows.created_task_id` is unique-ish in practice —
+  // a row only ever materialises once). We still `findFirst` to be
+  // defensive against the legacy seed data we shipped before the fk
+  // was enforced.
+  const planLink = await db
+    .select({ planId: taskPlans.id, planTitle: taskPlans.title })
+    .from(taskPlanRows)
+    .innerJoin(taskPlans, eq(taskPlanRows.planId, taskPlans.id))
+    .where(
+      and(
+        eq(taskPlanRows.createdTaskId, taskId),
+        eq(taskPlans.teamId, teamId),
+      ),
+    )
+    .limit(1);
+  const sourcePlan = planLink[0]
+    ? { id: planLink[0].planId, title: planLink[0].planTitle }
+    : null;
+
   return {
     id: row.id,
     title: row.title,
@@ -619,6 +677,7 @@ export async function getTaskDetail(taskId: string): Promise<TaskDetail | null> 
     updatedAt: row.updatedAt,
     completedAt: row.completedAt,
     parentTask: row.parent ? { id: row.parent.id, title: row.parent.title } : null,
+    sourcePlan,
     creator: {
       userId: row.creator.id,
       name: row.creator.name,
