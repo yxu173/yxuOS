@@ -29,7 +29,20 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} dark h-full antialiased`}
       suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col bg-background text-foreground">
+      {/*
+        `suppressHydrationWarning` mirrors the one on <html> above. Browser
+        extensions (ColorZilla's `cz-shortcut-listen`, Grammarly's
+        `data-gr-*`, dark-reader, LastPass, …) routinely inject attributes
+        on <body> before React hydrates, producing benign "server HTML
+        didn't match client" warnings. We can't control extensions on
+        users' machines, so we tell React to stop tripping on body-level
+        attribute drift. This is React's officially recommended fix:
+        https://react.dev/reference/react-dom/client/hydrateRoot#suppressing-unavoidable-hydration-mismatch-errors
+      */}
+      <body
+        className="min-h-full flex flex-col bg-background text-foreground"
+        suppressHydrationWarning
+      >
         {children}
       </body>
     </html>
