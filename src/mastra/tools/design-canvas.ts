@@ -671,6 +671,86 @@ export const duplicateArtboardTool = createTool({
   ),
 });
 
+/* ─── screenshot_artboard ──────────────────────────────── */
+
+export const screenshotArtboardTool = createTool({
+  id: "screenshot_artboard",
+  description:
+    "Capture a rendered PNG screenshot of an artboard and feed it back as an image input on the next turn — so you can SEE what you actually drew. Use this after `add_artboard` for any tall (>1200px) or visually critical screen, after a `apply_theme` reskin, or whenever the user reports something looks broken (overflow, contrast, alignment) and you can't tell from the JSON. Then look at the image, decide what's wrong, and `patch_node` / `patch_nodes` / `move_nodes` to fix it. The screenshot is auto-downscaled if it would exceed ~2 MB; if even the smallest scale is too large, you get `size_limit` and should screenshot a sub-region by patching the artboard temporarily smaller.",
+  inputSchema: z.object({
+    artboardId: z
+      .string()
+      .describe("Id of the artboard to capture (from `query_canvas`)."),
+    scale: z
+      .number()
+      .min(0.25)
+      .max(2)
+      .optional()
+      .describe(
+        "Render scale (1 = artboard's pixel size). Default 1; the executor auto-downscales if the encoded PNG exceeds ~2 MB.",
+      ),
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      artboardId: z.string(),
+      width: z.number(),
+      height: z.number(),
+      /** Base64 data URL — converted to image/png file-data when fed
+       *  back to the model. Don't quote this back at the user; just
+       *  read it. */
+      dataUrl: z.string(),
+      /** Effective scale used after any auto-downscaling. */
+      scale: z.number(),
+      sizeBytes: z.number(),
+    }),
+  ),
+  // Convert the screenshot data URL into a real image input on the
+  // next inference step. Without this, Claude would just see a base64
+  // blob inside JSON and not be able to "look" at the design.
+  //
+  // Mastra threads `toModelOutput` straight through to the AI SDK
+  // language-model layer; the return shape is LanguageModelV3ToolResultOutput.
+  toModelOutput: (output: unknown) => {
+    if (!output || typeof output !== "object") {
+      return { type: "json", value: null };
+    }
+    const result = output as {
+      ok?: boolean;
+      data?: {
+        artboardId: string;
+        width: number;
+        height: number;
+        dataUrl: string;
+        scale: number;
+      };
+      error?: { code: string; message: string; hint?: string };
+    };
+    if (!result.ok || !result.data) {
+      // Errors stay as JSON so the agent can switch on `error.code`.
+      return { type: "json", value: result };
+    }
+    const { artboardId, width, height, dataUrl, scale } = result.data;
+    // Strip the "data:image/png;base64," prefix; file-data wants raw
+    // base64 bytes.
+    const base64 = dataUrl.includes(",") ? dataUrl.split(",", 2)[1]! : dataUrl;
+    return {
+      type: "content",
+      value: [
+        {
+          type: "text",
+          text: `Screenshot of artboard "${artboardId}" — ${width}×${height} px @ ${scale}× scale. Look at it; the JSON tree might be valid but the rendered pixels can still be off.`,
+        },
+        {
+          type: "file-data",
+          mediaType: "image/png",
+          data: base64,
+          filename: `${artboardId}.png`,
+        },
+      ],
+    };
+  },
+});
+
 /* ─── update_component ─────────────────────────────────── */
 
 export const updateComponentTool = createTool({
@@ -711,6 +791,7 @@ export const designCanvasTools = {
   delete_nodes: deleteNodesTool,
   move_nodes: moveNodesTool,
   duplicate_node: duplicateNodeTool,
+  screenshot_artboard: screenshotArtboardTool,
   apply_theme: applyThemeTool,
   extract_component: extractComponentTool,
   update_component: updateComponentTool,

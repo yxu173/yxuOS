@@ -38,6 +38,7 @@ import {
   executePatchNode,
   executePatchNodes,
   executeQueryCanvas,
+  executeScreenshotArtboard,
   executeUpdateArtboard,
   executeUpdateComponent,
 } from "./canvas-tools";
@@ -62,6 +63,7 @@ const TOOL_LABELS: Record<string, string> = {
   delete_nodes: "Removing elements",
   move_nodes: "Moving elements",
   duplicate_node: "Duplicating element",
+  screenshot_artboard: "Capturing screenshot",
   apply_theme: "Applying theme",
   extract_component: "Saving component",
   update_component: "Updating component",
@@ -188,6 +190,13 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
               emit(
                 executeDuplicateArtboard(
                   toolCall.input as Parameters<typeof executeDuplicateArtboard>[0],
+                ),
+              );
+              break;
+            case "screenshot_artboard":
+              emit(
+                await executeScreenshotArtboard(
+                  toolCall.input as Parameters<typeof executeScreenshotArtboard>[0],
                 ),
               );
               break;
@@ -734,6 +743,14 @@ function describeToolResult(
     }
     case "duplicate_node":
       return "Duplicated element";
+    case "screenshot_artboard": {
+      if (data?.width && data?.height) {
+        const scale = data.scale ?? 1;
+        const scaleNote = scale < 1 ? ` · ${scale}×` : "";
+        return `Captured ${data.width}×${data.height}${scaleNote}`;
+      }
+      return "Captured screenshot";
+    }
     case "apply_theme":
       if (data) {
         return `Themed ${data.patchCount} element${

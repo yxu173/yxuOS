@@ -946,6 +946,147 @@ export async function executeUpdateComponent(
   });
 }
 
+/* ─── screenshot_artboard ──────────────────────────────── */
+
+export interface ScreenshotArtboardInput {
+  artboardId: string;
+  scale?: number;
+}
+
+export interface ScreenshotArtboardOutput {
+  artboardId: string;
+  width: number;
+  height: number;
+  dataUrl: string;
+  scale: number;
+  sizeBytes: number;
+}
+
+/** Maximum payload size for the screenshot data URL. Past ~2 MB the
+ *  combined JSON envelope + base64 overhead starts to choke smaller
+ *  inference contexts and slow streaming. The executor auto-retries at
+ *  successively smaller scales before giving up with `size_limit`. */
+const MAX_SCREENSHOT_BYTES = 2 * 1024 * 1024;
+
+const FALLBACK_SCALES = [1, 0.75, 0.5, 0.35, 0.25] as const;
+
+/**
+ * Capture a PNG of the rendered artboard frame and hand it back to the
+ * agent so it can self-review.
+ *
+ * The DOM ref is found by `data-artboard-frame-id` (set in
+ * artboard-view.tsx) — no extra context needed because the rendered
+ * design is already in the live DOM tree of this tab.
+ *
+ * Anti-blowup: the executor walks `FALLBACK_SCALES` from the requested
+ * scale down, returning the first encoding that fits in
+ * `MAX_SCREENSHOT_BYTES`. If even the smallest scale is too big, fails
+ * with `size_limit` so the agent knows to crop / shrink the artboard
+ * before retrying.
+ */
+export async function executeScreenshotArtboard(
+  input: ScreenshotArtboardInput,
+): Promise<ToolResult<ScreenshotArtboardOutput>> {
+  const state = useDesignCanvas.getState();
+  const ab = state.artboards.find((a) => a.id === input.artboardId);
+  if (!ab) {
+    return fail(
+      "not_found",
+      `Artboard "${input.artboardId}" not found.`,
+      "Call `query_canvas` to refresh artboard ids.",
+    );
+  }
+
+  // Look up the rendered frame DOM. In the unlikely case the artboard
+  // is offscreen / not yet mounted, surface a recoverable error so the
+  // agent can wait a tick and retry.
+  const node = document.querySelector<HTMLElement>(
+    `[data-artboard-frame-id="${input.artboardId}"]`,
+  );
+  if (!node) {
+    return fail(
+      "canvas_unavailable",
+      "Artboard isn't rendered in the current viewport — can't screenshot it.",
+      "Wait for the next tool call or scroll the artboard into view.",
+    );
+  }
+
+  // Lazy-load html-to-image (~25 KB) only when the agent actually asks
+  // for a screenshot. Avoids regressing the design page's first paint.
+  const { toPng } = await import("html-to-image");
+
+  // Determine which scales to try. If the model requested a specific
+  // scale we honour it as the starting point and walk down from there.
+  const requested = input.scale ?? 1;
+  const scales = FALLBACK_SCALES.filter((s) => s <= requested);
+  if (scales.length === 0) scales.push(0.25); // safety net
+
+  let lastErr: unknown = null;
+  for (const scale of scales) {
+    try {
+      const dataUrl = await toPng(node, {
+        pixelRatio: scale,
+        cacheBust: true,
+        // Fonts loaded via system stack don't need embedding; skipping
+        // their fetch keeps the snapshot fast and avoids CORS noise.
+        skipFonts: true,
+        backgroundColor: ab.background ?? "#ffffff",
+      });
+      const sizeBytes = estimateDataUrlBytes(dataUrl);
+      if (sizeBytes <= MAX_SCREENSHOT_BYTES) {
+        return ok({
+          artboardId: ab.id,
+          width: Math.round(ab.w * scale),
+          height: Math.round(ab.h * scale),
+          dataUrl,
+          scale,
+          sizeBytes,
+        });
+      }
+      // Too big — drop down a notch and try again.
+      lastErr = new Error(
+        `Screenshot too large at ${scale}× (${formatBytes(sizeBytes)}); retrying smaller.`,
+      );
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+
+  // If every fallback scale failed for a non-size reason (e.g.
+  // html-to-image threw), fall through to `internal` instead of a
+  // misleading `size_limit`. Detect the difference by checking whether
+  // the last error came from html-to-image or our own size guard.
+  const allWereSizeBlocked =
+    lastErr instanceof Error && lastErr.message.includes("Screenshot too large");
+  if (!allWereSizeBlocked && lastErr) {
+    return fail(
+      "internal",
+      lastErr instanceof Error ? lastErr.message : "Failed to capture screenshot.",
+    );
+  }
+  return fail(
+    "size_limit",
+    `Could not produce a screenshot under ${formatBytes(MAX_SCREENSHOT_BYTES)} even at the smallest scale.`,
+    "The artboard may be too tall or too dense — temporarily shrink it via `update_artboard` (e.g. height 1200) and retry, or split the design into multiple artboards.",
+  );
+}
+
+/** Approximate the decoded byte size of a data URL without actually
+ *  decoding. Base64 = ~4/3 of the binary. Subtract the prefix once. */
+function estimateDataUrlBytes(dataUrl: string): number {
+  const commaIdx = dataUrl.indexOf(",");
+  const b64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+  // Base64 padding: each `=` represents one fewer byte.
+  const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+  return Math.floor((b64.length * 3) / 4) - padding;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${bytes} B`;
+}
+
 /* ─── helpers ──────────────────────────────────────────── */
 
 // Re-exported so the chat can ask "is this id even in the tree?" before

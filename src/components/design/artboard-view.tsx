@@ -70,8 +70,10 @@ export function ArtboardView({
         </span>
       </div>
 
-      {/* Frame */}
+      {/* Frame — `data-artboard-frame-id` lets the screenshot tool grab
+          just the rendered surface (without the floating header) by id. */}
       <div
+        data-artboard-frame-id={artboard.id}
         className="relative h-full w-full overflow-hidden rounded-md"
         style={{
           background: artboard.background ?? "#ffffff",
