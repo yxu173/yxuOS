@@ -18,4 +18,5 @@ export * from "./designs";
 export * from "./projects";
 export * from "./task-boards";
 export * from "./tasks";
+export * from "./team-design-tokens";
 export * from "./relations";

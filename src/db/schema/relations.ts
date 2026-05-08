@@ -20,6 +20,7 @@ import { designs } from "./designs";
 import { projects } from "./projects";
 import { taskBoards } from "./task-boards";
 import { tasks } from "./tasks";
+import { teamDesignTokens } from "./team-design-tokens";
 
 /**
  * Drizzle relations registry.
@@ -46,15 +47,29 @@ export const userRelations = relations(user, ({ many }) => ({
   invitations: many(invitation),
 }));
 
-export const organizationRelations = relations(organization, ({ many }) => ({
-  members: many(member),
-  invitations: many(invitation),
-  comments: many(comments),
-  activityRows: many(activityLog),
-  tasks: many(tasks),
-  attachments: many(attachments),
-  projects: many(projects),
-}));
+export const organizationRelations = relations(
+  organization,
+  ({ many, one }) => ({
+    members: many(member),
+    invitations: many(invitation),
+    comments: many(comments),
+    activityRows: many(activityLog),
+    tasks: many(tasks),
+    attachments: many(attachments),
+    projects: many(projects),
+    designTokens: one(teamDesignTokens),
+  }),
+);
+
+export const teamDesignTokensRelations = relations(
+  teamDesignTokens,
+  ({ one }) => ({
+    team: one(organization, {
+      fields: [teamDesignTokens.teamId],
+      references: [organization.id],
+    }),
+  }),
+);
 
 export const projectsRelations = relations(projects, ({ one, many }) => ({
   team: one(organization, {

@@ -41,6 +41,17 @@ export const designs = pgTable(
      */
     snapshot: jsonb("snapshot").$type<Record<string, unknown> | null>(),
     /**
+     * Per-design design tokens — flat `Record<dotted-path, string|number>`
+     * (e.g. `{ "color.accent": "#10b981", "radius.md": 12 }`). Overrides
+     * the team-default tokens row on a per-key basis. Resolved by the
+     * renderer wherever a style value is `"{token.path}"`.
+     *
+     * Nullable because most existing designs don't have any custom
+     * tokens; null is treated as `{}` (use team defaults / let literals
+     * pass through).
+     */
+    tokens: jsonb("tokens").$type<Record<string, string | number> | null>(),
+    /**
      * Public share token — anyone with `/share/design/<token>` can view the
      * design read-only.
      */
