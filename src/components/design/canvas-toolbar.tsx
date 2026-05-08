@@ -3,6 +3,7 @@
 import {
   Maximize2,
   Plus,
+  Route,
   Sparkles,
   ZoomIn,
   ZoomOut,
@@ -16,6 +17,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 
 import { MAX_ZOOM, MIN_ZOOM, useDesignCanvas } from "./canvas-store";
 import { SAMPLE_LANDING } from "./sample-design";
@@ -32,6 +34,10 @@ export function CanvasToolbar() {
     (state) => state.updateArtboardDesign,
   );
   const selection = useDesignCanvas((state) => state.selection);
+  const flowViewEnabled = useDesignCanvas((state) => state.flowViewEnabled);
+  const setFlowViewEnabled = useDesignCanvas(
+    (state) => state.setFlowViewEnabled,
+  );
 
   const showDevTools =
     typeof process !== "undefined" &&
@@ -167,6 +173,25 @@ export function CanvasToolbar() {
           aria-label="Fit to screen"
         >
           <Maximize2 className="size-4" />
+        </Button>
+        <span className="mx-1 h-5 w-px bg-white/10" />
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => setFlowViewEnabled(!flowViewEnabled)}
+          title={flowViewEnabled ? "Hide flow arrows" : "Show flow arrows"}
+          aria-label={
+            flowViewEnabled ? "Hide flow arrows" : "Show flow arrows"
+          }
+          aria-pressed={flowViewEnabled}
+          className={cn(
+            // Active state: blue tint to mirror the arrow color so the
+            // toggle reads as "the same kind of thing the canvas just
+            // started showing".
+            flowViewEnabled && "bg-blue-500/20 text-blue-300 hover:bg-blue-500/25",
+          )}
+        >
+          <Route className="size-4" />
         </Button>
         <span className="mx-1 h-5 w-px bg-white/10" />
         <DropdownMenu>

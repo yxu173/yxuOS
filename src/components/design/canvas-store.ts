@@ -24,6 +24,12 @@ interface DesignCanvasState {
   /** Selected node inside an artboard — `id` of a DesignNode. Drives the
    * inspector panel. */
   selectedNodeId: string | null;
+  /**
+   * Toggle for flow-view: when true, an SVG overlay draws prototype
+   * arrows from each `flowTo` source to its target artboard. UI-only
+   * state — not in undo history, not persisted.
+   */
+  flowViewEnabled: boolean;
 
   /* ─── Camera ────────────────────────────── */
   setCamera: (next: Camera | ((prev: Camera) => Camera)) => void;
@@ -50,6 +56,9 @@ interface DesignCanvasState {
     patch: Partial<DesignNode>,
   ) => void;
   deleteNodeInArtboard: (artboardId: string, nodeId: string) => void;
+
+  /* ─── Flow-view ──────────────────────────────────── */
+  setFlowViewEnabled: (enabled: boolean) => void;
 }
 
 const clamp = (value: number, min: number, max: number) =>
@@ -89,6 +98,7 @@ export const useDesignCanvas = create<DesignCanvasState>()(
   camera: { x: 120, y: 120, zoom: 0.5 },
   selection: [],
   selectedNodeId: null,
+  flowViewEnabled: false,
 
   setCamera: (next) =>
     set((state) => ({
@@ -172,6 +182,8 @@ export const useDesignCanvas = create<DesignCanvasState>()(
       selectedNodeId:
         state.selectedNodeId === nodeId ? null : state.selectedNodeId,
     })),
+
+  setFlowViewEnabled: (enabled) => set({ flowViewEnabled: enabled }),
     }),
     {
       // Only the artboard tree is undoable. Camera + selection are

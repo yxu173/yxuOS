@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArtboardView } from "./artboard-view";
 import { CanvasToolbar } from "./canvas-toolbar";
 import { useDesignCanvas } from "./canvas-store";
+import { FlowOverlay } from "./flow-overlay";
 import { SelectionOverlay } from "./selection-overlay";
 
 const PAN_BUTTON = 0; // primary mouse button
@@ -215,6 +216,11 @@ export function CanvasViewport() {
             onPointerDownArtboard={onPointerDownArtboard}
           />
         ))}
+        {/* Flow arrows live above the artboards but below the
+            selection chrome — selection still wins so users can
+            click through arrows to the artboards beneath
+            (pointer-events: none on the SVG). */}
+        <FlowOverlay />
         <SelectionOverlay />
       </div>
 
