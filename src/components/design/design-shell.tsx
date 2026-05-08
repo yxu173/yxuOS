@@ -83,14 +83,32 @@ export function DesignShell({
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
 
-  // Hydrate the zustand store with the server-fetched artboards on first
-  // render via a lazy initializer (no flash of empty canvas). Clears the
-  // undo stack right after so the first user-visible state — what the
-  // server sent — is the floor of the history (Cmd+Z can never roll
-  // 'before the design loaded' to an empty canvas).
+  // Hydrate the zustand store with the server-fetched artboards on the
+  // first render of this DesignShell instance. Clears the undo stack
+  // right after so the first user-visible state — what the server
+  // sent — is the floor of the history (Cmd+Z can never roll to an
+  // empty canvas "before the design loaded").
+  //
+  // We can't call `setArtboards` *during* render: zustand's `set`
+  // synchronously notifies every subscriber, and any subscriber that
+  // happens to be alive at that moment (e.g. <FlowOverlay/> kept
+  // mounted across a route transition, or any node React's
+  // StrictMode double-invoke pulls back into existence) ends up
+  // taking a setState mid-DesignShell-render, which React 19 flags
+  // as "Cannot update a component while rendering a different
+  // component".
+  //
+  // Workaround: lazy-initialise once per mount via `useState`, but
+  // *defer* the store mutation to a microtask. Microtasks drain
+  // after the current React commit and before the browser paints,
+  // so the user still sees the hydrated canvas on the first frame
+  // (no empty-canvas flash) while React's render tree is no longer
+  // on the stack when the subscriber notification fires.
   useState(() => {
-    useDesignCanvas.getState().setArtboards(initialArtboards);
-    useDesignCanvas.temporal.getState().clear();
+    queueMicrotask(() => {
+      useDesignCanvas.getState().setArtboards(initialArtboards);
+      useDesignCanvas.temporal.getState().clear();
+    });
     return null;
   });
 
