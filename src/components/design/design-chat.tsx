@@ -51,7 +51,10 @@ import {
   type TokenReadContext,
   type TokenWriteContext,
 } from "./canvas-tools";
+import { useDesignCanvas } from "./canvas-store";
 import { useComponentLibrary } from "./component-library-context";
+import { findNodePathInTree, nodeLabel } from "./node-utils";
+import { PinnedElementsBar } from "./pinned-elements-bar";
 import { useTokens } from "./token-context";
 
 export interface DesignChatProps {
@@ -115,6 +118,9 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
   const library = useComponentLibrary();
   const tokens = useTokens();
   const router = useRouter();
+  // Reactive view of pinned-element count so the Send button enables
+  // when only pins are present (no text, no file attachments).
+  const pinnedCount = useDesignCanvas((s) => s.selectedNodeIds.length);
 
   // Mirror `messages` into a ref so async tool dispatch can read the
   // latest stream snapshot without retriggering useChat on every
@@ -410,14 +416,26 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
   const submit = async () => {
     const text = input.trim();
     if (isStreaming) return;
-    if (!text && pending.length === 0) return;
+    // Pinned elements alone are enough to send — the chips ARE the
+    // user's intent ("look at this and tell me what to do with it").
+    const pinnedIds = useDesignCanvas.getState().selectedNodeIds;
+    if (!text && pending.length === 0 && pinnedIds.length === 0) return;
 
-    // Convert each File to a data-URL FileUIPart so the AI SDK can pass
-    // it through to the model without the chat needing to upload to
-    // storage first. Persistent asset uploads land in the next commit.
-    const files =
+    // Build the pinned-elements payload BEFORE clearing state so a
+    // mid-flight cancellation doesn't lose the picks. Each pinned id
+    // becomes (a) one entry in the JSON header so the agent learns
+    // the artboardId/nodeId/type/label/parentChain, and (b) one
+    // FileUIPart with a per-node PNG so the agent can SEE it.
+    const pinnedPayload =
+      pinnedIds.length > 0 ? await buildPinnedPayload(pinnedIds) : null;
+
+    // Convert each user-attached File to a data-URL FileUIPart so
+    // the AI SDK can pass it through to the model without uploading
+    // to storage first. (Persistent assets go through
+    // `save_attachment_as_asset`.)
+    const userFiles =
       pending.length === 0
-        ? undefined
+        ? []
         : await Promise.all(
             pending.map(async (p) => ({
               type: "file" as const,
@@ -427,9 +445,30 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
             })),
           );
 
+    // Order in the message context matters: pinned-elements header
+    // first (so the model sees "this is what they're talking about"
+    // before reading the prompt), then per-node screenshots, then any
+    // user-attached files, then the user's free text.
+    const headerText = pinnedPayload
+      ? `[pinned-elements] ${JSON.stringify(pinnedPayload.header)}`
+      : null;
+    const finalText = headerText
+      ? text
+        ? `${headerText}\n\n${text}`
+        : headerText
+      : // Fallback prompt only when ALL three payload slots are empty
+        // is impossible by the guard above, so we always have either
+        // text, files, or pinnedPayload here.
+        text || "What do you see in this image?";
+
+    const files = [
+      ...(pinnedPayload?.files ?? []),
+      ...userFiles,
+    ];
+
     sendMessage({
-      text: text || "What do you see in this image?",
-      files,
+      text: finalText,
+      files: files.length > 0 ? files : undefined,
     });
 
     setInput("");
@@ -437,6 +476,11 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
     for (const p of pending) URL.revokeObjectURL(p.previewUrl);
     setPending([]);
     setAttachError(null);
+    // Clear pinned elements after send — they were context for THIS
+    // message, not a sticky preference.
+    if (pinnedIds.length > 0) {
+      useDesignCanvas.getState().clearNodeSelection();
+    }
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -557,6 +601,11 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
         onDrop={onDrop}
         className="flex flex-col gap-2 border-t border-white/5 p-3"
       >
+        {/* Picked-element chips. Renders nothing when nothing is
+            pinned, so the composer doesn't grow vertically in the
+            common case. */}
+        <PinnedElementsBar />
+
         {pending.length > 0 ? (
           <div className="flex flex-wrap gap-2">
             {pending.map((p) => (
@@ -634,7 +683,9 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
             <Button
               type="submit"
               size="icon"
-              disabled={!input.trim() && pending.length === 0}
+              disabled={
+                !input.trim() && pending.length === 0 && pinnedCount === 0
+              }
               aria-label="Send message"
               title="Send"
             >
@@ -784,6 +835,133 @@ async function fileToDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error ?? new Error("read failed"));
     reader.readAsDataURL(file);
   });
+}
+
+/**
+ * Per-pinned-element payload: a concise JSON header describing each
+ * pinned node + a per-node PNG screenshot. The header lets the agent
+ * resolve "what to patch" directly (it has the artboardId + nodeId);
+ * the screenshot lets it SEE what the user pinned.
+ *
+ * Each PNG is captured at scale=1 first; if it busts the 1.5 MB cap
+ * we retry at progressively smaller scales. Mirrors the screenshot
+ * tool's anti-blowup approach. The cap is tighter than
+ * `screenshot_artboard`'s 2 MB because we send N elements and don't
+ * want a single bloated chip to crowd out the rest of the message.
+ */
+async function buildPinnedPayload(nodeIds: readonly string[]): Promise<{
+  header: { items: PinnedItemHeader[] };
+  files: Array<{
+    type: "file";
+    filename: string;
+    mediaType: string;
+    url: string;
+  }>;
+} | null> {
+  const state = useDesignCanvas.getState();
+  // Lazy-load html-to-image — same pattern as screenshot_artboard.
+  // Skipped entirely when nothing is pinned, so the chat page never
+  // pays for it just by mounting.
+  const { toPng } = await import("html-to-image");
+
+  const items: PinnedItemHeader[] = [];
+  const files: Array<{
+    type: "file";
+    filename: string;
+    mediaType: string;
+    url: string;
+  }> = [];
+
+  for (const nodeId of nodeIds) {
+    // Locate the node + its artboard + its parent chain in one pass.
+    let artboardId: string | null = null;
+    let artboardName: string | null = null;
+    let path: ReturnType<typeof findNodePathInTree> = null;
+    for (const ab of state.artboards) {
+      if (!ab.design) continue;
+      const found = findNodePathInTree(ab.design, nodeId);
+      if (found) {
+        path = found;
+        artboardId = ab.id;
+        artboardName = ab.name;
+        break;
+      }
+    }
+    if (!path || !artboardId || !artboardName) continue;
+
+    const parentChain = path.parentChain
+      .map((n) => nodeLabel(n, 24))
+      .filter((s) => s && s !== "div"); // skip generic wrappers
+    const label = nodeLabel(path.node, 64);
+
+    // Snap the rendered DOM. We've already established the node has
+    // an id (it's how we found it); query by that id, scoped to the
+    // owning artboard's frame so we don't grab a duplicate from
+    // another artboard with the same id.
+    const dom = document.querySelector<HTMLElement>(
+      `[data-artboard-frame-id="${artboardId}"] [data-node-id="${nodeId}"]`,
+    );
+    let dataUrl: string | null = null;
+    if (dom) {
+      for (const scale of [1, 0.75, 0.5, 0.35] as const) {
+        try {
+          const png = await toPng(dom, {
+            pixelRatio: scale,
+            cacheBust: true,
+            skipFonts: true,
+          });
+          if (estimateDataUrlBytes(png) <= 1.5 * 1024 * 1024) {
+            dataUrl = png;
+            break;
+          }
+        } catch {
+          // ignore — fall through to the next scale or to no PNG
+        }
+      }
+    }
+
+    items.push({
+      artboardId,
+      artboardName,
+      nodeId,
+      type: path.node.type,
+      label,
+      parentChain,
+      hasScreenshot: dataUrl !== null,
+    });
+
+    if (dataUrl) {
+      files.push({
+        type: "file",
+        // Filename encodes the id so the agent can correlate
+        // (path.node.type) + the JSON header without ambiguity.
+        filename: `pinned-${nodeId}.png`,
+        mediaType: "image/png",
+        url: dataUrl,
+      });
+    }
+  }
+
+  if (items.length === 0) return null;
+  return { header: { items }, files };
+}
+
+interface PinnedItemHeader {
+  artboardId: string;
+  artboardName: string;
+  nodeId: string;
+  type: string;
+  label: string;
+  parentChain: string[];
+  hasScreenshot: boolean;
+}
+
+/** Same approximation used by executeScreenshotArtboard. */
+function estimateDataUrlBytes(dataUrl: string): number {
+  const commaIdx = dataUrl.indexOf(",");
+  const b64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+  const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+  return Math.floor((b64.length * 3) / 4) - padding;
 }
 
 /**

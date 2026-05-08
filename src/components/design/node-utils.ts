@@ -69,6 +69,35 @@ export function findNodeInTree(
 }
 
 /**
+ * Find a node by id and return both the node AND the chain of
+ * ancestors from the root down to (but not including) the target.
+ * Used by the chat composer's "pinned elements" feature so each chip
+ * can render a breadcrumb like `Hero > nav > primary button`.
+ *
+ * Returns `null` if the id isn't in the tree.
+ */
+export function findNodePathInTree(
+  root: DesignNode,
+  targetId: string,
+): { node: DesignNode; parentChain: DesignNode[] } | null {
+  const chain: DesignNode[] = [];
+  function walk(node: DesignNode): DesignNode | null {
+    if (node.id === targetId) return node;
+    if (!hasChildren(node) || !node.children) return null;
+    chain.push(node);
+    for (const child of node.children) {
+      const found = walk(child);
+      if (found) return found;
+    }
+    chain.pop();
+    return null;
+  }
+  const node = walk(root);
+  if (!node) return null;
+  return { node, parentChain: chain };
+}
+
+/**
  * Patch a node by id with a shallow merge of `patch`. Returns a new tree
  * (immutable). If the id isn't found, the original tree is returned.
  */
@@ -369,6 +398,50 @@ export interface NodeMatch {
 
 function _truncate(value: string, limit = 60): string {
   return value.length > limit ? `${value.slice(0, limit)}…` : value;
+}
+
+/**
+ * Short human-friendly label for a node — terser than `summarise`,
+ * intended for chips, breadcrumbs, comment-target pills. Drops the
+ * type prefix when the node has its own text/label, so a button
+ * labelled "Get started" reads as just `"Get started"`. Falls back
+ * to the type when there's nothing distinguishing.
+ */
+export function nodeLabel(node: DesignNode, limit = 32): string {
+  switch (node.type) {
+    case "text":
+      return `${node.tag ?? "text"} · ${_truncate(node.text, limit)}`;
+    case "button":
+      return _truncate(node.label, limit);
+    case "link":
+      return _truncate(node.label, limit);
+    case "input":
+      return node.placeholder
+        ? `input · ${_truncate(node.placeholder, limit)}`
+        : node.label
+          ? `input · ${_truncate(node.label, limit)}`
+          : "input";
+    case "image":
+      return node.alt
+        ? `image · ${_truncate(node.alt, limit)}`
+        : node.src
+          ? "image"
+          : "image (placeholder)";
+    case "icon":
+      return `icon · ${node.name}`;
+    case "frame":
+      return node.title ? `frame · ${_truncate(node.title, limit)}` : "frame";
+    case "component-ref":
+      return `component · ${node.componentSlug}`;
+    case "div":
+    case "section":
+    case "nav":
+    case "card":
+    case "divider":
+      return node.type;
+    default:
+      return (node as { type: string }).type;
+  }
 }
 
 function summarise(node: DesignNode): string {
