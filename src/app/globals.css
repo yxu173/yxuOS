@@ -299,3 +299,36 @@
   border-top: 1px solid rgb(255 255 255 / 0.1);
   margin: 1rem 0;
 }
+
+/*
+ * The design-chat composer is a stripped-down Tiptap editor with the
+ * `chat-composer` class. It overrides a few `.prose-tiptap` defaults so
+ * the field reads like a single-line chat input — tighter line-height,
+ * no top margin between paragraphs, no chunky font-size.
+ */
+.chat-composer {
+  font-size: 13px;
+  line-height: 1.45;
+}
+.chat-composer > * + * {
+  margin-top: 0;
+}
+.chat-composer p {
+  min-height: 0;
+  margin: 0;
+}
+
+/*
+ * Inline `@board` mention chip rendered by the Mention extension.
+ * The text content already includes the `@` (the extension's
+ * `renderText` returns `@<label>`); we just style the wrapping span.
+ */
+.mention-board {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgb(63 63 70 / 0.6); /* zinc-700/60 */
+  color: rgb(244 244 245);
+  white-space: nowrap;
+}

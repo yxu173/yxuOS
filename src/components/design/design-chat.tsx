@@ -6,11 +6,17 @@ import {
   lastAssistantMessageIsCompleteWithToolCalls,
   type UIMessage,
 } from "ai";
-import { ArrowUp, Paperclip, Sparkles, Square, X } from "lucide-react";
+import { ArrowUp, Layers, Paperclip, Sparkles, Square, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ChatMarkdown } from "@/components/board/chat-markdown";
+
+import {
+  BoardMentionComposer,
+  type BoardMentionComposerHandle,
+} from "./board-mention-composer";
+import type { BoardMentionItem } from "./board-mention-suggestion";
 import { ScrollToBottomPill } from "@/components/chat/scroll-to-bottom-pill";
 import {
   ToolPart,
@@ -18,7 +24,6 @@ import {
 } from "@/components/chat/tool-part";
 import { useChatAutoScroll } from "@/components/chat/use-chat-auto-scroll";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 import {
@@ -110,10 +115,14 @@ interface PendingFile {
 }
 
 export function DesignChat({ designId, initialMessages }: DesignChatProps) {
-  const [input, setInput] = useState("");
   const [pending, setPending] = useState<PendingFile[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
-  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  // Mirror the editor's emptiness + mention count into React state
+  // so the Send button can react to typing without forcing a re-render
+  // tree on every keystroke (the editor itself is uncontrolled).
+  const [composerEmpty, setComposerEmpty] = useState(true);
+  const [mentionCount, setMentionCount] = useState(0);
+  const composerRef = useRef<BoardMentionComposerHandle | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const library = useComponentLibrary();
   const tokens = useTokens();
@@ -413,13 +422,61 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
     composerRef.current?.focus();
   }, []);
 
+  // Search callback for the @-mention suggestion popover.
+  // Pulled out as a stable identity so the editor (which captures it
+  // once) doesn't tear itself down on every render.
+  const searchBoards = useCallback(
+    async (query: string): Promise<BoardMentionItem[]> => {
+      try {
+        const url = new URL(
+          "/api/mentions/boards",
+          window.location.origin,
+        );
+        if (query) url.searchParams.set("q", query);
+        url.searchParams.set("designId", designId);
+        const res = await fetch(url.toString(), { credentials: "same-origin" });
+        if (!res.ok) return [];
+        const json = (await res.json()) as { boards?: BoardMentionItem[] };
+        return json.boards ?? [];
+      } catch {
+        return [];
+      }
+    },
+    [designId],
+  );
+
+  const composerSnapshot = useMemo(
+    () => ({
+      onChange: ({
+        isEmpty,
+        mentionCount,
+      }: {
+        isEmpty: boolean;
+        mentionCount: number;
+      }) => {
+        setComposerEmpty(isEmpty);
+        setMentionCount(mentionCount);
+      },
+    }),
+    [],
+  );
+
   const submit = async () => {
-    const text = input.trim();
     if (isStreaming) return;
+    const composer = composerRef.current;
+    const text = composer?.getText() ?? "";
+    const mentionedBoardIds = composer?.getMentionedBoardIds() ?? [];
     // Pinned elements alone are enough to send — the chips ARE the
     // user's intent ("look at this and tell me what to do with it").
     const pinnedIds = useDesignCanvas.getState().selectedNodeIds;
-    if (!text && pending.length === 0 && pinnedIds.length === 0) return;
+    if (
+      !text &&
+      pending.length === 0 &&
+      pinnedIds.length === 0 &&
+      mentionedBoardIds.length === 0
+    ) {
+      return;
+    }
 
     // Build the pinned-elements payload BEFORE clearing state so a
     // mid-flight cancellation doesn't lose the picks. Each pinned id
@@ -466,12 +523,27 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
       ...userFiles,
     ];
 
-    sendMessage({
-      text: finalText,
-      files: files.length > 0 ? files : undefined,
-    });
+    sendMessage(
+      {
+        text: finalText,
+        files: files.length > 0 ? files : undefined,
+      },
+      // The /api/design-chat/[designId] route reads `mentionedBoardIds`
+      // off the request body, looks up each board for the active team,
+      // builds a digest of the snapshot (sticky notes, frames,
+      // markdown card source, mermaid source, arrow connections),
+      // and prepends it to the user message before forwarding to the
+      // agent. None of that is visible to the user — the persisted
+      // text gets stripped client-side and replaced with chips, see
+      // `renderUserMessageText`.
+      mentionedBoardIds.length > 0
+        ? { body: { mentionedBoardIds } }
+        : undefined,
+    );
 
-    setInput("");
+    composer?.clear();
+    setComposerEmpty(true);
+    setMentionCount(0);
     // Clear pending attachments and revoke their object URLs so they get GC'd.
     for (const p of pending) URL.revokeObjectURL(p.previewUrl);
     setPending([]);
@@ -480,13 +552,6 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
     // message, not a sticky preference.
     if (pinnedIds.length > 0) {
       useDesignCanvas.getState().clearNodeSelection();
-    }
-  };
-
-  const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      void submit();
     }
   };
 
@@ -522,22 +587,6 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
       if (target) URL.revokeObjectURL(target.previewUrl);
       return prev.filter((p) => p.id !== id);
     });
-  };
-
-  const onPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const items = event.clipboardData?.items;
-    if (!items) return;
-    const files: File[] = [];
-    for (const item of items) {
-      if (item.kind === "file") {
-        const file = item.getAsFile();
-        if (file) files.push(file);
-      }
-    }
-    if (files.length > 0) {
-      event.preventDefault();
-      addFiles(files);
-    }
   };
 
   const onDrop = (event: React.DragEvent<HTMLFormElement>) => {
@@ -658,15 +707,14 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
           >
             <Paperclip className="size-4" />
           </Button>
-          <Textarea
+          <BoardMentionComposer
             ref={composerRef}
-            rows={1}
             placeholder="Describe what to design…"
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={onKeyDown}
-            onPaste={onPaste}
-            className="max-h-40 min-h-9 resize-none bg-zinc-900/80 text-sm"
+            onChange={composerSnapshot.onChange}
+            onSubmit={() => void submit()}
+            onPasteFiles={(files) => addFiles(files)}
+            searchBoards={searchBoards}
+            className="flex-1"
           />
           {isStreaming ? (
             <Button
@@ -684,7 +732,10 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
               type="submit"
               size="icon"
               disabled={
-                !input.trim() && pending.length === 0 && pinnedCount === 0
+                composerEmpty &&
+                pending.length === 0 &&
+                pinnedCount === 0 &&
+                mentionCount === 0
               }
               aria-label="Send message"
               title="Send"
@@ -760,11 +811,40 @@ function MessageRow({
       >
         {message.parts.map((part, index) => {
           if (part.type === "text") {
+            // User messages may carry server-injected
+            // `[mentioned-board: …][/mentioned-board]` digest blocks
+            // (see /api/design-chat/[designId]/route.ts). Strip them
+            // out for the rendered bubble and surface as compact
+            // chips above the text instead — the digest is for the
+            // agent, not the human.
+            if (isUser) {
+              const stripped = stripMentionDigests(part.text);
+              return (
+                <div key={index} className="flex flex-col gap-1.5">
+                  {stripped.boardNames.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {stripped.boardNames.map((name, i) => (
+                        <span
+                          key={`${name}-${i}`}
+                          className="inline-flex items-center gap-1 rounded bg-zinc-200 px-1.5 py-0.5 text-[10px] font-medium text-zinc-700"
+                          title={`Mentioned board: ${name}`}
+                        >
+                          <Layers className="size-3" />
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  {stripped.text ? (
+                    <ChatMarkdown className="text-zinc-900">
+                      {stripped.text}
+                    </ChatMarkdown>
+                  ) : null}
+                </div>
+              );
+            }
             return (
-              <ChatMarkdown
-                key={index}
-                className={isUser ? "text-zinc-900" : "text-zinc-100"}
-              >
+              <ChatMarkdown key={index} className="text-zinc-100">
                 {part.text}
               </ChatMarkdown>
             );
@@ -827,6 +907,38 @@ function FilePart({ part }: { part: FileUIPartLike }) {
 }
 
 /* ─── helpers ──────────────────────────────────────── */
+
+/**
+ * Pull every `[mentioned-board: <name>] … [/mentioned-board]` block
+ * (and the trailing `[mentioned-boards-truncated]` notice if any) out
+ * of a user message's persisted text, returning the cleaned-up
+ * remainder along with the list of board names. The agent gets the
+ * full digest because the original text is what's persisted in the
+ * memory thread; the human only ever sees compact chips here.
+ */
+function stripMentionDigests(text: string): {
+  text: string;
+  boardNames: string[];
+} {
+  const boardNames: string[] = [];
+  // [mentioned-board: NAME]\n(meta)\n\n<sections>\n\n[/mentioned-board]
+  // The non-greedy body match plus a trailing `\n*` mops up the
+  // leading newline the server inserts before the user's text.
+  const blockRe =
+    /\[mentioned-board:\s*([^\]\n]+)\][\s\S]*?\[\/mentioned-board\]\n*/g;
+  const cleaned = text
+    .replace(blockRe, (_match, name: string) => {
+      boardNames.push(name.trim());
+      return "";
+    })
+    // Drop the truncation marker line if the server emitted one.
+    .replace(/\[mentioned-boards-truncated\][^\n]*\n*/g, "")
+    // Old `[pinned-elements] {…}` headers are also persisted but the
+    // existing chat renders them verbatim today; leave that to a
+    // separate pass so this change only touches mention rendering.
+    .trim();
+  return { text: cleaned, boardNames };
+}
 
 async function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
