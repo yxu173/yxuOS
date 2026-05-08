@@ -16,9 +16,17 @@ import { requireActiveTeam } from "@/lib/permissions";
  * the model with phantom content.
  *
  * Query params:
- *  - `q`         — case-insensitive substring match on board name.
- *                  Empty / missing → returns the most recent boards.
- *  - `designId`  — if provided, the design's project rises to the top.
+ *  - `q`           — case-insensitive substring match on board name.
+ *                    Empty / missing → returns the most recent boards.
+ *  - `designId`    — if provided, the design's project rises to the top.
+ *  - `projectId`   — if provided, that project rises to the top.
+ *  - `projectSlug` — same as `projectId` but resolved by slug. Cheaper
+ *                    for tasks pages where we only have the slug from
+ *                    the URL.
+ *
+ * Boost params are mutually compatible: the first one that resolves to
+ * a project on this team wins. Useful for sharing the endpoint between
+ * the design-chat composer and the task description editor.
  *
  * Auth: must be a member of the team via `requireActiveTeam`. We
  * never return boards from other teams.
@@ -35,9 +43,13 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const q = (url.searchParams.get("q") ?? "").trim();
   const designId = url.searchParams.get("designId");
+  const projectIdParam = url.searchParams.get("projectId");
+  const projectSlug = url.searchParams.get("projectSlug");
 
-  // Resolve the design's project so we can boost it client-side
-  // after the query (one round trip, no JOIN gymnastics).
+  // Resolve a preferred project to boost. Caller can hand us any of
+  // {designId, projectId, projectSlug} — we resolve in that priority
+  // order and stop at the first hit. Each lookup is scoped to the
+  // active team so a stale id from another team can't leak through.
   let preferredProjectId: string | null = null;
   if (designId) {
     const design = await db.query.designs.findFirst({
@@ -45,6 +57,26 @@ export async function GET(req: Request) {
       columns: { projectId: true },
     });
     preferredProjectId = design?.projectId ?? null;
+  }
+  if (!preferredProjectId && projectIdParam) {
+    const project = await db.query.projects.findFirst({
+      where: and(
+        eq(projects.id, projectIdParam),
+        eq(projects.teamId, teamId),
+      ),
+      columns: { id: true },
+    });
+    preferredProjectId = project?.id ?? null;
+  }
+  if (!preferredProjectId && projectSlug) {
+    const project = await db.query.projects.findFirst({
+      where: and(
+        eq(projects.slug, projectSlug),
+        eq(projects.teamId, teamId),
+      ),
+      columns: { id: true },
+    });
+    preferredProjectId = project?.id ?? null;
   }
 
   // Build the where clause incrementally so empty `q` works without a

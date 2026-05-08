@@ -1,6 +1,19 @@
 "use server";
 
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  ilike,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  or,
+  type SQL,
+} from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
@@ -12,6 +25,10 @@ import {
   requireActiveTeam,
 } from "@/lib/permissions";
 import { ensureDefaultTaskBoard } from "@/lib/projects";
+import {
+  UNASSIGNED_FILTER_VALUE,
+  type TaskListFilters,
+} from "@/lib/tasks/task-filters";
 import {
   isValidPriority,
   isValidStatus,
@@ -345,19 +362,117 @@ export interface TaskListRow {
  * plus a quick subtask count summary. Subtasks are surfaced inside each
  * task's detail page, not in the list, so flattening would just create
  * noise.
+ *
+ * @param filters Optional UI filters from {@link TaskListFilters}. Empty
+ * arrays are pass-throughs; only filled-in dimensions narrow the query.
+ * The subtask count for the surviving rows is computed against the
+ * **same scope** (team + project + board), but **without** the filter
+ * narrowing — so a parent task whose only matching kid was hidden by
+ * the filter still reports an honest "3/5 done" badge.
  */
 export async function listTopLevelTasks(
   teamId: string,
   projectId?: string,
   taskBoardId?: string,
+  filters?: TaskListFilters,
 ): Promise<TaskListRow[]> {
-  const scopeFilters = [eq(tasks.teamId, teamId)];
+  const scopeFilters: SQL[] = [eq(tasks.teamId, teamId)];
   if (projectId) scopeFilters.push(eq(tasks.projectId, projectId));
   if (taskBoardId) scopeFilters.push(eq(tasks.taskBoardId, taskBoardId));
   const baseScope = and(...scopeFilters)!;
 
+  // Build the filter clauses on top of the team / project / board
+  // scope. Each filter dimension is independent (AND between
+  // dimensions, OR within a dimension), matching how the bar reads.
+  const filterClauses: SQL[] = [];
+  if (filters) {
+    if (filters.statuses.length > 0) {
+      filterClauses.push(inArray(tasks.status, filters.statuses));
+    }
+    if (filters.priorities.length > 0) {
+      filterClauses.push(inArray(tasks.priority, filters.priorities));
+    }
+    if (filters.assignees.length > 0) {
+      // Split out the sentinel — "unassigned" lives on the IS NULL side
+      // of the disjunction, real ids on the IN side.
+      const wantsUnassigned = filters.assignees.includes(
+        UNASSIGNED_FILTER_VALUE,
+      );
+      const realIds = filters.assignees.filter(
+        (id) => id !== UNASSIGNED_FILTER_VALUE,
+      );
+      const clauses: SQL[] = [];
+      if (realIds.length > 0) {
+        clauses.push(inArray(tasks.assigneeId, realIds));
+      }
+      if (wantsUnassigned) {
+        clauses.push(isNull(tasks.assigneeId));
+      }
+      // `or(...)` returns undefined if the array is empty; the outer
+      // `if` already guarantees at least one entry, so the bang is safe.
+      if (clauses.length > 0) {
+        filterClauses.push(or(...clauses)!);
+      }
+    }
+    if (filters.due !== "any") {
+      // Today is anchored to the local server's calendar day. Good
+      // enough for an MVP; revisit when we add per-user timezones.
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const startOfTomorrow = new Date(startOfToday);
+      startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+      const endOfWeek = new Date(startOfToday);
+      endOfWeek.setDate(endOfWeek.getDate() + 7);
+
+      switch (filters.due) {
+        case "overdue":
+          // Strictly before today AND not in a closed state — a
+          // "finished but late" task isn't actionable any more.
+          filterClauses.push(lt(tasks.dueDate, startOfToday));
+          filterClauses.push(
+            inArray(tasks.status, [
+              "backlog",
+              "todo",
+              "in_progress",
+              "in_review",
+            ] satisfies TaskStatus[]),
+          );
+          break;
+        case "today":
+          filterClauses.push(gte(tasks.dueDate, startOfToday));
+          filterClauses.push(lt(tasks.dueDate, startOfTomorrow));
+          break;
+        case "week":
+          // Inclusive of today, exclusive of seven days out. Matches
+          // the visible label "Due this week".
+          filterClauses.push(gte(tasks.dueDate, startOfToday));
+          filterClauses.push(lt(tasks.dueDate, endOfWeek));
+          break;
+        case "none":
+          filterClauses.push(isNull(tasks.dueDate));
+          break;
+      }
+      // For overdue/today/week we implicitly require a due date —
+      // `lt(due_date, X)` already filters out NULLs, but `gte` does
+      // too only because the column is nullable; either way, the
+      // `isNotNull` is redundant. Keep it explicit for the reader.
+      if (filters.due !== "none") {
+        filterClauses.push(isNotNull(tasks.dueDate));
+      }
+    }
+    if (filters.q.trim()) {
+      filterClauses.push(ilike(tasks.title, `%${filters.q.trim()}%`));
+    }
+  }
+
+  const where = and(
+    baseScope,
+    isNull(tasks.parentTaskId),
+    ...filterClauses,
+  );
+
   const rows = await db.query.tasks.findMany({
-    where: and(baseScope, isNull(tasks.parentTaskId)),
+    where,
     orderBy: desc(tasks.updatedAt),
     with: {
       assignee: {

@@ -172,24 +172,22 @@ export function CreateTaskDialog({
             }
           }}
         >
-          {/* Tiny breadcrumb header — replaces the previous all-caps strip
-              with something that fits the rest of the chrome. */}
-          <div className="flex items-center justify-between gap-3 px-6 pt-5 pb-1">
+          {/* Tiny breadcrumb header. The keyboard hint that used to
+              live up here moved into the primary Create button so it
+              sits next to the action it describes — leaving the
+              header free to be just identity ("what am I making, in
+              which project"). */}
+          <div className="flex items-center gap-1.5 px-6 pt-5 pb-1">
             <DialogTitle className="flex items-center gap-1.5 text-xs font-medium text-zinc-400">
               <Sparkles className="size-3 text-zinc-500" />
               {parentTaskId ? "Sub-task" : "New task"}
-              <ChevronRight className="size-3 text-zinc-700" />
-              <span className="text-zinc-500">draft</span>
+              {projectSlug ? (
+                <>
+                  <ChevronRight className="size-3 text-zinc-700" />
+                  <span className="text-zinc-500">{projectSlug}</span>
+                </>
+              ) : null}
             </DialogTitle>
-            <span className="text-[10px] text-zinc-500">
-              <kbd className="rounded border border-white/10 bg-white/5 px-1 py-px font-mono text-[10px] text-zinc-300">
-                ⌘
-              </kbd>{" "}
-              <kbd className="rounded border border-white/10 bg-white/5 px-1 py-px font-mono text-[10px] text-zinc-300">
-                ⏎
-              </kbd>
-              {" to create"}
-            </span>
           </div>
           <DialogDescription className="sr-only">
             {parentTaskId
@@ -197,8 +195,10 @@ export function CreateTaskDialog({
               : "Create a task scoped to the active team. Add details now or fill them in later."}
           </DialogDescription>
 
-          {/* Title — borderless, large; doubles as the visual heading. */}
-          <div className="px-6 pt-2">
+          {/* Title — borderless, sized down a notch from text-2xl so a
+              normal-length title doesn't overflow the dialog and feel
+              shouty. Still bold enough to read as the heading. */}
+          <div className="px-6 pt-1">
             <input
               ref={titleRef}
               value={title}
@@ -206,22 +206,45 @@ export function CreateTaskDialog({
               placeholder="Task title"
               maxLength={200}
               required
-              className="w-full bg-transparent text-2xl font-semibold tracking-tight text-zinc-50 placeholder:text-zinc-700 focus:outline-none"
+              className="w-full bg-transparent text-xl font-semibold tracking-tight text-zinc-50 placeholder:text-zinc-700 focus:outline-none"
             />
           </div>
 
-          {/* Description — WYSIWYG editor, takes the rest of the body. */}
-          <div className="flex flex-col gap-3 px-6 pt-3 pb-4">
+          {/* Description — borderless WYSIWYG editor that blends into
+              the dialog surface. The toolbar appears only when the
+              user has focus inside the body, so the closed-state
+              chrome stays quiet. */}
+          <div className="flex flex-col gap-2 px-6 pt-2 pb-4">
             <RichTextEditor
               value={description}
               onChange={setDescription}
-              placeholder="Add a description… paste or drop images to drop them inline."
+              placeholder="Add a description… paste images, or @ a board to link it."
               maxBodyHeight={320}
+              borderless
+              revealToolbarOnFocus
+              // Only wire mentions when we know which project to scope
+              // suggestions to. The dialog is sometimes mounted from
+              // a context that hasn't resolved a slug yet (e.g. the
+              // global tasks redirect) — in that case mentions are
+              // simply unavailable for this composer instance.
+              boardMentions={
+                projectSlug ? { projectSlug } : undefined
+              }
             />
           </div>
 
-          {/* Property pills row */}
-          <div className="flex flex-wrap items-center gap-1.5 border-t border-white/5 bg-white/[0.015] px-6 py-3">
+          {error ? (
+            <p className="border-t border-red-500/20 bg-red-500/5 px-6 py-2 text-sm text-red-300">
+              {error}
+            </p>
+          ) : null}
+
+          {/* Single bottom band — properties on the left, primary
+              actions on the right. Replaces the previous three
+              stacked strips (pills row, hint row, footer) with one
+              unified bar so the dialog reads in two clean halves
+              (compose → commit). */}
+          <footer className="flex flex-wrap items-center gap-x-1.5 gap-y-2 border-t border-white/5 bg-white/[0.015] px-6 py-3">
             <StatusPill status={status} onChange={setStatus} />
             <PriorityPill priority={priority} onChange={setPriority} />
             <AssigneePill
@@ -232,36 +255,46 @@ export function CreateTaskDialog({
               }
             />
             <DueDatePill dueDate={dueDate} onChange={setDueDate} />
-          </div>
-
-          {error ? (
-            <p className="border-t border-red-500/20 bg-red-500/5 px-6 py-2 text-sm text-red-300">
-              {error}
-            </p>
-          ) : null}
-
-          <footer className="flex items-center justify-end gap-2 border-t border-white/5 bg-zinc-950/40 px-6 py-3">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setOpen(false)}
-              disabled={pending}
-              className="text-zinc-400 hover:text-zinc-200"
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              size="sm"
-              disabled={pending || !title.trim()}
-            >
-              {pending
-                ? "Creating…"
-                : parentTaskId
-                  ? "Create sub-task"
-                  : "Create task"}
-            </Button>
+            <div className="ml-auto flex items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setOpen(false)}
+                disabled={pending}
+                className="text-zinc-400 hover:text-zinc-200"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={pending || !title.trim()}
+                className="gap-1.5"
+              >
+                <span>
+                  {pending
+                    ? "Creating…"
+                    : parentTaskId
+                      ? "Create sub-task"
+                      : "Create task"}
+                </span>
+                {/* Inline keyboard hint — sits inside the primary
+                    action so the affordance is co-located with the
+                    button it describes. Hidden while pending so the
+                    button doesn't visually shift mid-submit. */}
+                {!pending ? (
+                  <span className="hidden items-center gap-0.5 sm:inline-flex">
+                    <kbd className="rounded border border-black/15 bg-black/5 px-1 py-px font-mono text-[9px] text-zinc-700">
+                      ⌘
+                    </kbd>
+                    <kbd className="rounded border border-black/15 bg-black/5 px-1 py-px font-mono text-[9px] text-zinc-700">
+                      ⏎
+                    </kbd>
+                  </span>
+                ) : null}
+              </Button>
+            </div>
           </footer>
         </form>
       </DialogContent>

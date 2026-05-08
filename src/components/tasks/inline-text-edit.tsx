@@ -94,6 +94,13 @@ export function InlineTaskTitle({
 export interface InlineTaskDescriptionProps {
   taskId: string;
   initialValue: string;
+  /**
+   * Project slug used by the description's `@board` mention picker
+   * (boards from this project rise to the top of the suggestion list)
+   * and by the read-only renderer to turn mention chips into links.
+   * Required — every task lives inside a project.
+   */
+  projectSlug: string;
 }
 
 /**
@@ -105,6 +112,7 @@ export interface InlineTaskDescriptionProps {
 export function InlineTaskDescription({
   taskId,
   initialValue,
+  projectSlug,
 }: InlineTaskDescriptionProps) {
   const [value, setValue] = useState(initialValue);
   const [editing, setEditing] = useState(false);
@@ -164,7 +172,8 @@ export function InlineTaskDescription({
           value={value}
           onChange={setValue}
           autoFocus
-          placeholder="Acceptance criteria, links, paste a screenshot…"
+          placeholder="Acceptance criteria, links, paste a screenshot, @ a board…"
+          boardMentions={{ projectSlug }}
         />
         <div className="flex items-center justify-end gap-2">
           <span className="text-[10px] text-zinc-500">
@@ -212,10 +221,15 @@ export function InlineTaskDescription({
         aria-label="Edit description"
       >
         {hasContent ? (
-          <RichTextRender body={value} />
+          <RichTextRender
+            body={value}
+            linkBoardMentions={{ projectSlug }}
+          />
         ) : (
           <p className="text-sm">
-            Add a description — formatting and pasted images are supported.
+            Add a description — formatting, pasted images, and{" "}
+            <span className="text-zinc-300">@board</span> mentions are
+            supported.
           </p>
         )}
       </button>

@@ -126,6 +126,7 @@ export default async function TaskDetailPage({ params }: TaskPageParams) {
             <InlineTaskDescription
               taskId={task.id}
               initialValue={task.description ?? ""}
+              projectSlug={projectSlug}
             />
           </section>
 

@@ -2,10 +2,15 @@ import { listTaskBoardsForProject } from "@/app/(app)/tasks/board-actions";
 import { listTopLevelTasks } from "@/app/(app)/tasks/actions";
 import { CreateTaskDialog } from "@/components/tasks/create-task-dialog";
 import { TaskBoardStrip } from "@/components/tasks/task-board-strip";
+import { TaskFiltersBar } from "@/components/tasks/task-filters-bar";
 import { TaskList } from "@/components/tasks/task-list";
 import { AppTopBar } from "@/components/workspaces/app-top-bar";
 import { requireActiveProject } from "@/lib/permissions";
 import { listProjectsForTeam } from "@/lib/projects";
+import {
+  countActiveFilters,
+  parseTaskFilters,
+} from "@/lib/tasks/task-filters";
 import { listTeamMembers, listUserTeams } from "@/lib/teams";
 
 export const metadata = {
@@ -14,17 +19,53 @@ export const metadata = {
 
 interface PageProps {
   params: Promise<{ projectSlug: string }>;
-  searchParams: Promise<{ board?: string }>;
+  // Filter params live alongside `board` in the URL. We accept the
+  // permissive shape Next gives us (string | string[] | undefined)
+  // and let `parseTaskFilters` do the validation.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}
+
+/**
+ * Fold the visible tasks down to a small summary block (overdue
+ * count + done count). Pulled out into a regular function so the
+ * non-deterministic `Date.now()` call lives outside the server
+ * component's render body — satisfies `react-hooks/purity` while
+ * keeping the math co-located with its caller.
+ */
+function summariseTaskCounts(
+  tasks: Awaited<ReturnType<typeof listTopLevelTasks>>,
+): { overdueCount: number; doneCount: number } {
+  const now = Date.now();
+  let overdueCount = 0;
+  let doneCount = 0;
+  for (const t of tasks) {
+    if (t.status === "done") doneCount += 1;
+    if (
+      t.dueDate &&
+      t.status !== "done" &&
+      t.status !== "canceled" &&
+      t.dueDate.getTime() < now
+    ) {
+      overdueCount += 1;
+    }
+  }
+  return { overdueCount, doneCount };
 }
 
 export default async function ProjectTasksIndexPage({
   params,
   searchParams,
 }: PageProps) {
-  const [{ projectSlug }, { board: requestedBoardId }] = await Promise.all([
+  const [{ projectSlug }, rawSearch] = await Promise.all([
     params,
     searchParams,
   ]);
+
+  const requestedBoardIdRaw = rawSearch.board;
+  const requestedBoardId = Array.isArray(requestedBoardIdRaw)
+    ? requestedBoardIdRaw[0]
+    : requestedBoardIdRaw;
+  const filters = parseTaskFilters(rawSearch);
 
   const { session, teamId, projectId, projectName } =
     await requireActiveProject(projectSlug);
@@ -48,7 +89,16 @@ export default async function ProjectTasksIndexPage({
     teamId,
     projectId,
     activeBoardId ?? undefined,
+    filters,
   );
+
+  // Summary counts — derived from the same filtered set the list
+  // shows so the user never sees a mismatch between the badge
+  // ("3 overdue") and the visible rows. The "now" anchor is captured
+  // inside the helper so React's purity linter doesn't flag a
+  // top-level `Date.now()` call inside this server component.
+  const { overdueCount, doneCount } = summariseTaskCounts(tasks);
+  const hasActiveFilters = countActiveFilters(filters) > 0;
 
   const memberOptions = members.map((m) => ({
     userId: m.userId,
@@ -100,19 +150,39 @@ export default async function ProjectTasksIndexPage({
           activeBoardId={activeBoardId}
         />
 
+        <TaskFiltersBar
+          members={memberOptions}
+          initial={filters}
+          matchedCount={tasks.length}
+          overdueCount={overdueCount}
+          doneCount={doneCount}
+        />
+
         {tasks.length === 0 ? (
           <section className="grid h-72 place-items-center rounded-lg border border-dashed border-white/10 bg-white/[0.02] text-sm text-muted-foreground">
             <div className="flex flex-col items-center gap-2 text-center">
-              <p>
-                {activeBoardId
-                  ? "No tasks on this board yet."
-                  : "No tasks yet."}
-              </p>
-              <p className="text-xs">
-                {activeBoardId
-                  ? `Create your first task to start filling "${activeBoardName}".`
-                  : "Create your first task or pick a board to start filling."}
-              </p>
+              {hasActiveFilters ? (
+                <>
+                  <p>No tasks match these filters.</p>
+                  <p className="text-xs">
+                    Try clearing a filter, or create a new task that fits
+                    them.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p>
+                    {activeBoardId
+                      ? "No tasks on this board yet."
+                      : "No tasks yet."}
+                  </p>
+                  <p className="text-xs">
+                    {activeBoardId
+                      ? `Create your first task to start filling "${activeBoardName}".`
+                      : "Create your first task or pick a board to start filling."}
+                  </p>
+                </>
+              )}
             </div>
           </section>
         ) : (
