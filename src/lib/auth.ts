@@ -26,9 +26,29 @@ import { env } from "./env";
  * create hook sets `activeOrganizationId` to the user's first team so the
  * UI always has an active workspace.
  */
+// Origins we trust in addition to `baseURL`. We always include
+// `NEXT_PUBLIC_APP_URL` and, when running on Vercel, the deployment URL
+// (`VERCEL_URL`) and the project's production URL
+// (`VERCEL_PROJECT_PRODUCTION_URL`) so preview deployments don't get
+// rejected with "Invalid origin" when the production env var points at a
+// different domain.
+const trustedOrigins = Array.from(
+  new Set(
+    [
+      env.NEXT_PUBLIC_APP_URL,
+      env.BETTER_AUTH_URL,
+      process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined,
+      process.env.VERCEL_PROJECT_PRODUCTION_URL
+        ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+        : undefined,
+    ].filter((v): v is string => Boolean(v)),
+  ),
+);
+
 export const auth = betterAuth({
   baseURL: env.BETTER_AUTH_URL,
   secret: env.BETTER_AUTH_SECRET,
+  trustedOrigins,
 
   database: drizzleAdapter(db, {
     provider: "pg",
