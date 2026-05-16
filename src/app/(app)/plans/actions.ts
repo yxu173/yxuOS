@@ -2,6 +2,7 @@
 
 import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 
 import { db } from "@/db";
 import { dbTx } from "@/db/tx";
@@ -13,6 +14,11 @@ import {
 } from "@/db/schema";
 import { tasks } from "@/db/schema/tasks";
 import { logActivity } from "@/lib/activity";
+import {
+  indexTaskPlan,
+  unindexTaskPlan,
+} from "@/lib/rag/indexers/task-plan";
+import { indexTask } from "@/lib/rag/indexers/task";
 import { requireActiveProject, requireActiveTeam } from "@/lib/permissions";
 import { ensureDefaultTaskBoard } from "@/lib/projects";
 import {
@@ -126,6 +132,12 @@ export async function createPlan(
     metadata: sourceNoteId ? { sourceNoteId } : undefined,
   });
 
+  // Brain indexing happens after the response. A brand-new empty
+  // plan is unindexed by the indexer's self-heal branch (no rows
+  // + default title) so this is a no-op at create time; matters
+  // for symmetry with update.
+  after(() => indexTaskPlan(created.id));
+
   revalidatePath(`/p/${projectSlug}/plans`);
   return { id: created.id };
 }
@@ -160,6 +172,10 @@ export async function updatePlan(input: UpdatePlanInput): Promise<void> {
 
   await db.update(taskPlans).set(patch).where(eq(taskPlans.id, input.id));
 
+  // Re-index on title or status change. The indexer pulls archived
+  // plans out of the brain via its self-heal branch.
+  after(() => indexTaskPlan(input.id));
+
   await logActivity({
     teamId,
     actorId: session.user.id,
@@ -185,6 +201,8 @@ export async function deletePlan(planId: string): Promise<void> {
   if (!plan) throw new Error("Plan not found");
 
   await db.delete(taskPlans).where(eq(taskPlans.id, planId));
+
+  after(() => unindexTaskPlan(planId));
 
   await logActivity({
     teamId,
@@ -338,6 +356,9 @@ export async function upsertPlanRow(
   if (plan.project?.slug) {
     revalidatePath(`/p/${plan.project.slug}/plans/${plan.id}`);
   }
+  // A row mutated → the whole plan re-indexes (rows are stored as
+  // chunks of the plan artifact, not as separate kinds).
+  after(() => indexTaskPlan(plan.id));
   return { id: resultId };
 }
 
@@ -377,6 +398,8 @@ export async function deletePlanRow(rowId: string): Promise<void> {
   if (row.plan.project?.slug) {
     revalidatePath(`/p/${row.plan.project.slug}/plans/${row.planId}`);
   }
+  // Row deletion changes the plan's chunk shape — re-index.
+  after(() => indexTaskPlan(row.planId));
 }
 
 /**
@@ -540,6 +563,12 @@ export async function materialiseApprovedRows(
   if (plan.project?.slug) {
     revalidatePath(`/p/${plan.project.slug}/plans/${plan.id}`);
     revalidatePath(`/p/${plan.project.slug}/tasks`);
+  }
+  // Re-index the plan (row.createdTaskId values just got stamped)
+  // and each fresh task so the brain has them immediately.
+  after(() => indexTaskPlan(plan.id));
+  for (const id of taskIds) {
+    after(() => indexTask(id));
   }
   return { createdCount: taskIds.length, taskIds };
 }

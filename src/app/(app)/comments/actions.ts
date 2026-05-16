@@ -2,11 +2,16 @@
 
 import { and, asc, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 
 import { db } from "@/db";
 import { boards, comments, designs, tasks } from "@/db/schema";
 import { logActivity } from "@/lib/activity";
 import { resolveMentionsForTeam } from "@/lib/comments/mention-parser";
+import {
+  indexComment,
+  unindexComment,
+} from "@/lib/rag/indexers/comment";
 import { requireActiveTeam } from "@/lib/permissions";
 
 const MAX_COMMENT_LENGTH = 4000;
@@ -107,6 +112,11 @@ export async function createComment(input: {
 
   revalidatePath(pathForSubject(input.subjectType, input.subjectId));
 
+  // Push the comment into the brain after the response. Comments
+  // are noisy but cheap to embed; the parent's project context is
+  // resolved inside the indexer.
+  after(() => indexComment(created.id));
+
   return { id: created.id };
 }
 
@@ -144,6 +154,8 @@ export async function deleteComment(commentId: string) {
   await db
     .delete(comments)
     .where(and(eq(comments.id, commentId), eq(comments.teamId, teamId)));
+
+  after(() => unindexComment(commentId));
 
   revalidatePath(
     pathForSubject(

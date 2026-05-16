@@ -10,6 +10,7 @@ import { taskPlans } from "@/db/schema";
 import { requireActiveTeam } from "@/lib/permissions";
 import { mastra } from "@/mastra";
 import type { PlanningToolContext } from "@/mastra/tools/planning-workspace";
+import type { ProjectToolContext } from "@/mastra/tools/search-knowledge";
 
 /**
  * Streaming chat endpoint for the Planner agent.
@@ -51,11 +52,16 @@ export async function POST(
 
   const requestContext = new RequestContext<{
     planning: PlanningToolContext;
+    project: ProjectToolContext;
   }>();
   requestContext.set("planning", {
     teamId,
     projectId: plan.projectId,
     planId: plan.id,
+  });
+  requestContext.set("project", {
+    teamId,
+    projectId: plan.projectId,
   });
 
   const upstream = await handleChatStream({

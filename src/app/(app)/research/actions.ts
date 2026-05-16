@@ -2,11 +2,16 @@
 
 import { and, desc, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 
 import { db } from "@/db";
 import { researchNotes, type ResearchNoteStatus } from "@/db/schema";
 import { logActivity } from "@/lib/activity";
 import { requireActiveProject, requireActiveTeam } from "@/lib/permissions";
+import {
+  indexResearchNote,
+  unindexResearchNote,
+} from "@/lib/rag/indexers/research-note";
 
 /* ─── constraints ─────────────────────────────────── */
 
@@ -80,6 +85,12 @@ export async function createResearchNote(
     subjectName: trimmedTitle || "Untitled research",
   });
 
+  // Brain indexing happens after the response. The create path is
+  // usually a no-op (empty body), but if the caller supplied an
+  // initial title/body it gets embedded for free — plus this
+  // keeps create + update symmetric.
+  after(() => indexResearchNote(created.id));
+
   revalidatePath(`/p/${projectSlug}/research`);
   return { id: created.id };
 }
@@ -127,6 +138,11 @@ export async function updateResearchNote(
     .set(patch)
     .where(eq(researchNotes.id, input.id));
 
+  // Re-index the brain. Covers title, body, and status changes —
+  // archiving pulls the chunks out via the indexer's archived
+  // self-heal branch, so we always schedule on any update.
+  after(() => indexResearchNote(input.id));
+
   await logActivity({
     teamId,
     actorId: session.user.id,
@@ -158,6 +174,10 @@ export async function deleteResearchNote(noteId: string): Promise<void> {
   if (!note) throw new Error("Research note not found");
 
   await db.delete(researchNotes).where(eq(researchNotes.id, noteId));
+
+  // Drop every chunk for this note from the brain. Scheduled
+  // after the response so the delete UX stays snappy.
+  after(() => unindexResearchNote(noteId));
 
   await logActivity({
     teamId,

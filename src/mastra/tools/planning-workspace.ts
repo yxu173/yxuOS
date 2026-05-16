@@ -1,4 +1,7 @@
 import { createTool } from "@mastra/core/tools";
+import { after } from "next/server";
+
+import { indexTaskPlan } from "@/lib/rag/indexers/task-plan";
 import { and, asc, desc, eq, ilike, or } from "drizzle-orm";
 import { z } from "zod";
 
@@ -442,6 +445,12 @@ export const addPlanRowTool = createTool({
       .set({ updatedAt: new Date() })
       .where(eq(taskPlans.id, plan.id));
 
+    // Plan's chunk shape changed (new row) — re-index after the
+    // chat stream closes. `after()` works inside tool execute
+    // because we're still inside the route handler's request
+    // context.
+    after(() => indexTaskPlan(plan.id));
+
     return {
       ok: true as const,
       data: { rowId: created.id, position: created.position },
@@ -522,6 +531,8 @@ export const updatePlanRowTool = createTool({
       .set({ updatedAt: new Date() })
       .where(eq(taskPlans.id, ctx.planId));
 
+    after(() => indexTaskPlan(ctx.planId));
+
     return { ok: true as const, data: { rowId: input.rowId } };
   },
 });
@@ -564,6 +575,9 @@ export const removePlanRowTool = createTool({
       .update(taskPlans)
       .set({ updatedAt: new Date() })
       .where(eq(taskPlans.id, ctx.planId));
+
+    after(() => indexTaskPlan(ctx.planId));
+
     return { ok: true as const, data: { rowId: input.rowId } };
   },
 });
@@ -597,6 +611,9 @@ export const setPlanTitleTool = createTool({
           eq(taskPlans.teamId, ctx.teamId),
         ),
       );
+
+    after(() => indexTaskPlan(ctx.planId));
+
     return { ok: true as const, data: { title: trimmed } };
   },
 });

@@ -49,6 +49,27 @@ const envSchema = z.object({
     z.string().default("claude-opus-4-7-1"),
   ),
 
+  // Azure AI Foundry — OpenAI-compatible embeddings endpoint. Used
+  // by the project-brain RAG layer. Set all three to switch the
+  // embedding provider from OpenAI direct to Azure; leave unset to
+  // fall back to `OPENAI_API_KEY` (or disable embeddings entirely).
+  //
+  // Endpoint shape: `https://<resource>.services.ai.azure.com`
+  // (the "services" Foundry endpoint, NOT the legacy
+  // `<resource>.openai.azure.com`). The `/openai` suffix is added
+  // automatically inside `embed.ts` to match the Azure provider's
+  // `{baseURL}/v1{path}` convention.
+  AZURE_EMBEDDINGS_ENDPOINT: z.preprocess(
+    empty,
+    z.string().url().optional(),
+  ),
+  AZURE_EMBEDDINGS_API_KEY: z.preprocess(empty, z.string().optional()),
+  /** Deployment name in your Foundry resource. Typically matches the model id. */
+  AZURE_EMBEDDINGS_DEPLOYMENT: z.preprocess(
+    empty,
+    z.string().default("text-embedding-3-large"),
+  ),
+
   // ─── Mastra ────────────────────────────────────────────
   MASTRA_TELEMETRY_DISABLED: z.preprocess(empty, z.string().optional()),
 

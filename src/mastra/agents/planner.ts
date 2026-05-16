@@ -4,6 +4,7 @@ import { Memory } from "@mastra/memory";
 import { models } from "@/lib/ai";
 
 import { planningWorkspaceTools } from "../tools/planning-workspace";
+import { searchProjectKnowledgeTool } from "../tools/search-knowledge";
 
 /**
  * The **Planner** agent.
@@ -108,5 +109,11 @@ If \`update_plan_row\` or \`remove_plan_row\` returns \`preconditions_failed\` w
       },
     },
   }),
-  tools: planningWorkspaceTools,
+  tools: {
+    ...planningWorkspaceTools,
+    // Project brain — recall prior research, related tasks, plans,
+    // boards before drafting plan rows. The plan-chat route
+    // attaches `requestContext.get("project")` for this tool.
+    search_project_knowledge: searchProjectKnowledgeTool,
+  },
 });

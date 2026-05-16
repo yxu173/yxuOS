@@ -24,15 +24,29 @@ import * as excalidrawTools from "./excalidraw/canvas-tools";
 export type CanvasToolName =
   | "query_canvas"
   | "find_shapes"
+  | "query_neighborhood"
+  | "get_connections"
+  | "find_free_space"
+  | "query_frame"
   | "add_shapes"
   | "connect_shapes"
+  | "connect_many"
+  | "relabel_arrows"
   | "align_shapes"
   | "distribute_shapes"
   | "group_into_frame"
+  | "layout_shapes"
+  | "duplicate_shapes"
   | "update_shapes"
   | "delete_shapes"
+  | "analyze_canvas"
+  | "explain_diagram"
+  | "insert_template"
+  | "add_image"
   | "add_markdown_card"
-  | "add_mermaid_card";
+  | "add_mermaid_card"
+  | "set_selection"
+  | "focus_camera";
 
 /**
  * Dispatch a single tool call against the mounted Excalidraw canvas.
@@ -53,24 +67,52 @@ export async function dispatchCanvasTool(
       return excalidrawTools.executeQueryCanvas(api, input);
     case "find_shapes":
       return excalidrawTools.executeFindShapes(api, input);
+    case "query_neighborhood":
+      return excalidrawTools.executeQueryNeighborhood(api, input);
+    case "get_connections":
+      return excalidrawTools.executeGetConnections(api, input);
+    case "find_free_space":
+      return excalidrawTools.executeFindFreeSpace(api, input);
+    case "query_frame":
+      return excalidrawTools.executeQueryFrame(api, input);
     case "add_shapes":
       return excalidrawTools.executeAddShapes(api, input);
     case "connect_shapes":
       return excalidrawTools.executeConnectShapes(api, input);
+    case "connect_many":
+      return excalidrawTools.executeConnectMany(api, input);
+    case "relabel_arrows":
+      return excalidrawTools.executeRelabelArrows(api, input);
     case "align_shapes":
       return excalidrawTools.executeAlignShapes(api, input);
     case "distribute_shapes":
       return excalidrawTools.executeDistributeShapes(api, input);
     case "group_into_frame":
       return excalidrawTools.executeGroupIntoFrame(api, input);
+    case "layout_shapes":
+      return excalidrawTools.executeLayoutShapes(api, input);
+    case "duplicate_shapes":
+      return excalidrawTools.executeDuplicateShapes(api, input);
     case "update_shapes":
       return excalidrawTools.executeUpdateShapes(api, input);
     case "delete_shapes":
       return excalidrawTools.executeDeleteShapes(api, input);
+    case "analyze_canvas":
+      return excalidrawTools.executeAnalyzeCanvas(api, input);
+    case "explain_diagram":
+      return excalidrawTools.executeExplainDiagram(api, input);
+    case "insert_template":
+      return excalidrawTools.executeInsertTemplate(api, input);
+    case "add_image":
+      return excalidrawTools.executeAddImage(api, input);
     case "add_markdown_card":
       return excalidrawTools.executeAddMarkdownCard(api, input);
     case "add_mermaid_card":
       return excalidrawTools.executeAddMermaidCard(api, input);
+    case "set_selection":
+      return excalidrawTools.executeSetSelection(api, input);
+    case "focus_camera":
+      return excalidrawTools.executeFocusCamera(api, input);
     default:
       return {
         ok: false,

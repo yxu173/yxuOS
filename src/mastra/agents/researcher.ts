@@ -5,6 +5,7 @@ import { models } from "@/lib/ai";
 
 import { exaSearchTool } from "../tools/exa-search";
 import { researchWorkspaceTools } from "../tools/research-workspace";
+import { searchProjectKnowledgeTool } from "../tools/search-knowledge";
 
 /**
  * The **Researcher** agent.
@@ -120,5 +121,10 @@ Retry budget: one retry per failed call, then move on with what you have.
   tools: {
     ...researchWorkspaceTools,
     web_search: exaSearchTool,
+    // Project brain. Lets the researcher recall prior findings,
+    // task plans, board content, etc. before reaching for the web.
+    // The tool reads its scope from `requestContext.get("project")`,
+    // which the research-chat route attaches to every turn.
+    search_project_knowledge: searchProjectKnowledgeTool,
   },
 });

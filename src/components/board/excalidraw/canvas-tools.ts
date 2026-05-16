@@ -504,6 +504,686 @@ export function executeFindShapes(
   }
 }
 
+/* ─── shared spatial helpers ───────────────────────────── *
+ *
+ * All four S1 tools share the same primitives: "what's the centre
+ * of X?" / "are these rectangles overlapping?" / "where's the
+ * viewport centre right now?". Pulled out so the per-tool
+ * implementations below stay readable.
+ */
+
+interface SceneRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+function rectFromElement(el: NonDeletedExcalidrawElement): SceneRect {
+  return { x: el.x, y: el.y, w: el.width, h: el.height };
+}
+
+function rectCentre(r: SceneRect): { x: number; y: number } {
+  return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+}
+
+function rectsOverlap(a: SceneRect, b: SceneRect, gap = 0): boolean {
+  return !(
+    a.x + a.w + gap <= b.x ||
+    b.x + b.w + gap <= a.x ||
+    a.y + a.h + gap <= b.y ||
+    b.y + b.h + gap <= a.y
+  );
+}
+
+/** Page-space centre of the viewport. */
+function viewportCentre(state: AppState): { x: number; y: number } {
+  const vp = viewportSceneBounds(state);
+  return { x: (vp.minX + vp.maxX) / 2, y: (vp.minY + vp.maxY) / 2 };
+}
+
+/** Page-space centre of whatever is currently selected, or null. */
+function selectionCentre(
+  state: AppState,
+  elementsById: Map<string, NonDeletedExcalidrawElement>,
+): { x: number; y: number } | null {
+  const ids = Object.keys(state.selectedElementIds ?? {});
+  const els = ids
+    .map((id) => elementsById.get(id))
+    .filter((e): e is NonDeletedExcalidrawElement => Boolean(e));
+  if (els.length === 0) return null;
+  // Use the common bounds centre, not the average of centres — a
+  // mixed selection of one big and one small shape feels right
+  // when we frame the bigger one's bulk.
+  const [minX, minY, maxX, maxY] = getCommonBounds(els);
+  return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+}
+
+/**
+ * Resolve a "near" anchor (shapeId | point | "selection" | "viewport")
+ * to a concrete focal point. Returns the source shape id when the
+ * anchor was a shape ref, so callers can exclude it from results.
+ */
+function resolveFocal(
+  api: ExcalidrawImperativeAPI,
+  near:
+    | { shapeId: string }
+    | { x: number; y: number }
+    | "selection"
+    | "viewport"
+    | undefined,
+): {
+  x: number;
+  y: number;
+  sourceShapeId: string | null;
+} | { error: string } {
+  const state = api.getAppState();
+  const elements = api.getSceneElements();
+  const elementsById = makeElementsById(elements);
+
+  if (near === undefined || near === "viewport") {
+    return { ...viewportCentre(state), sourceShapeId: null };
+  }
+  if (near === "selection") {
+    const c = selectionCentre(state, elementsById);
+    if (c) return { ...c, sourceShapeId: null };
+    // Empty selection — fall back to viewport. Documented in the
+    // tool's input schema description.
+    return { ...viewportCentre(state), sourceShapeId: null };
+  }
+  if ("shapeId" in near) {
+    const el = elementsById.get(near.shapeId);
+    if (!el) {
+      return {
+        error: `Shape not found: ${near.shapeId}. Call find_shapes or query_canvas to refresh ids.`,
+      };
+    }
+    const c = rectCentre(rectFromElement(el));
+    return { ...c, sourceShapeId: el.id };
+  }
+  return { x: near.x, y: near.y, sourceShapeId: null };
+}
+
+/** Dominant cardinal direction from focal to candidate (centre→centre). */
+function dominantDirection(
+  focal: { x: number; y: number },
+  cand: { x: number; y: number },
+): "above" | "below" | "left" | "right" {
+  const dx = cand.x - focal.x;
+  const dy = cand.y - focal.y;
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? "right" : "left";
+  return dy >= 0 ? "below" : "above";
+}
+
+/* ─── query_neighborhood ────────────────────────────────── */
+
+export interface QueryNeighborhoodInput {
+  near:
+    | { shapeId: string }
+    | { x: number; y: number }
+    | "selection"
+    | "viewport";
+  radius?: number;
+  direction?: "any" | "above" | "below" | "left" | "right";
+  types?: string[];
+  limit?: number;
+}
+
+export interface NeighborhoodMatch extends ShapeRow {
+  distance: number;
+  direction: "above" | "below" | "left" | "right";
+}
+
+export interface QueryNeighborhoodOutput {
+  focal: { x: number; y: number; sourceShapeId: string | null };
+  matches: NeighborhoodMatch[];
+  totalMatched: number;
+  truncated: boolean;
+}
+
+const NEIGHBORHOOD_DEFAULT_RADIUS = 600;
+const NEIGHBORHOOD_DEFAULT_LIMIT = 12;
+
+export function executeQueryNeighborhood(
+  api: ExcalidrawImperativeAPI,
+  input: QueryNeighborhoodInput,
+): ToolResult<QueryNeighborhoodOutput> {
+  try {
+    const focal = resolveFocal(api, input.near);
+    if ("error" in focal) {
+      return fail("not_found", focal.error);
+    }
+
+    const elements = api.getSceneElements();
+    const elementsById = makeElementsById(elements);
+    const radius = input.radius ?? NEIGHBORHOOD_DEFAULT_RADIUS;
+    const limit = input.limit ?? NEIGHBORHOOD_DEFAULT_LIMIT;
+    const dirFilter = input.direction ?? "any";
+    const typeFilter = input.types ? new Set(input.types) : null;
+
+    const candidates: NeighborhoodMatch[] = [];
+    for (const el of elements) {
+      // Skip the focal shape itself when `near` was a shape ref —
+      // returning it as its own neighbour is never useful.
+      if (focal.sourceShapeId && el.id === focal.sourceShapeId) continue;
+      // Bound text labels are noise — they're part of their container.
+      if (
+        el.type === "text" &&
+        (el as ExcalidrawTextElement).containerId
+      ) {
+        continue;
+      }
+      const agentType = inferAgentType(el);
+      if (typeFilter && !typeFilter.has(agentType)) continue;
+
+      const cent = rectCentre(rectFromElement(el));
+      const dx = cent.x - focal.x;
+      const dy = cent.y - focal.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance > radius) continue;
+
+      const dir = dominantDirection(focal, cent);
+      if (dirFilter !== "any" && dir !== dirFilter) continue;
+
+      candidates.push({
+        ...elementToRow(el, elementsById),
+        distance: Math.round(distance),
+        direction: dir,
+      });
+    }
+
+    candidates.sort((a, b) => a.distance - b.distance);
+    const truncated = candidates.length > limit;
+    const matches = candidates.slice(0, limit);
+
+    return ok({
+      focal: {
+        x: focal.x,
+        y: focal.y,
+        sourceShapeId: focal.sourceShapeId,
+      },
+      matches,
+      totalMatched: candidates.length,
+      truncated,
+    });
+  } catch (err) {
+    return fail(
+      "internal",
+      err instanceof Error ? err.message : "query_neighborhood failed",
+    );
+  }
+}
+
+/* ─── get_connections ───────────────────────────────────── */
+
+export interface GetConnectionsInput {
+  shapeId: string;
+  direction?: "in" | "out" | "both";
+  includeUnboundEndpoints?: boolean;
+}
+
+export interface ConnectionRow {
+  arrowId: string;
+  arrowLabel?: string;
+  direction: "out" | "in";
+  other: ShapeRow | null;
+}
+
+export interface GetConnectionsOutput {
+  shape: ShapeRow;
+  connections: ConnectionRow[];
+}
+
+export function executeGetConnections(
+  api: ExcalidrawImperativeAPI,
+  input: GetConnectionsInput,
+): ToolResult<GetConnectionsOutput> {
+  try {
+    const elements = api.getSceneElements();
+    const elementsById = makeElementsById(elements);
+    const focal = elementsById.get(input.shapeId);
+    if (!focal) {
+      return fail(
+        "not_found",
+        `Shape not found: ${input.shapeId}.`,
+        "Call find_shapes or query_canvas to refresh ids.",
+      );
+    }
+
+    const dir = input.direction ?? "both";
+    const wantIn = dir === "in" || dir === "both";
+    const wantOut = dir === "out" || dir === "both";
+    const includeUnbound = Boolean(input.includeUnboundEndpoints);
+
+    // Walk the focal shape's boundElements — each entry of type
+    // "arrow" is an edge that has one endpoint on this shape.
+    // We then read the arrow itself to determine which end it is,
+    // and (if bound) what shape sits on the other end.
+    const rows: ConnectionRow[] = [];
+    const bound = (
+      focal as { boundElements?: readonly { id: string; type: string }[] }
+    ).boundElements;
+    if (bound) {
+      for (const ref of bound) {
+        if (ref.type !== "arrow") continue;
+        const arrow = elementsById.get(ref.id);
+        if (!arrow || arrow.type !== "arrow") continue;
+        const start = (
+          arrow as { startBinding?: { elementId: string } | null }
+        ).startBinding?.elementId;
+        const end = (
+          arrow as { endBinding?: { elementId: string } | null }
+        ).endBinding?.elementId;
+
+        // Determine which end belongs to the focal shape.
+        let direction: "out" | "in" | null = null;
+        let otherId: string | null = null;
+        if (start === focal.id) {
+          direction = "out";
+          otherId = end ?? null;
+        } else if (end === focal.id) {
+          direction = "in";
+          otherId = start ?? null;
+        }
+        if (!direction) continue;
+        if (direction === "out" && !wantOut) continue;
+        if (direction === "in" && !wantIn) continue;
+
+        const other = otherId ? elementsById.get(otherId) : null;
+        if (!other && !includeUnbound) continue;
+
+        rows.push({
+          arrowId: arrow.id,
+          arrowLabel: getElementText(arrow, elementsById),
+          direction,
+          other: other ? elementToRow(other, elementsById) : null,
+        });
+      }
+    }
+
+    return ok({
+      shape: elementToRow(focal, elementsById),
+      connections: rows,
+    });
+  } catch (err) {
+    return fail(
+      "internal",
+      err instanceof Error ? err.message : "get_connections failed",
+    );
+  }
+}
+
+/* ─── find_free_space ───────────────────────────────────── *
+ *
+ * Spiral outward from the focal point, testing axis-aligned slots
+ * of the requested size. The first slot that doesn't overlap any
+ * existing shape (with a configurable gap) wins. Frames are
+ * skipped — they're containers, not obstacles.
+ *
+ * Cheap on small/medium boards (≤ a few hundred shapes). On very
+ * large boards we fall back to a relaxed result rather than
+ * stalling: the agent is warned via `relaxed: true` and can choose
+ * to call again with a different anchor.
+ */
+
+export interface FindFreeSpaceInput {
+  size: { w: number; h: number };
+  near?:
+    | { shapeId: string }
+    | { x: number; y: number }
+    | "selection"
+    | "viewport";
+  preferDirection?: "right" | "below" | "left" | "above" | "any";
+  gap?: number;
+}
+
+export interface FindFreeSpaceOutput {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  attempts: number;
+  relaxed: boolean;
+}
+
+const FREE_SPACE_DEFAULT_GAP = 48;
+const FREE_SPACE_MAX_ATTEMPTS = 60;
+/** Step size used when spiralling outward — roughly one column. */
+const FREE_SPACE_STEP_BASE = 80;
+
+export function executeFindFreeSpace(
+  api: ExcalidrawImperativeAPI,
+  input: FindFreeSpaceInput,
+): ToolResult<FindFreeSpaceOutput> {
+  try {
+    const focal = resolveFocal(api, input.near);
+    if ("error" in focal) {
+      return fail("not_found", focal.error);
+    }
+
+    const elements = api.getSceneElements();
+    const gap = input.gap ?? FREE_SPACE_DEFAULT_GAP;
+    const { w, h } = input.size;
+
+    // Obstacles = every shape EXCEPT frames (which are containers,
+    // and shapes inside them) and arrows (treating arrows as
+    // obstacles produces unusable layouts because they cross
+    // everything). Bound text labels are part of their container's
+    // footprint already, so skip them too.
+    const obstacles: SceneRect[] = [];
+    for (const el of elements) {
+      if (el.type === "frame" || el.type === "magicframe") continue;
+      if (el.type === "arrow") continue;
+      if (
+        el.type === "text" &&
+        (el as ExcalidrawTextElement).containerId
+      ) {
+        continue;
+      }
+      obstacles.push(rectFromElement(el));
+    }
+
+    // Candidate generator: spiral around the focal point. We sweep
+    // along a directional sequence so `preferDirection` actually
+    // biases the result.
+    const baseStep = Math.max(
+      FREE_SPACE_STEP_BASE,
+      Math.round(Math.min(w, h) / 2),
+    );
+    const dir = input.preferDirection ?? "any";
+    const order: Array<"right" | "below" | "left" | "above"> =
+      dir === "any"
+        ? ["right", "below", "left", "above"]
+        : (() => {
+            const all: Array<"right" | "below" | "left" | "above"> = [
+              "right",
+              "below",
+              "left",
+              "above",
+            ];
+            const idx = all.indexOf(dir);
+            return [...all.slice(idx), ...all.slice(0, idx)];
+          })();
+
+    /** Candidate top-left for a given (ring, sideIndex). */
+    const candidateFor = (
+      ring: number,
+      side: "right" | "below" | "left" | "above",
+    ): { x: number; y: number } => {
+      const offset = ring * baseStep;
+      // Place the requested size centred along the perpendicular
+      // axis. This keeps the new content roughly aligned with the
+      // focal point rather than drifting sideways.
+      switch (side) {
+        case "right":
+          return { x: focal.x + offset, y: focal.y - h / 2 };
+        case "left":
+          return { x: focal.x - offset - w, y: focal.y - h / 2 };
+        case "below":
+          return { x: focal.x - w / 2, y: focal.y + offset };
+        case "above":
+          return { x: focal.x - w / 2, y: focal.y - offset - h };
+      }
+    };
+
+    let attempts = 0;
+    // Ring 0 puts the candidate centred on the focal — only valid
+    // on an empty board, but worth trying first.
+    for (let ring = 0; ring < FREE_SPACE_MAX_ATTEMPTS / order.length; ring++) {
+      for (const side of order) {
+        attempts++;
+        const c = candidateFor(ring, side);
+        const cand: SceneRect = { x: c.x, y: c.y, w, h };
+        const collides = obstacles.some((o) => rectsOverlap(cand, o, gap));
+        if (!collides) {
+          return ok({
+            x: cand.x,
+            y: cand.y,
+            w,
+            h,
+            attempts,
+            relaxed: false,
+          });
+        }
+        if (attempts >= FREE_SPACE_MAX_ATTEMPTS) break;
+      }
+      if (attempts >= FREE_SPACE_MAX_ATTEMPTS) break;
+    }
+
+    // Exhausted the budget. Return the far edge of the last ring
+    // in the preferred direction so the agent at least gets a slot
+    // outside the cluster, with `relaxed: true` to signal we
+    // didn't fully verify it.
+    const fallback = candidateFor(
+      Math.ceil(FREE_SPACE_MAX_ATTEMPTS / order.length),
+      order[0]!,
+    );
+    return ok({
+      x: fallback.x,
+      y: fallback.y,
+      w,
+      h,
+      attempts,
+      relaxed: true,
+    });
+  } catch (err) {
+    return fail(
+      "internal",
+      err instanceof Error ? err.message : "find_free_space failed",
+    );
+  }
+}
+
+/* ─── query_frame ───────────────────────────────────────── */
+
+export interface QueryFrameInput {
+  frameId: string;
+}
+
+export interface QueryFrameOutput {
+  frame: ShapeRow;
+  children: ShapeRow[];
+  bounds: { x: number; y: number; w: number; h: number };
+}
+
+export function executeQueryFrame(
+  api: ExcalidrawImperativeAPI,
+  input: QueryFrameInput,
+): ToolResult<QueryFrameOutput> {
+  try {
+    const elements = api.getSceneElements();
+    const elementsById = makeElementsById(elements);
+    const frame = elementsById.get(input.frameId);
+    if (!frame) {
+      return fail(
+        "not_found",
+        `Frame not found: ${input.frameId}.`,
+        "Call find_shapes type=frame to list frames on the canvas.",
+      );
+    }
+    if (frame.type !== "frame" && frame.type !== "magicframe") {
+      return fail(
+        "invalid_input",
+        `Shape ${input.frameId} is not a frame (type=${frame.type}).`,
+        "Use find_shapes with type=frame to locate frames.",
+      );
+    }
+
+    // Children are any element whose `frameId` points at this frame.
+    const children: ShapeRow[] = [];
+    for (const el of elements) {
+      if (el.id === frame.id) continue;
+      const fid = (el as { frameId?: string | null }).frameId;
+      if (fid !== frame.id) continue;
+      // Skip bound text labels — they're rendered with their containers.
+      if (
+        el.type === "text" &&
+        (el as ExcalidrawTextElement).containerId
+      ) {
+        continue;
+      }
+      children.push(elementToRow(el, elementsById));
+    }
+
+    return ok({
+      frame: elementToRow(frame, elementsById),
+      children,
+      bounds: {
+        x: frame.x,
+        y: frame.y,
+        w: frame.width,
+        h: frame.height,
+      },
+    });
+  } catch (err) {
+    return fail(
+      "internal",
+      err instanceof Error ? err.message : "query_frame failed",
+    );
+  }
+}
+
+/* ─── set_selection ─────────────────────────────────────── *
+ *
+ * Replaces appState.selectedElementIds. Excalidraw treats
+ * selection as a record of `{ [id]: true }`. Missing ids are
+ * filtered (no point selecting ghosts). Idempotency-keyed so a
+ * repeat tool call inside the dedupe window is a no-op.
+ */
+
+export interface SetSelectionInput {
+  shapeIds: string[];
+  idempotencyKey?: string;
+}
+
+export interface SetSelectionOutput {
+  selectedShapeIds: string[];
+  missingShapeIds: string[];
+}
+
+export function executeSetSelection(
+  api: ExcalidrawImperativeAPI,
+  input: SetSelectionInput,
+): ToolResult<SetSelectionOutput> {
+  return withIdempotency(input.idempotencyKey, () => {
+    try {
+      const elements = api.getSceneElements();
+      const byId = new Map(elements.map((el) => [el.id, true as const]));
+      const present = input.shapeIds.filter((id) => byId.has(id));
+      const missing = input.shapeIds.filter((id) => !byId.has(id));
+
+      const selectedElementIds: Record<string, true> = {};
+      for (const id of present) selectedElementIds[id] = true;
+
+      api.updateScene({
+        appState: { selectedElementIds },
+        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+      });
+
+      const warnings =
+        missing.length > 0
+          ? [`Selection skipped missing ids: ${missing.join(", ")}`]
+          : undefined;
+      return ok(
+        { selectedShapeIds: present, missingShapeIds: missing },
+        warnings,
+      );
+    } catch (err) {
+      return fail(
+        "internal",
+        err instanceof Error ? err.message : "set_selection failed",
+      );
+    }
+  });
+}
+
+/* ─── focus_camera ──────────────────────────────────────── *
+ *
+ * Pan + zoom to fit a target. Built on `scrollToContent`, which
+ * Excalidraw already exposes for our reveal-on-create flow.
+ * Either `shapeIds` OR `bounds` must be given.
+ */
+
+export interface FocusCameraInput {
+  shapeIds?: string[];
+  bounds?: { x: number; y: number; w: number; h: number };
+  padding?: number;
+  animate?: boolean;
+}
+
+export interface FocusCameraOutput {
+  framed: { x: number; y: number; w: number; h: number };
+}
+
+export function executeFocusCamera(
+  api: ExcalidrawImperativeAPI,
+  input: FocusCameraInput,
+): ToolResult<FocusCameraOutput> {
+  try {
+    const elements = api.getSceneElements();
+    const elementsById = makeElementsById(elements);
+    const padding = input.padding ?? 0.15;
+    const animate = input.animate ?? true;
+
+    let framed: { x: number; y: number; w: number; h: number };
+    let target: ExcalidrawElement[] | undefined;
+
+    if (input.shapeIds && input.shapeIds.length > 0) {
+      const present = input.shapeIds
+        .map((id) => elementsById.get(id))
+        .filter((e): e is NonDeletedExcalidrawElement => Boolean(e));
+      if (present.length === 0) {
+        return fail(
+          "not_found",
+          `None of those shape ids exist: ${input.shapeIds.join(", ")}.`,
+          "Call find_shapes or query_canvas to refresh ids.",
+        );
+      }
+      target = present as ExcalidrawElement[];
+      const [minX, minY, maxX, maxY] = getCommonBounds(present);
+      framed = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+    } else if (input.bounds) {
+      framed = input.bounds;
+    } else {
+      return fail(
+        "invalid_input",
+        "focus_camera needs either `shapeIds` or `bounds`.",
+      );
+    }
+
+    // `scrollToContent` accepts a shape array; for raw bounds we
+    // synthesise a transient hidden rectangle and pass it in.
+    // It never lands on the scene because we don't call updateScene.
+    const fitTarget: ExcalidrawElement[] =
+      target ??
+      (convertToExcalidrawElements([
+        {
+          type: "rectangle",
+          x: framed.x,
+          y: framed.y,
+          width: framed.w,
+          height: framed.h,
+        },
+      ]) as ExcalidrawElement[]);
+
+    api.scrollToContent(fitTarget, {
+      fitToContent: true,
+      animate,
+      duration: animate ? 350 : 0,
+      // viewportZoomFactor = 1 - padding so the target covers
+      // (1 - padding) of the viewport. 0.15 default = 85 % coverage.
+      viewportZoomFactor: Math.max(0.1, Math.min(1, 1 - padding)),
+    });
+
+    return ok({ framed });
+  } catch (err) {
+    return fail(
+      "internal",
+      err instanceof Error ? err.message : "focus_camera failed",
+    );
+  }
+}
+
 /* ─── arrow-binding helpers ────────────────────────────── *
  *
  * Excalidraw exposes two arrow-binding mechanisms and only one of
@@ -532,10 +1212,64 @@ export function executeFindShapes(
  */
 const BINDING_DEFAULTS = { focus: 0 as const, gap: 1 as const };
 
+/**
+ * Side anchor → fixedPoint conversion. Excalidraw elbow arrows take
+ * a normalized [u, v] coord on the shape's bounding box (each in
+ * 0..1). `"auto"` returns `null` so the elbow router picks an edge
+ * itself.
+ */
+function sideToFixedPoint(
+  side: "auto" | "left" | "right" | "top" | "bottom" | undefined,
+): [number, number] | null {
+  switch (side) {
+    case "left":
+      return [0, 0.5];
+    case "right":
+      return [1, 0.5];
+    case "top":
+      return [0.5, 0];
+    case "bottom":
+      return [0.5, 1];
+    default:
+      return null;
+  }
+}
+
+/**
+ * Edge-midpoint of a shape, used as the arrow's tail/head position
+ * when `direct` routing needs a side hint. Excalidraw's binding
+ * resolver picks the edge nearest the terminal point, so placing
+ * the terminal AT the edge is the most reliable way to force a
+ * specific side without going elbow.
+ */
+function edgePoint(
+  el: { x: number; y: number; width: number; height: number },
+  side: "auto" | "left" | "right" | "top" | "bottom" | undefined,
+): { x: number; y: number } {
+  switch (side) {
+    case "left":
+      return { x: el.x, y: el.y + el.height / 2 };
+    case "right":
+      return { x: el.x + el.width, y: el.y + el.height / 2 };
+    case "top":
+      return { x: el.x + el.width / 2, y: el.y };
+    case "bottom":
+      return { x: el.x + el.width / 2, y: el.y + el.height };
+    default:
+      return { x: el.x + el.width / 2, y: el.y + el.height / 2 };
+  }
+}
+
 function attachArrowBindings(
   arrow: OrderedExcalidrawElement,
   scene: readonly OrderedExcalidrawElement[],
-  bindings: { startId?: string | null; endId?: string | null },
+  bindings: {
+    startId?: string | null;
+    endId?: string | null;
+    /** When set, produces a `FixedPointBinding` (required for elbow arrows). */
+    startFixedPoint?: [number, number] | null;
+    endFixedPoint?: [number, number] | null;
+  },
 ): {
   arrow: OrderedExcalidrawElement;
   patchedTargets: Map<string, OrderedExcalidrawElement>;
@@ -546,13 +1280,19 @@ function attachArrowBindings(
   const stamp = (
     targetId: string | null | undefined,
     side: "startBinding" | "endBinding",
+    fixedPoint: [number, number] | null | undefined,
   ) => {
     if (!targetId) return;
     const target = scene.find((e) => e.id === targetId);
     if (!target) return;
+    const binding: Record<string, unknown> = {
+      elementId: targetId,
+      ...BINDING_DEFAULTS,
+    };
+    if (fixedPoint) binding.fixedPoint = fixedPoint;
     nextArrow = {
       ...nextArrow,
-      [side]: { elementId: targetId, ...BINDING_DEFAULTS },
+      [side]: binding,
     } as OrderedExcalidrawElement;
     const current = patched.get(targetId) ?? target;
     const existing = (current as { boundElements?: readonly { id: string }[] })
@@ -571,8 +1311,12 @@ function attachArrowBindings(
     } as OrderedExcalidrawElement);
   };
 
-  stamp(bindings.startId ?? null, "startBinding");
-  stamp(bindings.endId ?? null, "endBinding");
+  stamp(
+    bindings.startId ?? null,
+    "startBinding",
+    bindings.startFixedPoint,
+  );
+  stamp(bindings.endId ?? null, "endBinding", bindings.endFixedPoint);
 
   return { arrow: nextArrow, patchedTargets: patched };
 }
@@ -879,92 +1623,419 @@ function collectTopLevelIds(
   return ids;
 }
 
+/* ─── connect_shapes / connect_many shared builder ─────── *
+ *
+ * `buildBoundArrow` turns one edge spec into the elements that
+ * need to land on the canvas (an arrow, optionally a bound text
+ * label) plus the patch map for the source/target shapes'
+ * `boundElements`. Used by both single (`connect_shapes`) and
+ * batch (`connect_many`) flows. Keeping a single builder means
+ * side-anchor + routing semantics are guaranteed identical
+ * between the two entry points.
+ */
+
+interface EdgeSpec {
+  fromId: string;
+  toId: string;
+  label?: string;
+  color?: string;
+  size?: string;
+  fromSide?: "auto" | "left" | "right" | "top" | "bottom";
+  toSide?: "auto" | "left" | "right" | "top" | "bottom";
+  routing?: "direct" | "orthogonal";
+}
+
+function buildBoundArrow(
+  scene: readonly OrderedExcalidrawElement[],
+  spec: EdgeSpec,
+):
+  | {
+      created: readonly OrderedExcalidrawElement[];
+      arrowId: string;
+      patchedTargets: Map<string, OrderedExcalidrawElement>;
+    }
+  | { error: string } {
+  const from = scene.find((e) => e.id === spec.fromId);
+  const to = scene.find((e) => e.id === spec.toId);
+  if (!from || !to) {
+    const missing = [
+      ...(from ? [] : [spec.fromId]),
+      ...(to ? [] : [spec.toId]),
+    ];
+    return { error: `Shape(s) not found: ${missing.join(", ")}.` };
+  }
+
+  // Direct routing with a side hint: position the terminal at the
+  // edge midpoint of the bound shape. Excalidraw's binding
+  // resolver then picks that edge naturally. With `auto`, we just
+  // use shape centers (the historical behaviour).
+  const routing = spec.routing ?? "direct";
+  const elbowed = routing === "orthogonal";
+  const startPt = edgePoint(from, elbowed ? "auto" : spec.fromSide);
+  const endPt = edgePoint(to, elbowed ? "auto" : spec.toSide);
+
+  // Build the arrow with NO `start: { id }` / `end: { id }`
+  // shortcut — that only resolves ids within the skeleton array,
+  // and ours point at scene shapes. `attachArrowBindings` wires
+  // them after conversion.
+  // The skeleton type is internal-ish — `ExcalidrawElementSkeleton` is
+  // an `Extract<…>` of element variants minus a few unsupported ones.
+  // We type as `Record<string, unknown>` for the build phase and cast
+  // at the call site; the converter validates at runtime anyway.
+  const skeleton: Record<string, unknown> = {
+    type: "arrow",
+    x: startPt.x,
+    y: startPt.y,
+    strokeColor: mapStroke(spec.color),
+    strokeWidth: mapStrokeWidth(spec.size),
+    endArrowhead: "arrow",
+    points: [
+      [0, 0],
+      [endPt.x - startPt.x, endPt.y - startPt.y],
+    ],
+    ...(spec.label
+      ? {
+          label: {
+            text: spec.label,
+            fontSize: mapFontSize(spec.size),
+          },
+        }
+      : {}),
+  };
+  // Elbow arrows are a separate element subtype. `elbowed: true`
+  // signals Excalidraw to lay the arrow out with right-angled
+  // segments — exactly what architecture diagrams want.
+  if (elbowed) {
+    (skeleton as unknown as { elbowed: true }).elbowed = true;
+  }
+
+  const created = convertToExcalidrawElements([
+    skeleton as unknown as Parameters<
+      typeof convertToExcalidrawElements
+    >[0] extends Array<infer T> | null
+      ? T
+      : never,
+  ]);
+  const arrow = created.find((el) => el.type === "arrow");
+  if (!arrow) {
+    return { error: "Arrow element not produced." };
+  }
+
+  // Elbow arrows need FixedPointBinding (with `fixedPoint`). For
+  // `auto` on an elbow arrow we leave fixedPoint null and let the
+  // router pick.
+  const startFixedPoint = elbowed ? sideToFixedPoint(spec.fromSide) : null;
+  const endFixedPoint = elbowed ? sideToFixedPoint(spec.toSide) : null;
+
+  const { arrow: boundArrow, patchedTargets } = attachArrowBindings(
+    arrow,
+    scene,
+    {
+      startId: from.id,
+      endId: to.id,
+      startFixedPoint,
+      endFixedPoint,
+    },
+  );
+  // Replace the unbound arrow inside `created` with the bound one;
+  // everything else (e.g. a label text element) stays put.
+  const finalCreated = created.map((el) =>
+    el.id === arrow.id ? boundArrow : el,
+  );
+
+  return { created: finalCreated, arrowId: arrow.id, patchedTargets };
+}
+
 /* ─── connect_shapes ───────────────────────────────────── */
+
+export interface ConnectShapesInput {
+  fromId: string;
+  toId: string;
+  label?: string;
+  fromSide?: "auto" | "left" | "right" | "top" | "bottom";
+  toSide?: "auto" | "left" | "right" | "top" | "bottom";
+  routing?: "direct" | "orthogonal";
+  color?: string;
+  size?: string;
+  idempotencyKey?: string;
+}
 
 export function executeConnectShapes(
   api: ExcalidrawImperativeAPI,
-  input: {
-    fromId: string;
-    toId: string;
-    label?: string;
-    color?: string;
-    size?: string;
-    idempotencyKey?: string;
-  },
+  input: ConnectShapesInput,
 ): ToolResult<{ arrowId: string }> {
   return withIdempotency(input.idempotencyKey, () => {
     const elements = api.getSceneElements();
-    const from = elements.find((e) => e.id === input.fromId);
-    const to = elements.find((e) => e.id === input.toId);
-    if (!from || !to) {
-      const missing = [
-        ...(from ? [] : [input.fromId]),
-        ...(to ? [] : [input.toId]),
-      ];
+    const built = buildBoundArrow(elements, input);
+    if ("error" in built) {
       return fail(
         "not_found",
-        `Shape(s) not found: ${missing.join(", ")}.`,
+        built.error,
         "Call `find_shapes` or `query_canvas` to refresh ids.",
       );
     }
 
-    const startPt = { x: from.x + from.width / 2, y: from.y + from.height / 2 };
-    const endPt = { x: to.x + to.width / 2, y: to.y + to.height / 2 };
-
     try {
-      // Build the arrow with NO `start: { id }` / `end: { id }`
-      // shortcut — that only resolves ids within the skeleton array,
-      // and ours point at scene shapes. `attachArrowBindings` wires
-      // them after conversion.
-      const created = convertToExcalidrawElements([
-        {
-          type: "arrow",
-          x: startPt.x,
-          y: startPt.y,
-          strokeColor: mapStroke(input.color),
-          strokeWidth: mapStrokeWidth(input.size),
-          endArrowhead: "arrow",
-          points: [
-            [0, 0],
-            [endPt.x - startPt.x, endPt.y - startPt.y],
-          ],
-          ...(input.label
-            ? {
-                label: {
-                  text: input.label,
-                  fontSize: mapFontSize(input.size),
-                },
-              }
-            : {}),
-        },
-      ]);
-      const arrow = created.find((el) => el.type === "arrow");
-      if (!arrow) {
-        return fail("internal", "Arrow element not produced.");
-      }
-
-      const { arrow: boundArrow, patchedTargets } = attachArrowBindings(
-        arrow,
-        elements,
-        { startId: from.id, endId: to.id },
+      const nextScene = elements.map(
+        (el) => built.patchedTargets.get(el.id) ?? el,
       );
-      const nextScene = elements.map((el) => patchedTargets.get(el.id) ?? el);
-      // Replace the unbound arrow inside `created` with the bound
-      // one; everything else (e.g. a label text element) stays put.
-      const nextCreated = created.map((el) =>
-        el.id === arrow.id ? boundArrow : el,
-      );
-
       api.updateScene({
-        elements: [...nextScene, ...nextCreated],
+        elements: [...nextScene, ...built.created],
         captureUpdate: CaptureUpdateAction.IMMEDIATELY,
       });
-
-      return ok({ arrowId: arrow.id });
+      return ok({ arrowId: built.arrowId });
     } catch (err) {
       return fail(
         "internal",
         err instanceof Error ? err.message : "connect_shapes failed",
+      );
+    }
+  });
+}
+
+/* ─── connect_many ─────────────────────────────────────── *
+ *
+ * Apply N edges in a single `updateScene`. Each successive edge
+ * sees the patches from prior edges so that fan-outs into the
+ * same target accumulate boundElements correctly. Failures don't
+ * abort the batch — they're collected in `skipped` with the
+ * original index so the agent can retry just the bad ones.
+ */
+
+export interface ConnectManyInput {
+  edges: EdgeSpec[];
+  idempotencyKey?: string;
+}
+
+export interface ConnectManyOutput {
+  arrowIds: string[];
+  skipped: Array<{ index: number; reason: string }>;
+}
+
+export function executeConnectMany(
+  api: ExcalidrawImperativeAPI,
+  input: ConnectManyInput,
+): ToolResult<ConnectManyOutput> {
+  return withIdempotency(input.idempotencyKey, () => {
+    try {
+      // Maintain a virtual scene that accumulates patches across
+      // edges. This is critical for fan-in / fan-out cases — the
+      // second arrow into a shape needs to see the boundElements
+      // entry added by the first arrow, or it'll clobber it.
+      let virtualScene = api.getSceneElements() as readonly OrderedExcalidrawElement[];
+      const allCreated: OrderedExcalidrawElement[] = [];
+      const arrowIds: string[] = [];
+      const skipped: Array<{ index: number; reason: string }> = [];
+
+      input.edges.forEach((edge, index) => {
+        const built = buildBoundArrow(virtualScene, edge);
+        if ("error" in built) {
+          arrowIds.push("");
+          skipped.push({ index, reason: built.error });
+          return;
+        }
+        // Apply target patches to the virtual scene so subsequent
+        // edges see them.
+        virtualScene = virtualScene.map(
+          (el) => built.patchedTargets.get(el.id) ?? el,
+        );
+        // Append the new elements (arrow + optional bound label)
+        // to the virtual scene as well — a follow-up edge might
+        // need to bind to this arrow (rare, but possible).
+        virtualScene = [...virtualScene, ...built.created];
+        allCreated.push(...built.created);
+        arrowIds.push(built.arrowId);
+      });
+
+      // Single updateScene with the final accumulated virtual
+      // scene. `allCreated` is already inside `virtualScene` so we
+      // don't append it again.
+      api.updateScene({
+        elements: virtualScene as ExcalidrawElement[],
+        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+      });
+
+      const warnings =
+        skipped.length > 0
+          ? [`Skipped ${skipped.length} edge(s); inspect \`skipped\` for details.`]
+          : undefined;
+      return ok({ arrowIds, skipped }, warnings);
+    } catch (err) {
+      return fail(
+        "internal",
+        err instanceof Error ? err.message : "connect_many failed",
+      );
+    }
+  });
+}
+
+/* ─── relabel_arrows ───────────────────────────────────── *
+ *
+ * Arrow labels in Excalidraw are bound text elements whose
+ * `containerId` points at the arrow. To set/change a label:
+ *
+ *   - Already labelled (boundElements has a `text` entry) →
+ *     update the text element in place. Cheapest path.
+ *
+ *   - Not labelled and new text is non-empty → synthesize a
+ *     temp arrow matching the real arrow's geometry, extract
+ *     the auto-positioned label text element from the
+ *     converter's output, rewrite its `containerId` to the real
+ *     arrow's id, splice it in.
+ *
+ *   - Already labelled and new text is empty → tombstone the
+ *     bound text element and prune the arrow's `boundElements`.
+ */
+
+export interface RelabelArrowsInput {
+  labels: Array<{ arrowId: string; text: string }>;
+  idempotencyKey?: string;
+}
+
+export interface RelabelArrowsOutput {
+  updatedArrowIds: string[];
+  missingArrowIds: string[];
+}
+
+export function executeRelabelArrows(
+  api: ExcalidrawImperativeAPI,
+  input: RelabelArrowsInput,
+): ToolResult<RelabelArrowsOutput> {
+  return withIdempotency(input.idempotencyKey, () => {
+    try {
+      const elements = api.getSceneElements();
+      const byId = new Map(elements.map((el) => [el.id, el]));
+      const updatedArrowIds: string[] = [];
+      const missingArrowIds: string[] = [];
+
+      // Patches and additions accumulated across all labels;
+      // applied in one updateScene at the end.
+      const patches = new Map<string, OrderedExcalidrawElement>();
+      const toAdd: OrderedExcalidrawElement[] = [];
+
+      for (const { arrowId, text } of input.labels) {
+        const arrow = (patches.get(arrowId) ?? byId.get(arrowId)) as
+          | OrderedExcalidrawElement
+          | undefined;
+        if (!arrow || arrow.type !== "arrow") {
+          missingArrowIds.push(arrowId);
+          continue;
+        }
+
+        // Look for existing bound text label.
+        const bound = (
+          arrow as { boundElements?: readonly { id: string; type: string }[] }
+        ).boundElements;
+        const textRef = bound?.find((b) => b.type === "text");
+        const existingText = textRef
+          ? ((patches.get(textRef.id) ?? byId.get(textRef.id)) as
+              | (OrderedExcalidrawElement & { text?: string })
+              | undefined)
+          : undefined;
+
+        if (existingText) {
+          if (text === "") {
+            // Remove: tombstone the text element and prune the
+            // arrow's boundElements entry.
+            patches.set(existingText.id, {
+              ...existingText,
+              isDeleted: true,
+            } as OrderedExcalidrawElement);
+            patches.set(arrow.id, {
+              ...arrow,
+              boundElements: (bound ?? []).filter(
+                (b) => b.id !== existingText.id,
+              ),
+            } as OrderedExcalidrawElement);
+          } else {
+            // Update in place. `originalText` mirrors `text` and is
+            // what Excalidraw re-wraps from on re-render.
+            patches.set(existingText.id, {
+              ...existingText,
+              text,
+              originalText: text,
+              version: ((existingText as { version: number }).version ?? 0) + 1,
+              versionNonce: Math.floor(Math.random() * 0x7fffffff),
+              updated: Date.now(),
+            } as OrderedExcalidrawElement);
+          }
+          updatedArrowIds.push(arrow.id);
+          continue;
+        }
+
+        if (text === "") {
+          // No-op: requested empty label on already-unlabelled arrow.
+          updatedArrowIds.push(arrow.id);
+          continue;
+        }
+
+        // No existing label, need to synthesize. Build a temp
+        // arrow with the same geometry + the desired label, let
+        // the converter auto-position a bound text, then rewrite
+        // the text's containerId to point at the real arrow.
+        const arrowEl = arrow as OrderedExcalidrawElement & {
+          x: number;
+          y: number;
+          points: readonly (readonly [number, number])[];
+        };
+        const tempCreated = convertToExcalidrawElements([
+          {
+            type: "arrow",
+            x: arrowEl.x,
+            y: arrowEl.y,
+            points: arrowEl.points as unknown as [number, number][],
+            label: { text },
+          },
+        ]);
+        const tempText = tempCreated.find((el) => el.type === "text") as
+          | (OrderedExcalidrawElement & { containerId?: string | null })
+          | undefined;
+        if (!tempText) {
+          missingArrowIds.push(arrow.id);
+          continue;
+        }
+        // Rewire to the real arrow.
+        const realLabel = {
+          ...tempText,
+          containerId: arrow.id,
+        } as OrderedExcalidrawElement;
+        toAdd.push(realLabel);
+        patches.set(arrow.id, {
+          ...arrow,
+          boundElements: [
+            ...(bound ?? []),
+            { type: "text", id: realLabel.id },
+          ],
+        } as OrderedExcalidrawElement);
+        updatedArrowIds.push(arrow.id);
+      }
+
+      if (patches.size === 0 && toAdd.length === 0) {
+        const warnings =
+          missingArrowIds.length > 0
+            ? [`No arrows found: ${missingArrowIds.join(", ")}`]
+            : undefined;
+        return ok({ updatedArrowIds, missingArrowIds }, warnings);
+      }
+
+      const nextScene = [
+        ...elements.map((el) => patches.get(el.id) ?? el),
+        ...toAdd,
+      ];
+      api.updateScene({
+        elements: nextScene,
+        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+      });
+
+      const warnings =
+        missingArrowIds.length > 0
+          ? [`Skipped missing or non-arrow ids: ${missingArrowIds.join(", ")}`]
+          : undefined;
+      return ok({ updatedArrowIds, missingArrowIds }, warnings);
+    } catch (err) {
+      return fail(
+        "internal",
+        err instanceof Error ? err.message : "relabel_arrows failed",
       );
     }
   });
@@ -1229,6 +2300,1139 @@ export function executeGroupIntoFrame(
       );
     }
   });
+}
+
+/* ─── layout_shapes helpers ─────────────────────────────── *
+ *
+ * All layout kinds share the same final step: we have a Map of
+ * { shapeId → new top-left }, and need to translate the whole
+ * group so the bounding-box origin matches the requested
+ * `origin` (preserve / viewport / shape / point). `applyLayout`
+ * does that translation + the actual `updateScene`.
+ */
+
+function bboxOfPlacements(
+  placements: Map<string, { x: number; y: number }>,
+  sizes: Map<string, { w: number; h: number }>,
+): { x: number; y: number; w: number; h: number } {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [id, p] of placements) {
+    const s = sizes.get(id)!;
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x + s.w > maxX) maxX = p.x + s.w;
+    if (p.y + s.h > maxY) maxY = p.y + s.h;
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+/* ─── layout_shapes ─────────────────────────────────────── */
+
+export interface LayoutShapesInput {
+  shapeIds: string[];
+  kind: "row" | "column" | "grid" | "tree";
+  gap?: { x?: number; y?: number };
+  columns?: number;
+  rootShapeId?: string;
+  direction?: "down" | "right" | "up" | "left";
+  origin?:
+    | { x: number; y: number }
+    | { shapeId: string }
+    | "viewport"
+    | "preserve";
+  idempotencyKey?: string;
+}
+
+export interface LayoutShapesOutput {
+  laidOutShapeIds: string[];
+  missingShapeIds: string[];
+  bounds: { x: number; y: number; w: number; h: number };
+}
+
+export function executeLayoutShapes(
+  api: ExcalidrawImperativeAPI,
+  input: LayoutShapesInput,
+): ToolResult<LayoutShapesOutput> {
+  return withIdempotency(input.idempotencyKey, () => {
+    try {
+      const elements = api.getSceneElements();
+      const byId = new Map(elements.map((el) => [el.id, el]));
+      const present = input.shapeIds.filter((id) => byId.has(id));
+      const missing = input.shapeIds.filter((id) => !byId.has(id));
+      if (present.length < 2) {
+        return fail(
+          "not_found",
+          `Need at least 2 valid shape ids. Missing: ${missing.join(", ") || "(none)"}.`,
+          "Call find_shapes or query_canvas for current ids.",
+        );
+      }
+
+      const sizes = new Map<string, { w: number; h: number }>();
+      for (const id of present) {
+        const el = byId.get(id)!;
+        sizes.set(id, { w: el.width, h: el.height });
+      }
+
+      // Defaults that "just work" for the common cases.
+      const defaultGap =
+        input.kind === "tree"
+          ? { x: 80, y: 120 }
+          : { x: 48, y: 48 };
+      const gapX = input.gap?.x ?? defaultGap.x;
+      const gapY = input.gap?.y ?? defaultGap.y;
+
+      // Capture the pre-layout bounding-box origin so `origin: "preserve"`
+      // leaves the cluster anchored where the user dragged it.
+      const preTargets = present.map((id) => byId.get(id)!);
+      const [preMinX, preMinY] = getCommonBounds(preTargets);
+
+      const placements = new Map<string, { x: number; y: number }>();
+
+      switch (input.kind) {
+        case "row": {
+          // Equalise vertical centres (looks tidier than top-aligning
+          // mixed-height shapes), then walk left to right.
+          const centreY =
+            preTargets.reduce((acc, el) => acc + el.y + el.height / 2, 0) /
+            preTargets.length;
+          let cursorX = 0;
+          for (const id of present) {
+            const s = sizes.get(id)!;
+            placements.set(id, { x: cursorX, y: centreY - s.h / 2 });
+            cursorX += s.w + gapX;
+          }
+          break;
+        }
+        case "column": {
+          const centreX =
+            preTargets.reduce((acc, el) => acc + el.x + el.width / 2, 0) /
+            preTargets.length;
+          let cursorY = 0;
+          for (const id of present) {
+            const s = sizes.get(id)!;
+            placements.set(id, { x: centreX - s.w / 2, y: cursorY });
+            cursorY += s.h + gapY;
+          }
+          break;
+        }
+        case "grid": {
+          // Uniform cell size = max of every shape so different sized
+          // boxes still align to a clean grid.
+          const cols =
+            input.columns ?? Math.max(1, Math.ceil(Math.sqrt(present.length)));
+          const cellW = Math.max(...present.map((id) => sizes.get(id)!.w));
+          const cellH = Math.max(...present.map((id) => sizes.get(id)!.h));
+          for (let i = 0; i < present.length; i++) {
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+            const s = sizes.get(present[i]!)!;
+            // Centre each shape within its cell so mixed sizes look intentional.
+            placements.set(present[i]!, {
+              x: col * (cellW + gapX) + (cellW - s.w) / 2,
+              y: row * (cellH + gapY) + (cellH - s.h) / 2,
+            });
+          }
+          break;
+        }
+        case "tree": {
+          const root = input.rootShapeId;
+          if (!root || !byId.has(root)) {
+            return fail(
+              "invalid_input",
+              `kind=tree requires a valid \`rootShapeId\` from shapeIds (got ${root ?? "undefined"}).`,
+            );
+          }
+          // Build the child-of-node adjacency by walking outgoing arrows
+          // among the selected shapes only.
+          const selectedSet = new Set(present);
+          const children = new Map<string, string[]>();
+          for (const id of present) {
+            children.set(id, []);
+          }
+          for (const el of elements) {
+            if (el.type !== "arrow") continue;
+            const start = (
+              el as { startBinding?: { elementId: string } | null }
+            ).startBinding?.elementId;
+            const end = (
+              el as { endBinding?: { elementId: string } | null }
+            ).endBinding?.elementId;
+            if (!start || !end) continue;
+            if (!selectedSet.has(start) || !selectedSet.has(end)) continue;
+            if (start === end) continue;
+            const list = children.get(start)!;
+            if (!list.includes(end)) list.push(end);
+          }
+
+          // Reingold-Tilford-lite: count leaf slots per subtree, then
+          // place each node centred over its children.
+          const leafCount = new Map<string, number>();
+          const placedSet = new Set<string>();
+          const countLeaves = (id: string, visited: Set<string>): number => {
+            if (visited.has(id)) return 1;
+            visited.add(id);
+            const ch = children.get(id) ?? [];
+            if (ch.length === 0) {
+              leafCount.set(id, 1);
+              return 1;
+            }
+            let total = 0;
+            for (const c of ch) total += countLeaves(c, visited);
+            const n = Math.max(1, total);
+            leafCount.set(id, n);
+            return n;
+          };
+          countLeaves(root, new Set());
+
+          // Direction: "down" (default) means depth on Y, sibling axis on X.
+          const dir = input.direction ?? "down";
+          const onYAxis = dir === "down" || dir === "up";
+          const reverseDepth = dir === "up" || dir === "left";
+
+          // Slot dimensions sized for the largest shape in the
+          // selection so labels don't overlap.
+          const slotMain =
+            (onYAxis
+              ? Math.max(...present.map((id) => sizes.get(id)!.w))
+              : Math.max(...present.map((id) => sizes.get(id)!.h))) +
+            (onYAxis ? gapX : gapY);
+          const layerStep =
+            (onYAxis
+              ? Math.max(...present.map((id) => sizes.get(id)!.h))
+              : Math.max(...present.map((id) => sizes.get(id)!.w))) +
+            (onYAxis ? gapY : gapX);
+
+          let nextLeafSlot = 0;
+          const place = (
+            id: string,
+            depth: number,
+            visited: Set<string>,
+          ): number => {
+            if (visited.has(id) || placedSet.has(id)) {
+              return nextLeafSlot - 0.5;
+            }
+            visited.add(id);
+            placedSet.add(id);
+            const ch = children.get(id) ?? [];
+            let centre: number;
+            if (ch.length === 0) {
+              centre = nextLeafSlot + 0.5;
+              nextLeafSlot += 1;
+            } else {
+              const childCentres: number[] = [];
+              for (const c of ch) {
+                childCentres.push(place(c, depth + 1, visited));
+              }
+              centre =
+                (childCentres[0]! +
+                  childCentres[childCentres.length - 1]!) /
+                2;
+            }
+            const layerIndex = reverseDepth ? -depth : depth;
+            const s = sizes.get(id)!;
+            if (onYAxis) {
+              placements.set(id, {
+                x: centre * slotMain - s.w / 2,
+                y: layerIndex * layerStep,
+              });
+            } else {
+              placements.set(id, {
+                x: layerIndex * layerStep,
+                y: centre * slotMain - s.h / 2,
+              });
+            }
+            return centre;
+          };
+          place(root, 0, new Set());
+
+          // Disconnected nodes — append after the main tree so they
+          // don't get lost. Treated as leaves at depth 0.
+          for (const id of present) {
+            if (placedSet.has(id)) continue;
+            const s = sizes.get(id)!;
+            const centre = nextLeafSlot + 0.5;
+            nextLeafSlot += 1;
+            if (onYAxis) {
+              placements.set(id, {
+                x: centre * slotMain - s.w / 2,
+                y: 0,
+              });
+            } else {
+              placements.set(id, {
+                x: 0,
+                y: centre * slotMain - s.h / 2,
+              });
+            }
+            placedSet.add(id);
+          }
+          break;
+        }
+      }
+
+      // Translate placements so the bounding-box origin matches
+      // `origin`. `placements` is currently in "local" coords starting
+      // near (0, 0) for most kinds.
+      const localBounds = bboxOfPlacements(placements, sizes);
+      const state = api.getAppState();
+      let targetOriginX = preMinX;
+      let targetOriginY = preMinY;
+      const origin = input.origin ?? "preserve";
+      if (origin === "viewport") {
+        const vp = viewportSceneBounds(state);
+        const vpCentreX = (vp.minX + vp.maxX) / 2;
+        const vpCentreY = (vp.minY + vp.maxY) / 2;
+        targetOriginX = vpCentreX - localBounds.w / 2;
+        targetOriginY = vpCentreY - localBounds.h / 2;
+      } else if (typeof origin === "object" && "shapeId" in origin) {
+        const anchor = byId.get(origin.shapeId);
+        if (!anchor) {
+          return fail(
+            "not_found",
+            `Origin shape not found: ${origin.shapeId}.`,
+          );
+        }
+        targetOriginX = anchor.x;
+        targetOriginY = anchor.y;
+      } else if (typeof origin === "object" && "x" in origin) {
+        targetOriginX = origin.x;
+        targetOriginY = origin.y;
+      }
+      const dx = targetOriginX - localBounds.x;
+      const dy = targetOriginY - localBounds.y;
+
+      const next = elements.map((el) => {
+        const p = placements.get(el.id);
+        if (!p) return el;
+        return { ...el, x: p.x + dx, y: p.y + dy };
+      });
+
+      api.updateScene({
+        elements: next,
+        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+      });
+
+      const finalBounds = {
+        x: localBounds.x + dx,
+        y: localBounds.y + dy,
+        w: localBounds.w,
+        h: localBounds.h,
+      };
+      const warnings =
+        missing.length > 0
+          ? [`Skipped missing shapes: ${missing.join(", ")}`]
+          : undefined;
+      return ok(
+        {
+          laidOutShapeIds: present,
+          missingShapeIds: missing,
+          bounds: finalBounds,
+        },
+        warnings,
+      );
+    } catch (err) {
+      return fail(
+        "internal",
+        err instanceof Error ? err.message : "layout_shapes failed",
+      );
+    }
+  });
+}
+
+/* ─── duplicate_shapes helpers ──────────────────────────── *
+ *
+ * Excalidraw IDs are short random strings — `randomElementId()`
+ * matches the engine's own style. `freshenElement` deep-clones an
+ * element with new id + fresh seeds, and remaps every internal id
+ * reference (containerId, boundElements, startBinding,
+ * endBinding, frameId) through a translation table so cloned
+ * groups stay internally consistent.
+ */
+
+function randomElementId(): string {
+  // Same length / character class Excalidraw uses internally.
+  // Don't need cryptographic strength — uniqueness within a session is enough.
+  return Math.random().toString(36).slice(2, 12);
+}
+
+function freshenElement(
+  el: ExcalidrawElement,
+  newId: string,
+  idMap: Map<string, string>,
+): ExcalidrawElement {
+  // Start from a shallow clone, then patch ids / refs / version
+  // metadata.
+  const cloned: Record<string, unknown> = { ...el };
+  cloned.id = newId;
+  cloned.seed = Math.floor(Math.random() * 2 ** 31);
+  cloned.versionNonce = Math.floor(Math.random() * 2 ** 31);
+  cloned.version = 1;
+  cloned.updated = Date.now();
+  // Excalidraw rebuilds these for us when we omit them.
+  delete cloned.index;
+
+  // groupIds: regenerate so the duplicate is its own group, not
+  // a member of the original's group.
+  const groupIds = (el as { groupIds?: readonly string[] }).groupIds;
+  if (groupIds && groupIds.length > 0) {
+    cloned.groupIds = groupIds.map(
+      (gid) => idMap.get(gid) ?? `g-${randomElementId()}`,
+    );
+  }
+
+  // containerId (bound text → container): remap if container is
+  // also being cloned, else clear so the text becomes free-standing.
+  const containerId = (el as { containerId?: string | null }).containerId;
+  if (containerId) {
+    cloned.containerId = idMap.get(containerId) ?? null;
+  }
+
+  // frameId: keep pointing at the original frame if frame is not
+  // in selection; remap if it is.
+  const frameId = (el as { frameId?: string | null }).frameId;
+  if (frameId) {
+    cloned.frameId = idMap.get(frameId) ?? frameId;
+  }
+
+  // boundElements: keep only the entries that refer to ids in the
+  // clone set, and remap them. Others are dropped (the original
+  // still references them — we don't want the clone to share
+  // bound text or arrows with the original).
+  const boundElements = (
+    el as { boundElements?: readonly { id: string; type: string }[] }
+  ).boundElements;
+  if (boundElements) {
+    cloned.boundElements = boundElements
+      .filter((b) => idMap.has(b.id))
+      .map((b) => ({ ...b, id: idMap.get(b.id)! }));
+  }
+
+  // Arrow start/end bindings: remap. If endpoint isn't in the
+  // clone set, drop the binding so the arrow becomes free-floating
+  // on that side rather than pointing at the original shape.
+  const startBinding = (el as { startBinding?: { elementId: string } | null })
+    .startBinding;
+  if (startBinding) {
+    const mapped = idMap.get(startBinding.elementId);
+    cloned.startBinding = mapped
+      ? { ...startBinding, elementId: mapped }
+      : null;
+  }
+  const endBinding = (el as { endBinding?: { elementId: string } | null })
+    .endBinding;
+  if (endBinding) {
+    const mapped = idMap.get(endBinding.elementId);
+    cloned.endBinding = mapped ? { ...endBinding, elementId: mapped } : null;
+  }
+
+  return cloned as ExcalidrawElement;
+}
+
+/* ─── duplicate_shapes ──────────────────────────────────── */
+
+export interface DuplicateShapesInput {
+  shapeIds: string[];
+  count?: number;
+  direction?: "right" | "below" | "left" | "above";
+  offset?: { dx: number; dy: number };
+  labelSuffix?: string;
+  idempotencyKey?: string;
+}
+
+export interface DuplicateShapesOutput {
+  newShapeIds: string[];
+  copies: Array<{
+    copyIndex: number;
+    idMap: Record<string, string>;
+  }>;
+  missingShapeIds: string[];
+  droppedArrows: string[];
+}
+
+export function executeDuplicateShapes(
+  api: ExcalidrawImperativeAPI,
+  input: DuplicateShapesInput,
+): ToolResult<DuplicateShapesOutput> {
+  return withIdempotency(input.idempotencyKey, () => {
+    try {
+      const elements = api.getSceneElements();
+      const byId = new Map(elements.map((el) => [el.id, el]));
+      const present = input.shapeIds.filter((id) => byId.has(id));
+      const missing = input.shapeIds.filter((id) => !byId.has(id));
+      if (present.length === 0) {
+        return fail(
+          "not_found",
+          `None of those shapes exist: ${input.shapeIds.join(", ")}.`,
+          "Call find_shapes or query_canvas for current ids.",
+        );
+      }
+
+      // Auto-include bound text labels of selected containers so
+      // duplicated boxes keep their captions. The user shouldn't
+      // have to pass label ids by hand.
+      const selectedSet = new Set(present);
+      for (const id of present) {
+        const el = byId.get(id)!;
+        const bound = (
+          el as { boundElements?: readonly { id: string; type: string }[] }
+        ).boundElements;
+        if (!bound) continue;
+        for (const b of bound) {
+          if (b.type !== "text") continue;
+          const label = byId.get(b.id);
+          if (!label) continue;
+          if ((label as ExcalidrawTextElement).containerId === id) {
+            selectedSet.add(b.id);
+          }
+        }
+      }
+
+      // Identify arrows in the selection that cross the boundary —
+      // we drop these instead of trying to clone partially-bound
+      // arrows (they'd look broken).
+      const droppedArrows: string[] = [];
+      const cloneables: ExcalidrawElement[] = [];
+      for (const id of selectedSet) {
+        const el = byId.get(id)!;
+        if (el.type === "arrow") {
+          const start = (
+            el as { startBinding?: { elementId: string } | null }
+          ).startBinding?.elementId;
+          const end = (
+            el as { endBinding?: { elementId: string } | null }
+          ).endBinding?.elementId;
+          if (
+            (start && !selectedSet.has(start)) ||
+            (end && !selectedSet.has(end))
+          ) {
+            droppedArrows.push(id);
+            continue;
+          }
+        }
+        cloneables.push(el);
+      }
+
+      if (cloneables.length === 0) {
+        return fail(
+          "invalid_input",
+          "Every shape in the selection was a boundary-crossing arrow.",
+          "Pick a selection where arrows stay inside, or include both endpoints.",
+        );
+      }
+
+      // Resolve the offset per copy. `direction` is sugar for an
+      // offset matching the selection's bounding box plus a gap.
+      const targets = cloneables;
+      const [minX, minY, maxX, maxY] = getCommonBounds(
+        targets as NonDeletedExcalidrawElement[],
+      );
+      const bboxW = maxX - minX;
+      const bboxH = maxY - minY;
+      const gap = 40;
+      let stepDx = 0;
+      let stepDy = bboxH + gap; // default: stack below
+      if (input.offset) {
+        stepDx = input.offset.dx;
+        stepDy = input.offset.dy;
+      } else if (input.direction) {
+        switch (input.direction) {
+          case "right":
+            stepDx = bboxW + gap;
+            stepDy = 0;
+            break;
+          case "left":
+            stepDx = -(bboxW + gap);
+            stepDy = 0;
+            break;
+          case "below":
+            stepDx = 0;
+            stepDy = bboxH + gap;
+            break;
+          case "above":
+            stepDx = 0;
+            stepDy = -(bboxH + gap);
+            break;
+        }
+      }
+
+      const count = input.count ?? 1;
+      const suffix = input.labelSuffix ?? "";
+      const allNew: ExcalidrawElement[] = [];
+      const copies: Array<{
+        copyIndex: number;
+        idMap: Record<string, string>;
+      }> = [];
+
+      for (let n = 1; n <= count; n++) {
+        // Build a per-copy id map covering every cloneable id.
+        const idMap = new Map<string, string>();
+        for (const el of cloneables) {
+          idMap.set(el.id, randomElementId());
+        }
+        const exportedMap: Record<string, string> = {};
+        const dx = stepDx * n;
+        const dy = stepDy * n;
+        for (const el of cloneables) {
+          const newId = idMap.get(el.id)!;
+          exportedMap[el.id] = newId;
+          const fresh = freshenElement(el, newId, idMap);
+          // Apply the per-copy offset to position fields.
+          const positioned = {
+            ...fresh,
+            x: (fresh as ExcalidrawElement).x + dx,
+            y: (fresh as ExcalidrawElement).y + dy,
+          } as ExcalidrawElement;
+          // Optional label suffix on text elements.
+          if (suffix && positioned.type === "text") {
+            const t = positioned as ExcalidrawTextElement & {
+              originalText?: string;
+            };
+            const newText = (t.text ?? "") + suffix;
+            (positioned as Record<string, unknown>).text = newText;
+            if (t.originalText !== undefined) {
+              (positioned as Record<string, unknown>).originalText = newText;
+            }
+          }
+          allNew.push(positioned);
+        }
+        copies.push({ copyIndex: n, idMap: exportedMap });
+      }
+
+      // Drop new elements after existing scene so they render on top.
+      const next = [...elements, ...allNew];
+      api.updateScene({
+        elements: next,
+        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+      });
+
+      const newShapeIds = allNew.map((el) => el.id);
+      const warnings: string[] = [];
+      if (missing.length > 0) {
+        warnings.push(`Skipped missing shapes: ${missing.join(", ")}`);
+      }
+      if (droppedArrows.length > 0) {
+        warnings.push(
+          `Dropped boundary-crossing arrows: ${droppedArrows.join(", ")}`,
+        );
+      }
+      return ok(
+        {
+          newShapeIds,
+          copies,
+          missingShapeIds: missing,
+          droppedArrows,
+        },
+        warnings.length > 0 ? warnings : undefined,
+      );
+    } catch (err) {
+      return fail(
+        "internal",
+        err instanceof Error ? err.message : "duplicate_shapes failed",
+      );
+    }
+  });
+}
+
+/* ─── analyze_canvas / explain_diagram ─────────────────── *
+ *
+ * Inspection tools. Both walk the same canvas state and share
+ * helpers (graph build, component find). `analyze_canvas` reports
+ * issues as a flat list; `explain_diagram` produces a structured
+ * prose summary. Neither mutates state.
+ */
+
+export type CanvasIssueKind =
+  | "orphan"
+  | "dangling_arrow"
+  | "overlap"
+  | "unlabeled"
+  | "off_canvas"
+  | "style_drift";
+
+export interface CanvasIssue {
+  kind: CanvasIssueKind;
+  shapeIds: string[];
+  description: string;
+  severity: "info" | "warning";
+}
+
+export interface AnalyzeCanvasInput {
+  categories?: CanvasIssueKind[];
+  frameId?: string;
+  offCanvasThreshold?: number;
+}
+
+export interface AnalyzeCanvasOutput {
+  issues: CanvasIssue[];
+  summary: { total: number; byCategory: Record<string, number> };
+}
+
+interface CanvasGraph {
+  inDegree: Map<string, number>;
+  outDegree: Map<string, number>;
+  neighbors: Map<string, Set<string>>;
+}
+
+/**
+ * Build a directed graph from bound arrows. Unbound arrows
+ * contribute nothing (they're surfaced separately by the
+ * `dangling_arrow` check).
+ */
+function buildArrowGraph(
+  scene: readonly NonDeletedExcalidrawElement[],
+): CanvasGraph {
+  const inDegree = new Map<string, number>();
+  const outDegree = new Map<string, number>();
+  const neighbors = new Map<string, Set<string>>();
+  const bump = (m: Map<string, number>, id: string) =>
+    m.set(id, (m.get(id) ?? 0) + 1);
+  const link = (a: string, b: string) => {
+    if (!neighbors.has(a)) neighbors.set(a, new Set());
+    if (!neighbors.has(b)) neighbors.set(b, new Set());
+    neighbors.get(a)!.add(b);
+    neighbors.get(b)!.add(a);
+  };
+  for (const el of scene) {
+    if (el.type !== "arrow") continue;
+    const start = (el as { startBinding?: { elementId: string } | null })
+      .startBinding?.elementId;
+    const end = (el as { endBinding?: { elementId: string } | null })
+      .endBinding?.elementId;
+    if (start && end) {
+      bump(outDegree, start);
+      bump(inDegree, end);
+      link(start, end);
+    }
+  }
+  return { inDegree, outDegree, neighbors };
+}
+
+/** Connected components over the undirected neighbour graph. */
+function connectedComponents(
+  ids: readonly string[],
+  neighbors: Map<string, Set<string>>,
+): string[][] {
+  const seen = new Set<string>();
+  const components: string[][] = [];
+  for (const id of ids) {
+    if (seen.has(id)) continue;
+    const stack = [id];
+    const comp: string[] = [];
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      if (seen.has(cur)) continue;
+      seen.add(cur);
+      comp.push(cur);
+      for (const n of neighbors.get(cur) ?? []) {
+        if (!seen.has(n)) stack.push(n);
+      }
+    }
+    components.push(comp);
+  }
+  return components;
+}
+
+/**
+ * Whether a shape is something the user "drew" — a candidate for
+ * orphan / overlap / unlabeled checks. Arrows, bound text, and
+ * frames themselves are excluded (frames are containers).
+ */
+function isDrawnShape(el: NonDeletedExcalidrawElement): boolean {
+  if (el.type === "arrow") return false;
+  if (el.type === "frame") return false;
+  if (el.type === "text") {
+    const containerId = (el as { containerId?: string | null }).containerId;
+    return !containerId;
+  }
+  return true;
+}
+
+/** Human label for an element, best-effort. */
+function describeShape(el: NonDeletedExcalidrawElement): string {
+  const text = (el as { text?: string }).text;
+  if (text && text.trim()) return `${el.type} "${text.trim().slice(0, 40)}"`;
+  return `${el.type} ${el.id.slice(0, 6)}`;
+}
+
+export function executeAnalyzeCanvas(
+  api: ExcalidrawImperativeAPI,
+  input: AnalyzeCanvasInput,
+): ToolResult<AnalyzeCanvasOutput> {
+  try {
+    const all = api.getSceneElements();
+
+    // Optional frame scope: restrict to elements with frameId === input.frameId
+    // (plus the frame itself).
+    let scope: readonly NonDeletedExcalidrawElement[] = all;
+    if (input.frameId) {
+      const frame = all.find((e) => e.id === input.frameId);
+      if (!frame) {
+        return fail(
+          "not_found",
+          `Frame not found: ${input.frameId}`,
+          "Call query_canvas for current frame ids.",
+        );
+      }
+      scope = all.filter(
+        (e) =>
+          e.id === input.frameId ||
+          (e as { frameId?: string | null }).frameId === input.frameId,
+      );
+    }
+
+    const requested = new Set<CanvasIssueKind>(
+      input.categories ?? [
+        "orphan",
+        "dangling_arrow",
+        "overlap",
+        "unlabeled",
+        "off_canvas",
+        "style_drift",
+      ],
+    );
+
+    const issues: CanvasIssue[] = [];
+    const byId = new Map(scope.map((e) => [e.id, e]));
+    const drawn = scope.filter(isDrawnShape);
+    const graph = buildArrowGraph(scope);
+
+    // ─── dangling_arrow ───
+    if (requested.has("dangling_arrow")) {
+      for (const el of scope) {
+        if (el.type !== "arrow") continue;
+        const start = (el as { startBinding?: { elementId: string } | null })
+          .startBinding;
+        const end = (el as { endBinding?: { elementId: string } | null })
+          .endBinding;
+        const missing: string[] = [];
+        if (!start) missing.push("tail");
+        else if (!byId.has(start.elementId)) missing.push("tail → missing shape");
+        if (!end) missing.push("head");
+        else if (!byId.has(end.elementId)) missing.push("head → missing shape");
+        if (missing.length > 0) {
+          issues.push({
+            kind: "dangling_arrow",
+            shapeIds: [el.id],
+            description: `Arrow ${el.id.slice(0, 6)} is not bound: ${missing.join(", ")}.`,
+            severity: "warning",
+          });
+        }
+      }
+    }
+
+    // ─── orphan ─── (only meaningful when there are ≥2 drawn shapes)
+    if (requested.has("orphan") && drawn.length >= 2) {
+      for (const el of drawn) {
+        const inD = graph.inDegree.get(el.id) ?? 0;
+        const outD = graph.outDegree.get(el.id) ?? 0;
+        if (inD === 0 && outD === 0) {
+          issues.push({
+            kind: "orphan",
+            shapeIds: [el.id],
+            description: `${describeShape(el)} has no incoming or outgoing arrows.`,
+            severity: "info",
+          });
+        }
+      }
+    }
+
+    // ─── unlabeled ─── (geo shapes only; notes can be intentionally blank)
+    if (requested.has("unlabeled")) {
+      for (const el of drawn) {
+        if (el.type !== "rectangle" && el.type !== "ellipse" && el.type !== "diamond") continue;
+        const bound = (el as {
+          boundElements?: readonly { id: string; type: string }[];
+        }).boundElements;
+        const labelEl = bound?.find((b) => b.type === "text");
+        const labelText = labelEl
+          ? (byId.get(labelEl.id) as { text?: string } | undefined)?.text?.trim()
+          : "";
+        if (!labelText) {
+          issues.push({
+            kind: "unlabeled",
+            shapeIds: [el.id],
+            description: `${el.type} ${el.id.slice(0, 6)} has no label.`,
+            severity: "info",
+          });
+        }
+      }
+    }
+
+    // ─── overlap ─── (drawn shapes only, skip frame-containment, skip bound text↔container)
+    if (requested.has("overlap") && drawn.length >= 2) {
+      const flagged = new Set<string>();
+      for (let i = 0; i < drawn.length; i++) {
+        for (let j = i + 1; j < drawn.length; j++) {
+          const a = drawn[i];
+          const b = drawn[j];
+          // Skip when one contains the other via frame membership
+          const aFrame = (a as { frameId?: string | null }).frameId;
+          const bFrame = (b as { frameId?: string | null }).frameId;
+          if (aFrame === b.id || bFrame === a.id) continue;
+          // Skip when in the same frame and the user laid them out manually —
+          // overlap inside a frame is a real issue too, so we keep this.
+          const ra = rectFromElement(a);
+          const rb = rectFromElement(b);
+          if (rectsOverlap(ra, rb, -1)) {
+            const key = [a.id, b.id].sort().join("§");
+            if (flagged.has(key)) continue;
+            flagged.add(key);
+            issues.push({
+              kind: "overlap",
+              shapeIds: [a.id, b.id],
+              description: `${describeShape(a)} overlaps ${describeShape(b)}.`,
+              severity: "warning",
+            });
+          }
+        }
+      }
+    }
+
+    // ─── off_canvas ─── (nearest-neighbour distance > threshold)
+    if (requested.has("off_canvas") && drawn.length >= 3) {
+      const threshold = input.offCanvasThreshold ?? 800;
+      const centres = drawn.map((el) => ({
+        id: el.id,
+        c: rectCentre(rectFromElement(el)),
+      }));
+      for (const me of centres) {
+        let minDist = Infinity;
+        for (const other of centres) {
+          if (other.id === me.id) continue;
+          const dx = me.c.x - other.c.x;
+          const dy = me.c.y - other.c.y;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d < minDist) minDist = d;
+        }
+        if (minDist > threshold) {
+          const el = byId.get(me.id)!;
+          issues.push({
+            kind: "off_canvas",
+            shapeIds: [me.id],
+            description: `${describeShape(el)} is ${Math.round(minDist)}px from its nearest neighbour (threshold ${threshold}px).`,
+            severity: "info",
+          });
+        }
+      }
+    }
+
+    // ─── style_drift ─── (per-frame stroke colour outliers)
+    if (requested.has("style_drift")) {
+      // Group drawn shapes by frame.
+      const byFrame = new Map<string, NonDeletedExcalidrawElement[]>();
+      for (const el of drawn) {
+        const fId = (el as { frameId?: string | null }).frameId ?? "__loose";
+        if (!byFrame.has(fId)) byFrame.set(fId, []);
+        byFrame.get(fId)!.push(el);
+      }
+      for (const [fId, group] of byFrame) {
+        if (group.length < 4) continue; // not enough signal
+        const counts = new Map<string, string[]>();
+        for (const el of group) {
+          const stroke = (el as { strokeColor?: string }).strokeColor ?? "";
+          if (!counts.has(stroke)) counts.set(stroke, []);
+          counts.get(stroke)!.push(el.id);
+        }
+        if (counts.size < 3) continue; // small palette, no drift
+        // Flag colours used by exactly one shape inside a frame that has ≥3 colours.
+        for (const [stroke, ids] of counts) {
+          if (ids.length !== 1) continue;
+          const where = fId === "__loose" ? "outside any frame" : `inside frame ${fId.slice(0, 6)}`;
+          issues.push({
+            kind: "style_drift",
+            shapeIds: ids,
+            description: `Stroke colour ${stroke || "(default)"} is used by exactly one shape ${where}; rest of the cluster uses a different palette.`,
+            severity: "info",
+          });
+        }
+      }
+    }
+
+    const byCategory: Record<string, number> = {};
+    for (const issue of issues) {
+      byCategory[issue.kind] = (byCategory[issue.kind] ?? 0) + 1;
+    }
+
+    return ok({
+      issues,
+      summary: { total: issues.length, byCategory },
+    });
+  } catch (err) {
+    return fail(
+      "internal",
+      err instanceof Error ? err.message : "analyze_canvas failed",
+    );
+  }
+}
+
+/* ─── explain_diagram ─── */
+
+export interface ExplainDiagramInput {
+  frameId?: string;
+  verbose?: boolean;
+}
+
+export interface ExplainDiagramOutput {
+  headline: string;
+  sections: Array<{ title: string; body: string }>;
+  stats: {
+    shapeCount: number;
+    arrowCount: number;
+    frameCount: number;
+    componentCount: number;
+  };
+}
+
+export function executeExplainDiagram(
+  api: ExcalidrawImperativeAPI,
+  input: ExplainDiagramInput,
+): ToolResult<ExplainDiagramOutput> {
+  try {
+    const all = api.getSceneElements();
+    let scope: readonly NonDeletedExcalidrawElement[] = all;
+    if (input.frameId) {
+      const frame = all.find((e) => e.id === input.frameId);
+      if (!frame) {
+        return fail(
+          "not_found",
+          `Frame not found: ${input.frameId}`,
+        );
+      }
+      scope = all.filter(
+        (e) =>
+          e.id === input.frameId ||
+          (e as { frameId?: string | null }).frameId === input.frameId,
+      );
+    }
+
+    const byId = new Map(scope.map((e) => [e.id, e]));
+    const drawn = scope.filter(isDrawnShape);
+    const arrows = scope.filter((e) => e.type === "arrow");
+    const frames = scope.filter((e) => e.type === "frame");
+    const graph = buildArrowGraph(scope);
+
+    // Label lookup: a shape's bound text element, if any.
+    const labelOf = (id: string): string => {
+      const el = byId.get(id);
+      if (!el) return id.slice(0, 6);
+      const ownText = (el as { text?: string }).text;
+      if (ownText && ownText.trim()) return ownText.trim();
+      const bound = (el as {
+        boundElements?: readonly { id: string; type: string }[];
+      }).boundElements;
+      const textRef = bound?.find((b) => b.type === "text");
+      if (textRef) {
+        const t = (byId.get(textRef.id) as { text?: string } | undefined)?.text;
+        if (t && t.trim()) return t.trim();
+      }
+      return `${el.type} ${id.slice(0, 6)}`;
+    };
+
+    // Component analysis over drawn shapes.
+    const drawnIds = drawn.map((e) => e.id);
+    const components = connectedComponents(drawnIds, graph.neighbors);
+
+    // For each component find sources (in=0, out>0) and sinks (out=0, in>0).
+    const summarizeComponent = (ids: string[]): string => {
+      if (ids.length === 1) {
+        const el = byId.get(ids[0]);
+        return el ? `Isolated: ${labelOf(ids[0])}.` : "";
+      }
+      const sources: string[] = [];
+      const sinks: string[] = [];
+      for (const id of ids) {
+        const inD = graph.inDegree.get(id) ?? 0;
+        const outD = graph.outDegree.get(id) ?? 0;
+        if (inD === 0 && outD > 0) sources.push(labelOf(id));
+        if (outD === 0 && inD > 0) sinks.push(labelOf(id));
+      }
+      const pieces: string[] = [];
+      pieces.push(`${ids.length} shapes`);
+      if (sources.length > 0) {
+        pieces.push(`starts at ${sources.slice(0, 3).join(", ")}${sources.length > 3 ? "…" : ""}`);
+      }
+      if (sinks.length > 0) {
+        pieces.push(`ends at ${sinks.slice(0, 3).join(", ")}${sinks.length > 3 ? "…" : ""}`);
+      }
+      return pieces.join("; ") + ".";
+    };
+
+    const sections: Array<{ title: string; body: string }> = [];
+
+    // Per-frame sections.
+    for (const frame of frames) {
+      const inside = drawn.filter(
+        (e) => (e as { frameId?: string | null }).frameId === frame.id,
+      );
+      const insideIds = new Set(inside.map((e) => e.id));
+      const subComponents = components
+        .map((c) => c.filter((id) => insideIds.has(id)))
+        .filter((c) => c.length > 0);
+      const title = (frame as { name?: string | null }).name?.trim() || `Frame ${frame.id.slice(0, 6)}`;
+      const lines: string[] = [];
+      lines.push(`${inside.length} shape(s) inside.`);
+      if (subComponents.length > 0) {
+        for (const sc of subComponents) {
+          const desc = summarizeComponent(sc);
+          if (desc) lines.push(desc);
+        }
+      }
+      if (input.verbose) {
+        const labels = inside.slice(0, 12).map((e) => labelOf(e.id));
+        if (labels.length > 0) lines.push(`Includes: ${labels.join(", ")}${inside.length > 12 ? "…" : ""}.`);
+      }
+      sections.push({ title, body: lines.join(" ") });
+    }
+
+    // Loose shapes (not inside any frame).
+    const looseDrawn = drawn.filter(
+      (e) => !(e as { frameId?: string | null }).frameId,
+    );
+    if (looseDrawn.length > 0) {
+      const looseIds = new Set(looseDrawn.map((e) => e.id));
+      const looseComponents = components
+        .map((c) => c.filter((id) => looseIds.has(id)))
+        .filter((c) => c.length > 0);
+      const lines: string[] = [];
+      lines.push(`${looseDrawn.length} shape(s) outside any frame.`);
+      for (const sc of looseComponents) {
+        const desc = summarizeComponent(sc);
+        if (desc) lines.push(desc);
+      }
+      sections.push({
+        title: frames.length > 0 ? "Loose shapes" : "Diagram",
+        body: lines.join(" "),
+      });
+    }
+
+    // Headline.
+    const headline = (() => {
+      const parts: string[] = [];
+      parts.push(
+        `${drawn.length} shape${drawn.length === 1 ? "" : "s"}`,
+      );
+      parts.push(`${arrows.length} arrow${arrows.length === 1 ? "" : "s"}`);
+      if (frames.length > 0) parts.push(`${frames.length} frame${frames.length === 1 ? "" : "s"}`);
+      parts.push(`${components.length} component${components.length === 1 ? "" : "s"}`);
+      const scopeStr = input.frameId ? "in this frame" : "on this board";
+      return `${parts.join(", ")} ${scopeStr}.`;
+    })();
+
+    return ok({
+      headline,
+      sections,
+      stats: {
+        shapeCount: drawn.length,
+        arrowCount: arrows.length,
+        frameCount: frames.length,
+        componentCount: components.length,
+      },
+    });
+  } catch (err) {
+    return fail(
+      "internal",
+      err instanceof Error ? err.message : "explain_diagram failed",
+    );
+  }
 }
 
 /* ─── add_markdown_card / add_mermaid_card ─────────────── *
@@ -1563,5 +3767,915 @@ export function executeDeleteShapes(
         ? [`Skipped ${missing.length} missing shape(s): ${missing.join(", ")}`]
         : undefined;
     return ok({ deletedShapeIds: present, missingShapeIds: missing }, warnings);
+  });
+}
+
+/* ─── insert_template ──────────────────────────────────── *
+ *
+ * Each template is a `(originX, originY) => Skeleton[]` builder
+ * whose ids are scoped to the skeleton (so `start: { id }` /
+ * `end: { id }` binding works inside `convertToExcalidrawElements`).
+ * After conversion we collect the real Excalidraw ids and
+ * optionally wrap everything in a frame.
+ *
+ * Coordinates inside each template are LOCAL (starting at 0,0); the
+ * caller translates by the resolved origin. Each template returns
+ * a `size` so the placement code can centre it on the anchor.
+ */
+
+type Skeleton = Parameters<typeof convertToExcalidrawElements>[0] extends
+  | Array<infer T>
+  | null
+  ? T
+  : never;
+
+interface TemplateSpec {
+  /** Local-space bbox of the whole cluster (used for centring). */
+  width: number;
+  height: number;
+  /** Element skeletons translated by (originX, originY). */
+  build(originX: number, originY: number): Skeleton[];
+}
+
+/** Resolve template/image placement anchor → top-left of content. */
+function resolvePlacementOrigin(
+  api: ExcalidrawImperativeAPI,
+  anchor:
+    | { shapeId: string }
+    | { x: number; y: number }
+    | "selection"
+    | "viewport"
+    | "free_space"
+    | undefined,
+  contentW: number,
+  contentH: number,
+): { x: number; y: number } | { error: string } {
+  const state = api.getAppState();
+  const elements = api.getSceneElements();
+
+  // Helper: centre a (w, h) content box on a centre point.
+  const centreOn = (cx: number, cy: number) => ({
+    x: cx - contentW / 2,
+    y: cy - contentH / 2,
+  });
+
+  if (anchor === undefined || anchor === "viewport") {
+    const c = viewportCentre(state);
+    return centreOn(c.x, c.y);
+  }
+  if (anchor === "selection") {
+    const elementsById = makeElementsById(elements);
+    const sc = selectionCentre(state, elementsById);
+    if (sc) return centreOn(sc.x, sc.y);
+    const c = viewportCentre(state);
+    return centreOn(c.x, c.y);
+  }
+  if (anchor === "free_space") {
+    // Light reuse of find_free_space's spiral: anchor at viewport
+    // centre, then push outward until we miss every drawn shape.
+    const focal = viewportCentre(state);
+    const gap = FREE_SPACE_DEFAULT_GAP;
+    const obstacles: SceneRect[] = [];
+    for (const el of elements) {
+      if (el.type === "frame" || el.type === "magicframe") continue;
+      if (el.type === "arrow") continue;
+      if (
+        el.type === "text" &&
+        (el as ExcalidrawTextElement).containerId
+      ) {
+        continue;
+      }
+      obstacles.push(rectFromElement(el));
+    }
+    const baseStep = Math.max(
+      FREE_SPACE_STEP_BASE,
+      Math.round(Math.min(contentW, contentH) / 2),
+    );
+    const order: Array<"right" | "below" | "left" | "above"> = [
+      "right",
+      "below",
+      "left",
+      "above",
+    ];
+    const tryAt = (x: number, y: number) => {
+      const cand: SceneRect = { x, y, w: contentW, h: contentH };
+      return !obstacles.some((o) => rectsOverlap(cand, o, gap));
+    };
+    // Ring 0 — viewport centre, top-left adjusted.
+    const initial = centreOn(focal.x, focal.y);
+    if (tryAt(initial.x, initial.y)) return initial;
+    for (let ring = 1; ring < FREE_SPACE_MAX_ATTEMPTS / order.length; ring++) {
+      for (const side of order) {
+        const offset = ring * baseStep;
+        const c = (() => {
+          switch (side) {
+            case "right":
+              return { x: focal.x + offset, y: focal.y };
+            case "left":
+              return { x: focal.x - offset, y: focal.y };
+            case "below":
+              return { x: focal.x, y: focal.y + offset };
+            case "above":
+              return { x: focal.x, y: focal.y - offset };
+          }
+        })();
+        const tl = centreOn(c.x, c.y);
+        if (tryAt(tl.x, tl.y)) return tl;
+      }
+    }
+    return initial; // exhausted; place anyway
+  }
+  if ("shapeId" in anchor) {
+    const el = elements.find((e) => e.id === anchor.shapeId);
+    if (!el) {
+      return {
+        error: `Shape not found: ${anchor.shapeId}. Call find_shapes or query_canvas for current ids.`,
+      };
+    }
+    const c = rectCentre(rectFromElement(el));
+    return centreOn(c.x, c.y);
+  }
+  // {x, y} treated as the desired CENTRE — so the template lands
+  // visually where the user pointed.
+  return centreOn(anchor.x, anchor.y);
+}
+
+/* ─── template builders ─────────────────────────────────── *
+ *
+ * Coordinates are LOCAL (0..width, 0..height); the caller adds
+ * the origin offset. Each builder uses skeleton-local ids of the
+ * form `tpl-XX` so arrow `start: { id }` / `end: { id }` resolves
+ * inside the same convertToExcalidrawElements pass.
+ */
+
+/** Sugar: a labelled rectangle with consistent default sizing. */
+function tplBox(opts: {
+  id: string;
+  x: number;
+  y: number;
+  w?: number;
+  h?: number;
+  label: string;
+  bg?: string;
+  stroke?: string;
+}): Skeleton {
+  return {
+    type: "rectangle",
+    id: opts.id,
+    x: opts.x,
+    y: opts.y,
+    width: opts.w ?? 180,
+    height: opts.h ?? 80,
+    strokeColor: opts.stroke ?? "#1e1e1e",
+    backgroundColor: opts.bg ?? "transparent",
+    fillStyle: opts.bg && opts.bg !== "transparent" ? "solid" : "hachure",
+    label: { text: opts.label, fontSize: 16 },
+  } as Skeleton;
+}
+
+/** Sugar: an arrow that binds to two skeleton ids by name. */
+function tplArrow(opts: {
+  id: string;
+  fromId: string;
+  toId: string;
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  label?: string;
+  elbowed?: boolean;
+}): Skeleton {
+  const spec: Record<string, unknown> = {
+    type: "arrow",
+    id: opts.id,
+    x: opts.fromX,
+    y: opts.fromY,
+    endArrowhead: "arrow",
+    points: [
+      [0, 0],
+      [opts.toX - opts.fromX, opts.toY - opts.fromY],
+    ],
+    start: { id: opts.fromId },
+    end: { id: opts.toId },
+  };
+  if (opts.label) spec.label = { text: opts.label, fontSize: 14 };
+  if (opts.elbowed) spec.elbowed = true;
+  return spec as Skeleton;
+}
+
+/** Auth flow: Client → Auth Service → User DB; session arrow back. */
+function buildAuthFlowTemplate(): TemplateSpec {
+  return {
+    width: 700,
+    height: 240,
+    build: (ox, oy) => [
+      tplBox({ id: "tpl-client", x: ox + 0, y: oy + 80, label: "Client" }),
+      tplBox({
+        id: "tpl-auth",
+        x: ox + 260,
+        y: oy + 80,
+        label: "Auth Service",
+      }),
+      tplBox({ id: "tpl-db", x: ox + 520, y: oy + 80, label: "User DB" }),
+      tplArrow({
+        id: "tpl-a1",
+        fromId: "tpl-client",
+        toId: "tpl-auth",
+        fromX: ox + 180,
+        fromY: oy + 120,
+        toX: ox + 260,
+        toY: oy + 120,
+        label: "login",
+      }),
+      tplArrow({
+        id: "tpl-a2",
+        fromId: "tpl-auth",
+        toId: "tpl-db",
+        fromX: ox + 440,
+        fromY: oy + 120,
+        toX: ox + 520,
+        toY: oy + 120,
+        label: "lookup",
+      }),
+      tplArrow({
+        id: "tpl-a3",
+        fromId: "tpl-auth",
+        toId: "tpl-client",
+        fromX: ox + 350,
+        fromY: oy + 160,
+        toX: ox + 90,
+        toY: oy + 160,
+        label: "session",
+      }),
+    ],
+  };
+}
+
+/** Linear request lifecycle. */
+function buildRequestLifecycleTemplate(): TemplateSpec {
+  const labels = [
+    "Client",
+    "CDN",
+    "Load Balancer",
+    "API",
+    "Service",
+    "Database",
+  ];
+  const boxW = 160;
+  const gap = 40;
+  return {
+    width: labels.length * boxW + (labels.length - 1) * gap,
+    height: 100,
+    build: (ox, oy) => {
+      const els: Skeleton[] = [];
+      labels.forEach((lbl, i) => {
+        els.push(
+          tplBox({
+            id: `tpl-rl-${i}`,
+            x: ox + i * (boxW + gap),
+            y: oy + 10,
+            w: boxW,
+            h: 70,
+            label: lbl,
+          }),
+        );
+      });
+      for (let i = 0; i < labels.length - 1; i++) {
+        els.push(
+          tplArrow({
+            id: `tpl-rl-a${i}`,
+            fromId: `tpl-rl-${i}`,
+            toId: `tpl-rl-${i + 1}`,
+            fromX: ox + i * (boxW + gap) + boxW,
+            fromY: oy + 45,
+            toX: ox + (i + 1) * (boxW + gap),
+            toY: oy + 45,
+          }),
+        );
+      }
+      return els;
+    },
+  };
+}
+
+/** API Gateway → 3 services → shared DB + Cache. */
+function buildMicroservicesTemplate(): TemplateSpec {
+  return {
+    width: 720,
+    height: 400,
+    build: (ox, oy) => {
+      const els: Skeleton[] = [];
+      els.push(
+        tplBox({ id: "tpl-ms-gw", x: ox + 270, y: oy + 0, label: "API Gateway" }),
+      );
+      const services = ["Service A", "Service B", "Service C"];
+      services.forEach((name, i) => {
+        els.push(
+          tplBox({
+            id: `tpl-ms-s${i}`,
+            x: ox + i * 240,
+            y: oy + 160,
+            label: name,
+          }),
+        );
+        els.push(
+          tplArrow({
+            id: `tpl-ms-a${i}`,
+            fromId: "tpl-ms-gw",
+            toId: `tpl-ms-s${i}`,
+            fromX: ox + 360,
+            fromY: oy + 80,
+            toX: ox + i * 240 + 90,
+            toY: oy + 160,
+            elbowed: true,
+          }),
+        );
+      });
+      els.push(
+        tplBox({
+          id: "tpl-ms-db",
+          x: ox + 80,
+          y: oy + 320,
+          label: "Postgres",
+        }),
+        tplBox({
+          id: "tpl-ms-cache",
+          x: ox + 440,
+          y: oy + 320,
+          label: "Redis",
+        }),
+      );
+      // Each service connects to DB and cache.
+      services.forEach((_n, i) => {
+        els.push(
+          tplArrow({
+            id: `tpl-ms-d${i}`,
+            fromId: `tpl-ms-s${i}`,
+            toId: "tpl-ms-db",
+            fromX: ox + i * 240 + 90,
+            fromY: oy + 240,
+            toX: ox + 170,
+            toY: oy + 320,
+            elbowed: true,
+          }),
+          tplArrow({
+            id: `tpl-ms-c${i}`,
+            fromId: `tpl-ms-s${i}`,
+            toId: "tpl-ms-cache",
+            fromX: ox + i * 240 + 90,
+            fromY: oy + 240,
+            toX: ox + 530,
+            toY: oy + 320,
+            elbowed: true,
+          }),
+        );
+      });
+      return els;
+    },
+  };
+}
+
+/** Three-entity ERD. */
+function buildErdTemplate(): TemplateSpec {
+  return {
+    width: 700,
+    height: 260,
+    build: (ox, oy) => [
+      tplBox({
+        id: "tpl-erd-user",
+        x: ox + 0,
+        y: oy + 90,
+        w: 200,
+        h: 100,
+        label: "User\nid, email, name",
+      }),
+      tplBox({
+        id: "tpl-erd-order",
+        x: ox + 250,
+        y: oy + 90,
+        w: 200,
+        h: 100,
+        label: "Order\nid, user_id, total",
+      }),
+      tplBox({
+        id: "tpl-erd-prod",
+        x: ox + 500,
+        y: oy + 90,
+        w: 200,
+        h: 100,
+        label: "Product\nid, name, price",
+      }),
+      tplArrow({
+        id: "tpl-erd-a1",
+        fromId: "tpl-erd-user",
+        toId: "tpl-erd-order",
+        fromX: ox + 200,
+        fromY: oy + 140,
+        toX: ox + 250,
+        toY: oy + 140,
+        label: "places",
+      }),
+      tplArrow({
+        id: "tpl-erd-a2",
+        fromId: "tpl-erd-order",
+        toId: "tpl-erd-prod",
+        fromX: ox + 450,
+        fromY: oy + 140,
+        toX: ox + 500,
+        toY: oy + 140,
+        label: "contains",
+      }),
+    ],
+  };
+}
+
+/** Sequence diagram skeleton: 4 actors + lifelines. */
+function buildSequenceSkeletonTemplate(): TemplateSpec {
+  const actors = ["Client", "API", "Service", "DB"];
+  const colW = 180;
+  const height = 360;
+  return {
+    width: actors.length * colW,
+    height,
+    build: (ox, oy) => {
+      const els: Skeleton[] = [];
+      actors.forEach((name, i) => {
+        // Header
+        els.push(
+          tplBox({
+            id: `tpl-seq-h${i}`,
+            x: ox + i * colW + 30,
+            y: oy + 0,
+            w: 120,
+            h: 50,
+            label: name,
+          }),
+        );
+        // Lifeline (vertical line as an arrow with no head, going down)
+        els.push({
+          type: "line",
+          id: `tpl-seq-l${i}`,
+          x: ox + i * colW + 90,
+          y: oy + 50,
+          width: 0,
+          height: height - 50,
+          strokeColor: "#999",
+          strokeStyle: "dashed",
+          points: [
+            [0, 0],
+            [0, height - 50],
+          ],
+        } as Skeleton);
+      });
+      return els;
+    },
+  };
+}
+
+/** MVP roadmap: 3 frames (Now / Next / Later) with placeholder cards. */
+function buildMvpRoadmapTemplate(): TemplateSpec {
+  const colW = 240;
+  const colH = 360;
+  const colGap = 40;
+  const columns = ["Now", "Next", "Later"];
+  return {
+    width: columns.length * colW + (columns.length - 1) * colGap,
+    height: colH + 40,
+    build: (ox, oy) => {
+      const els: Skeleton[] = [];
+      columns.forEach((title, i) => {
+        const cx = ox + i * (colW + colGap);
+        // Column header
+        els.push(
+          tplBox({
+            id: `tpl-rm-h${i}`,
+            x: cx,
+            y: oy,
+            w: colW,
+            h: 40,
+            label: title,
+            stroke: "#1e1e1e",
+          }),
+        );
+        // Three placeholder cards per column.
+        for (let j = 0; j < 3; j++) {
+          els.push({
+            type: "rectangle",
+            id: `tpl-rm-${i}-${j}`,
+            x: cx + 16,
+            y: oy + 60 + j * 100,
+            width: colW - 32,
+            height: 80,
+            strokeColor: "#888",
+            backgroundColor: "#f0f0f0",
+            fillStyle: "solid",
+            label: { text: "—", fontSize: 14 },
+          } as Skeleton);
+        }
+      });
+      return els;
+    },
+  };
+}
+
+/** Retro 4-quadrant. */
+function buildRetroQuadrantTemplate(): TemplateSpec {
+  const cellW = 320;
+  const cellH = 200;
+  const titles = [
+    "Went well",
+    "Could improve",
+    "Action items",
+    "Questions",
+  ];
+  return {
+    width: cellW * 2,
+    height: cellH * 2,
+    build: (ox, oy) => {
+      const els: Skeleton[] = [];
+      titles.forEach((title, idx) => {
+        const col = idx % 2;
+        const row = Math.floor(idx / 2);
+        els.push(
+          tplBox({
+            id: `tpl-retro-${idx}`,
+            x: ox + col * cellW,
+            y: oy + row * cellH,
+            w: cellW,
+            h: cellH,
+            label: title,
+          }),
+        );
+      });
+      return els;
+    },
+  };
+}
+
+/** Decision tree: diamond + 3 outcome branches. */
+function buildDecisionTreeTemplate(): TemplateSpec {
+  return {
+    width: 600,
+    height: 320,
+    build: (ox, oy) => [
+      {
+        type: "diamond",
+        id: "tpl-dt-q",
+        x: ox + 200,
+        y: oy + 0,
+        width: 200,
+        height: 100,
+        strokeColor: "#1e1e1e",
+        backgroundColor: "transparent",
+        label: { text: "Decision?", fontSize: 16 },
+      } as Skeleton,
+      tplBox({
+        id: "tpl-dt-a",
+        x: ox + 0,
+        y: oy + 220,
+        label: "Option A",
+      }),
+      tplBox({
+        id: "tpl-dt-b",
+        x: ox + 210,
+        y: oy + 220,
+        label: "Option B",
+      }),
+      tplBox({
+        id: "tpl-dt-c",
+        x: ox + 420,
+        y: oy + 220,
+        label: "Option C",
+      }),
+      tplArrow({
+        id: "tpl-dt-aa",
+        fromId: "tpl-dt-q",
+        toId: "tpl-dt-a",
+        fromX: ox + 250,
+        fromY: oy + 100,
+        toX: ox + 90,
+        toY: oy + 220,
+        label: "yes",
+      }),
+      tplArrow({
+        id: "tpl-dt-ab",
+        fromId: "tpl-dt-q",
+        toId: "tpl-dt-b",
+        fromX: ox + 300,
+        fromY: oy + 100,
+        toX: ox + 300,
+        toY: oy + 220,
+        label: "maybe",
+      }),
+      tplArrow({
+        id: "tpl-dt-ac",
+        fromId: "tpl-dt-q",
+        toId: "tpl-dt-c",
+        fromX: ox + 350,
+        fromY: oy + 100,
+        toX: ox + 510,
+        toY: oy + 220,
+        label: "no",
+      }),
+    ],
+  };
+}
+
+const TEMPLATE_REGISTRY: Record<
+  | "auth_flow"
+  | "request_lifecycle"
+  | "microservices"
+  | "erd"
+  | "sequence_skeleton"
+  | "mvp_roadmap"
+  | "retro_quadrant"
+  | "decision_tree",
+  () => TemplateSpec
+> = {
+  auth_flow: buildAuthFlowTemplate,
+  request_lifecycle: buildRequestLifecycleTemplate,
+  microservices: buildMicroservicesTemplate,
+  erd: buildErdTemplate,
+  sequence_skeleton: buildSequenceSkeletonTemplate,
+  mvp_roadmap: buildMvpRoadmapTemplate,
+  retro_quadrant: buildRetroQuadrantTemplate,
+  decision_tree: buildDecisionTreeTemplate,
+};
+
+export interface InsertTemplateInput {
+  kind: keyof typeof TEMPLATE_REGISTRY;
+  anchor?:
+    | { shapeId: string }
+    | { x: number; y: number }
+    | "selection"
+    | "viewport"
+    | "free_space";
+  title?: string;
+  idempotencyKey?: string;
+}
+
+export interface InsertTemplateOutput {
+  kind: InsertTemplateInput["kind"];
+  shapeIds: string[];
+  frameId?: string;
+  origin: { x: number; y: number };
+}
+
+export function executeInsertTemplate(
+  api: ExcalidrawImperativeAPI,
+  input: InsertTemplateInput,
+): ToolResult<InsertTemplateOutput> {
+  return withIdempotency(input.idempotencyKey, () => {
+    try {
+      const builder = TEMPLATE_REGISTRY[input.kind];
+      if (!builder) {
+        return fail(
+          "invalid_input",
+          `Unknown template kind: ${input.kind}.`,
+          `Valid kinds: ${Object.keys(TEMPLATE_REGISTRY).join(", ")}.`,
+        );
+      }
+      const spec = builder();
+      const placement = resolvePlacementOrigin(
+        api,
+        input.anchor,
+        spec.width,
+        spec.height,
+      );
+      if ("error" in placement) {
+        return fail("not_found", placement.error);
+      }
+
+      const skeletons = spec.build(placement.x, placement.y);
+      // Materialise — convertToExcalidrawElements resolves the
+      // skeleton-local arrow `start: { id }` / `end: { id }`
+      // bindings AND wires container ↔ bound-text labels in one
+      // pass.
+      const created = convertToExcalidrawElements(skeletons);
+
+      let allCreated: OrderedExcalidrawElement[] = [...created];
+      let frameId: string | undefined;
+
+      // Optional frame wrapping: build a frame element that spans
+      // the placed cluster, then patch each child element's
+      // `frameId` to point at it.
+      if (input.title) {
+        const padding = 24;
+        const headerH = 36;
+        const fx = placement.x - padding;
+        const fy = placement.y - padding - headerH;
+        const fw = spec.width + padding * 2;
+        const fh = spec.height + padding * 2 + headerH;
+        const frame = convertToExcalidrawElements([
+          {
+            type: "frame",
+            x: fx,
+            y: fy,
+            width: fw,
+            height: fh,
+            name: input.title,
+          } as Skeleton,
+        ])[0];
+        if (frame) {
+          frameId = frame.id;
+          allCreated = [
+            frame,
+            ...created.map(
+              (el) =>
+                ({ ...el, frameId: frame.id }) as OrderedExcalidrawElement,
+            ),
+          ];
+        }
+      }
+
+      const existing = api.getSceneElements();
+      api.updateScene({
+        elements: [...existing, ...allCreated],
+        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+      });
+
+      return ok({
+        kind: input.kind,
+        shapeIds: created.map((e) => e.id),
+        frameId,
+        origin: placement,
+      });
+    } catch (err) {
+      return fail(
+        "internal",
+        err instanceof Error ? err.message : "insert_template failed",
+      );
+    }
+  });
+}
+
+/* ─── add_image ─────────────────────────────────────────── *
+ *
+ * Native Excalidraw image element. Two input modes:
+ *   - `svg`: agent-friendly. We base64-encode and produce a
+ *     `data:image/svg+xml;base64,...` URL.
+ *   - `dataUrl`: pre-encoded `data:image/...` URL.
+ *
+ * We register the file via `api.addFiles()` so the renderer can
+ * resolve it, then push the image element onto the scene with
+ * `status: "saved"` (the file is already in memory).
+ */
+
+export interface AddImageInput {
+  svg?: string;
+  dataUrl?: string;
+  width?: number;
+  height?: number;
+  anchor?:
+    | { shapeId: string }
+    | { x: number; y: number }
+    | "selection"
+    | "viewport"
+    | "free_space";
+  idempotencyKey?: string;
+}
+
+export interface AddImageOutput {
+  imageId: string;
+  fileId: string;
+  origin: { x: number; y: number };
+}
+
+/** UTF-8 safe base64 encoder. `btoa` chokes on multibyte chars. */
+function utf8Btoa(input: string): string {
+  if (typeof window === "undefined" || !window.btoa) {
+    // Node fallback (smoke tests, SSR safety).
+    return Buffer.from(input, "utf-8").toString("base64");
+  }
+  // Encode as UTF-8 first, then base64. The escape/unescape dance
+  // is the canonical trick; it works because btoa wants binary
+  // strings (each char in 0..255) and encodeURIComponent → %XX
+  // gives us exactly that after unescape.
+  return window.btoa(
+    encodeURIComponent(input).replace(/%([0-9A-F]{2})/g, (_m, p1) =>
+      String.fromCharCode(parseInt(p1, 16)),
+    ),
+  );
+}
+
+export function executeAddImage(
+  api: ExcalidrawImperativeAPI,
+  input: AddImageInput,
+): ToolResult<AddImageOutput> {
+  return withIdempotency(input.idempotencyKey, () => {
+    try {
+      if (!input.svg && !input.dataUrl) {
+        return fail(
+          "invalid_input",
+          "Provide either `svg` or `dataUrl`.",
+        );
+      }
+      if (input.svg && input.dataUrl) {
+        return fail(
+          "invalid_input",
+          "`svg` and `dataUrl` are mutually exclusive.",
+        );
+      }
+
+      let dataUrl: string;
+      let mimeType: string;
+      if (input.svg) {
+        const b64 = utf8Btoa(input.svg);
+        dataUrl = `data:image/svg+xml;base64,${b64}`;
+        mimeType = "image/svg+xml";
+      } else {
+        dataUrl = input.dataUrl!;
+        // Pull mimeType out of the data URL prefix; fall back to png.
+        const m = /^data:([^;]+);base64,/.exec(dataUrl);
+        if (!m) {
+          return fail(
+            "invalid_input",
+            "`dataUrl` must be a base64 data URL (`data:image/...;base64,...`).",
+          );
+        }
+        mimeType = m[1];
+      }
+
+      const w = input.width ?? 240;
+      const h = input.height ?? 240;
+      const placement = resolvePlacementOrigin(api, input.anchor, w, h);
+      if ("error" in placement) {
+        return fail("not_found", placement.error);
+      }
+
+      const fileId = randomElementId();
+      // `addFiles` registers the binary; Excalidraw will then
+      // resolve `fileId` references on the image element from the
+      // imageCache for rendering.
+      api.addFiles([
+        {
+          id: fileId as unknown as Parameters<typeof api.addFiles>[0][number]["id"],
+          dataURL: dataUrl as unknown as Parameters<
+            typeof api.addFiles
+          >[0][number]["dataURL"],
+          mimeType:
+            mimeType as unknown as Parameters<
+              typeof api.addFiles
+            >[0][number]["mimeType"],
+          created: Date.now(),
+        },
+      ]);
+
+      // Build the image element directly. convertToExcalidrawElements
+      // doesn't handle the image-element flow because it expects a
+      // pre-resolved file. We mint a fully-fleshed element with the
+      // same defaults Excalidraw uses internally.
+      const imageId = randomElementId();
+      const imageEl: Record<string, unknown> = {
+        type: "image",
+        id: imageId,
+        x: placement.x,
+        y: placement.y,
+        width: w,
+        height: h,
+        angle: 0,
+        strokeColor: "transparent",
+        backgroundColor: "transparent",
+        fillStyle: "solid",
+        strokeWidth: 1,
+        strokeStyle: "solid",
+        roughness: 1,
+        opacity: 100,
+        groupIds: [],
+        frameId: null,
+        index: null,
+        roundness: null,
+        seed: Math.floor(Math.random() * 0x7fffffff),
+        version: 1,
+        versionNonce: Math.floor(Math.random() * 0x7fffffff),
+        isDeleted: false,
+        boundElements: null,
+        updated: Date.now(),
+        link: null,
+        locked: false,
+        customData: undefined,
+        fileId,
+        status: "saved",
+        scale: [1, 1],
+        crop: null,
+      };
+
+      const existing = api.getSceneElements();
+      api.updateScene({
+        elements: [...existing, imageEl as unknown as ExcalidrawElement],
+        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+      });
+
+      return ok({
+        imageId,
+        fileId,
+        origin: placement,
+      });
+    } catch (err) {
+      return fail(
+        "internal",
+        err instanceof Error ? err.message : "add_image failed",
+      );
+    }
   });
 }

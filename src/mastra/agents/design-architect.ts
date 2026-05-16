@@ -4,6 +4,7 @@ import { Memory } from "@mastra/memory";
 import { models } from "@/lib/ai";
 
 import { designCanvasTools } from "../tools/design-canvas";
+import { searchProjectKnowledgeTool } from "../tools/search-knowledge";
 
 /**
  * The design agent. Materializes UI mockups (landing pages, dashboards,
@@ -321,5 +322,11 @@ Treat it as source of truth. Describe it in one line, then design.
       },
     },
   }),
-  tools: designCanvasTools,
+  tools: {
+    ...designCanvasTools,
+    // Project brain — same shared tool as the other agents. The
+    // design chat route attaches `requestContext.get("project")`
+    // when the design belongs to a project.
+    search_project_knowledge: searchProjectKnowledgeTool,
+  },
 });

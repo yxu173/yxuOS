@@ -3,11 +3,13 @@
 import { and, eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { nanoid } from "nanoid";
 
 import { db } from "@/db";
 import { designs } from "@/db/schema";
 import { logActivity } from "@/lib/activity";
+import { indexDesign, unindexDesign } from "@/lib/rag/indexers/design";
 import {
   requireActiveProject,
   requireActiveTeam,
@@ -60,6 +62,10 @@ export async function saveDesignSnapshot(
   if (result.length === 0) {
     throw new Error("Design not found");
   }
+
+  // Same pattern as boards — snapshot saves are debounce-spammy
+  // and the indexer's hash check absorbs the noise.
+  after(() => indexDesign(designId));
 }
 
 export async function renameDesign(designId: string, name: string) {
@@ -74,6 +80,8 @@ export async function renameDesign(designId: string, name: string) {
     .update(designs)
     .set({ name: trimmed, updatedAt: new Date() })
     .where(and(eq(designs.id, designId), eq(designs.teamId, teamId)));
+
+  after(() => indexDesign(designId));
 
   await logActivity({
     teamId,
@@ -99,6 +107,8 @@ export async function deleteDesign(designId: string) {
   await db
     .delete(designs)
     .where(and(eq(designs.id, designId), eq(designs.teamId, teamId)));
+
+  after(() => unindexDesign(designId));
 
   if (existing) {
     await logActivity({

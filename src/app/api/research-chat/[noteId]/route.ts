@@ -9,6 +9,7 @@ import { db } from "@/db";
 import { researchNotes } from "@/db/schema";
 import { requireActiveTeam } from "@/lib/permissions";
 import { mastra } from "@/mastra";
+import type { ProjectToolContext } from "@/mastra/tools/search-knowledge";
 import type { ResearchToolContext } from "@/mastra/tools/research-workspace";
 
 /**
@@ -63,11 +64,20 @@ export async function POST(
   // server-known projectId, not anything the model emits.
   const requestContext = new RequestContext<{
     research: ResearchToolContext;
+    project: ProjectToolContext;
   }>();
   requestContext.set("research", {
     teamId,
     projectId: note.projectId,
     noteId: note.id,
+  });
+  // Generic project namespace: every cross-agent tool (currently
+  // just `search_project_knowledge`) reads from here so it can be
+  // dropped into any agent without each one duplicating context
+  // setup.
+  requestContext.set("project", {
+    teamId,
+    projectId: note.projectId,
   });
 
   const upstream = await handleChatStream({

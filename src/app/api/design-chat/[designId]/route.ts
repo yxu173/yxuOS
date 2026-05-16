@@ -1,4 +1,5 @@
 import { handleChatStream } from "@mastra/ai-sdk";
+import { RequestContext } from "@mastra/core/request-context";
 import { createUIMessageStreamResponse } from "ai";
 
 import { safeChatStream } from "@/lib/ai/safe-chat-stream";
@@ -19,6 +20,7 @@ import {
 } from "@/lib/boards/snapshot-digest";
 import { requireActiveTeam } from "@/lib/permissions";
 import { mastra } from "@/mastra";
+import type { ProjectToolContext } from "@/mastra/tools/search-knowledge";
 
 /** Per-message hard cap on the combined digest text. ~3 items × 6 KB. */
 const MAX_TOTAL_DIGEST_BYTES = 18 * 1024;
@@ -51,9 +53,11 @@ export async function POST(
   }
 
   // Confirm the design exists and is owned by the active team.
+  // Pull `projectId` too so the brain-search tool can scope every
+  // retrieval to the right project.
   const design = await db.query.designs.findFirst({
     where: and(eq(designs.id, designId), eq(designs.teamId, teamId)),
-    columns: { id: true, threadId: true },
+    columns: { id: true, threadId: true, projectId: true },
   });
   if (!design) {
     return new Response("Not found", { status: 404 });
@@ -85,12 +89,26 @@ export async function POST(
     }
   }
 
+  // Attach the `project` namespace when the design has one. Same
+  // pattern as the board chat route — project-less designs (legacy)
+  // can't call `search_project_knowledge`, which is fine.
+  const requestContext = new RequestContext<{
+    project: ProjectToolContext;
+  }>();
+  if (design.projectId) {
+    requestContext.set("project", {
+      teamId,
+      projectId: design.projectId,
+    });
+  }
+
   const upstream = await handleChatStream({
     version: "v6",
     mastra,
     agentId: "designArchitect",
     params: {
       ...body,
+      requestContext,
       memory: {
         ...(body?.memory ?? {}),
         thread: design.threadId,

@@ -32,7 +32,11 @@ async function main() {
   console.log("--- RAG smoke test ---");
 
   if (!isEmbeddingsEnabled()) {
-    console.error("OPENAI_API_KEY not set. Aborting.");
+    console.error(
+      "No embedding provider configured. Set either the Azure pair\n" +
+        "  AZURE_EMBEDDINGS_ENDPOINT + AZURE_EMBEDDINGS_API_KEY\n" +
+        "or OPENAI_API_KEY. Aborting.",
+    );
     process.exit(1);
   }
 

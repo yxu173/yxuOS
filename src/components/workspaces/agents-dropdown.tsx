@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Brain,
   ChevronDown,
   ClipboardList,
   Microscope,
@@ -113,6 +114,21 @@ export function AgentsDropdown({
                   <span className="text-[10px] text-zinc-500">tasks</span>
                 </Link>
               </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {/* Project brain — semantic search over everything
+                  indexed in this project. Sits below the
+                  research/plans entries because it's a
+                  retrieval surface, not an authoring one. */}
+              <DropdownMenuItem asChild>
+                <Link
+                  href={`/p/${projectSlug}/brain`}
+                  className="flex w-full items-center gap-2"
+                >
+                  <Brain className="size-3.5 text-sky-400" />
+                  <span className="flex-1">Brain</span>
+                  <span className="text-[10px] text-zinc-500">recall</span>
+                </Link>
+              </DropdownMenuItem>
             </>
           ) : (
             <>
@@ -146,9 +162,26 @@ export function AgentsDropdown({
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
               <DropdownMenuSeparator />
+              {/* Brain submenu — same project-picker pattern. Kept
+                  below the separator so it visually belongs to the
+                  retrieval surface, not the authoring one. */}
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="flex items-center gap-2">
+                  <Brain className="size-3.5 text-sky-400" />
+                  <span className="flex-1">Brain</span>
+                  <span className="text-[10px] text-zinc-500">recall</span>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-52">
+                  <ProjectMenuLinks
+                    projects={projects}
+                    section="brain"
+                  />
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSeparator />
               <p className="px-2 py-1.5 text-[10px] text-zinc-500">
-                Agents work inside projects. Open one to chat with research or
-                plans directly.
+                Agents work inside projects. Open one to chat with research,
+                plans, or the project brain directly.
               </p>
             </>
           )}
@@ -169,7 +202,7 @@ function ProjectMenuLinks({
   section,
 }: {
   projects: ProjectListItem[];
-  section: "research" | "plans";
+  section: "research" | "plans" | "brain";
 }) {
   return (
     <>

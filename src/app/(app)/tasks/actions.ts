@@ -16,10 +16,12 @@ import {
 } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 
 import { db } from "@/db";
 import { member, taskPlanRows, taskPlans, tasks } from "@/db/schema";
 import { logActivity } from "@/lib/activity";
+import { indexTask, unindexTask } from "@/lib/rag/indexers/task";
 import {
   requireActiveProject,
   requireActiveTeam,
@@ -186,6 +188,9 @@ export async function createTask(
     revalidatePath(`/p/${resolvedSlug}/tasks/${input.parentTaskId}`);
   }
 
+  // Brain indexing after the response so create stays snappy.
+  after(() => indexTask(created.id));
+
   if (input.redirectAfter) {
     redirect(`/p/${resolvedSlug}/tasks/${created.id}`);
   }
@@ -309,6 +314,10 @@ export async function updateTask(
     revalidatePath(`/tasks/${existing.parentTaskId}`);
   }
 
+  // Re-index on every update — the indexer compares chunk hashes
+  // so unchanged content is cheap.
+  after(() => indexTask(input.taskId));
+
   return { id: input.taskId };
 }
 
@@ -321,6 +330,8 @@ export async function deleteTask(taskId: string): Promise<void> {
   await db
     .delete(tasks)
     .where(and(eq(tasks.id, taskId), eq(tasks.teamId, teamId)));
+
+  after(() => unindexTask(taskId));
 
   await logActivity({
     teamId,

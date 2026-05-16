@@ -3,11 +3,13 @@
 import { and, eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { nanoid } from "nanoid";
 
 import { db } from "@/db";
 import { boards } from "@/db/schema";
 import { logActivity } from "@/lib/activity";
+import { indexBoard, unindexBoard } from "@/lib/rag/indexers/board";
 import {
   requireActiveProject,
   requireActiveTeam,
@@ -73,6 +75,12 @@ export async function saveBoardSnapshot(
   if (result.length === 0) {
     throw new Error("Board not found");
   }
+
+  // Snapshots save on a debounce and can fire many times per
+  // minute while editing. `after()` keeps the embed call off the
+  // user's critical path; the indexer's hash-dedupe means an
+  // unchanged snapshot costs only one SELECT.
+  after(() => indexBoard(boardId));
 }
 
 export async function renameBoard(boardId: string, name: string) {
@@ -87,6 +95,10 @@ export async function renameBoard(boardId: string, name: string) {
     .update(boards)
     .set({ name: trimmed, updatedAt: new Date() })
     .where(and(eq(boards.id, boardId), eq(boards.teamId, teamId)));
+
+  // Title is denormalised onto every chunk so a rename has to
+  // re-walk the artifact, even if the snapshot didn't change.
+  after(() => indexBoard(boardId));
 
   await logActivity({
     teamId,
@@ -113,6 +125,8 @@ export async function deleteBoard(boardId: string) {
   await db
     .delete(boards)
     .where(and(eq(boards.id, boardId), eq(boards.teamId, teamId)));
+
+  after(() => unindexBoard(boardId));
 
   if (existing) {
     await logActivity({

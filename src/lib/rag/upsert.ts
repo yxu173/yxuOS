@@ -9,7 +9,7 @@ import {
 } from "@/db/schema/project-knowledge";
 
 import type { Chunk } from "./chunk";
-import { EMBED_MODEL_ID, embedTexts, isEmbeddingsEnabled } from "./embed";
+import { embedTexts, getEmbedModelId, isEmbeddingsEnabled } from "./embed";
 
 /**
  * Upsert a complete set of chunks for one artifact.
@@ -70,8 +70,11 @@ export async function upsertKnowledge(
   }
 
   const { teamId, projectId, sourceType, sourceId, chunks } = opts;
+  // Resolve at call time, not import time, so the metadata reflects
+  // whichever provider is actually active (Azure vs. OpenAI vs.
+  // overridden via env at runtime).
   const baseMetadata = {
-    embedModel: EMBED_MODEL_ID,
+    embedModel: getEmbedModelId(),
     ...(opts.metadata ?? {}),
   };
 

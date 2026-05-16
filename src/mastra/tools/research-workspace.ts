@@ -1,5 +1,6 @@
 import { createTool } from "@mastra/core/tools";
 import { and, asc, desc, eq, ilike, or } from "drizzle-orm";
+import { after } from "next/server";
 import { z } from "zod";
 
 import { db } from "@/db";
@@ -14,6 +15,7 @@ import {
   boardSnapshotToDigest,
   type RawBoardSnapshot,
 } from "@/lib/boards/snapshot-digest";
+import { indexResearchNote } from "@/lib/rag/indexers/research-note";
 
 import { toolResultSchema } from "./_envelope";
 
@@ -433,6 +435,14 @@ export const updateResearchNoteTool = createTool({
         },
       };
     }
+
+    // Schedule RAG re-index after the streaming chat response is
+    // closed. The agent typically calls this tool mid-turn, then
+    // narrates the result; we don't want the embed round-trip
+    // sitting in front of the user's next token. `after()` works
+    // here because tool execution is inside the chat route
+    // handler's request context.
+    after(() => indexResearchNote(updated.id));
 
     return {
       ok: true as const,
