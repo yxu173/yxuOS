@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { and, eq, gte, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, like } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -231,6 +231,28 @@ export async function deleteKnowledgeForSource(
       and(
         eq(projectKnowledge.sourceType, sourceType),
         eq(projectKnowledge.sourceId, sourceId),
+      ),
+    );
+}
+
+/**
+ * Wipe every `repo_file` chunk belonging to a given repo. Used when
+ * a repo is deleted or force-resynced.
+ *
+ * The `sourceId` shape for repo files is `"<repoId>:<path>"` (see
+ * `indexers/repo-file.ts`), so a `LIKE '<repoId>:%'` prefix-match
+ * is the right (and unambiguous) sweep. We pin `sourceType` too so
+ * a hypothetical id-collision with another kind can't surface here.
+ */
+export async function deleteKnowledgeForRepoFiles(
+  repoId: string,
+): Promise<void> {
+  await db
+    .delete(projectKnowledge)
+    .where(
+      and(
+        eq(projectKnowledge.sourceType, "repo_file"),
+        like(projectKnowledge.sourceId, `${repoId}:%`),
       ),
     );
 }

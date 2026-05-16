@@ -1,0 +1,246 @@
+"use server";
+
+import { and, desc, eq } from "drizzle-orm";
+import { revalidatePath } from "next/cache";
+import { after } from "next/server";
+
+import { db } from "@/db";
+import { projectRepos, type ProjectRepo, type RepoStatus } from "@/db/schema";
+import { logActivity } from "@/lib/activity";
+import { requireActiveProject } from "@/lib/permissions";
+import { unindexRepo } from "@/lib/rag/indexers/repo-file";
+import { markRepoPending, runRepoIndex } from "@/lib/rag/indexers/repo";
+import {
+  fetchRepoMetadata,
+  GitHubFetchError,
+} from "@/lib/repos/github";
+import { parseGitHubUrl } from "@/lib/repos/url";
+
+/**
+ * Server actions for **GitHub repo imports** into a project's brain.
+ *
+ * Permission model: all actions go through `requireActiveProject`
+ * so the project slug from the URL is validated against the
+ * caller's team membership. Repos themselves are scoped by
+ * `(team_id, project_id)`; we never trust a `repoId` from the
+ * client without re-confirming it belongs to the active project.
+ *
+ * Background work: `importRepo` and `resyncRepo` schedule the
+ * actual indexing via `after(...)`. The server action returns
+ * immediately so the UI can flip to a "pending" state and start
+ * polling; the indexer runs against the same request lifetime on
+ * Vercel (up to the function's max duration). For repos that
+ * exceed that budget, the operator can swap `after()` for a real
+ * job queue without touching anything else here.
+ */
+
+/* ─── shapes ──────────────────────────────────────────── */
+
+export interface RepoRow {
+  id: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  status: RepoStatus;
+  error: string | null;
+  totalFiles: number;
+  indexedFiles: number;
+  skippedFiles: number;
+  importedAt: Date;
+  lastSyncedAt: Date | null;
+  hasToken: boolean;
+}
+
+function toRow(r: ProjectRepo): RepoRow {
+  return {
+    id: r.id,
+    owner: r.owner,
+    repo: r.repo,
+    branch: r.branch,
+    status: r.status,
+    error: r.error,
+    totalFiles: r.totalFiles,
+    indexedFiles: r.indexedFiles,
+    skippedFiles: r.skippedFiles,
+    importedAt: r.importedAt,
+    lastSyncedAt: r.lastSyncedAt,
+    hasToken: r.accessToken != null && r.accessToken.length > 0,
+  };
+}
+
+/* ─── list ────────────────────────────────────────────── */
+
+export async function listProjectRepos(
+  projectSlug: string,
+): Promise<RepoRow[]> {
+  const { projectId } = await requireActiveProject(projectSlug);
+  const rows = await db.query.projectRepos.findMany({
+    where: eq(projectRepos.projectId, projectId),
+    orderBy: [desc(projectRepos.importedAt)],
+  });
+  return rows.map(toRow);
+}
+
+/* ─── import ──────────────────────────────────────────── */
+
+export interface ImportRepoInput {
+  projectSlug: string;
+  url: string;
+  /** Optional PAT for private repos / higher rate limits. */
+  accessToken?: string | null;
+  /** Override branch; defaults to the repo's default branch. */
+  branch?: string | null;
+}
+
+export async function importRepo(
+  input: ImportRepoInput,
+): Promise<{ repoId: string; existed: boolean }> {
+  const { teamId, projectId, session } = await requireActiveProject(
+    input.projectSlug,
+  );
+
+  const parsed = parseGitHubUrl(input.url);
+  const token = (input.accessToken ?? "").trim() || null;
+
+  // Validate against GitHub up-front. We want to fail the import
+  // form synchronously when the repo doesn't exist or the token's
+  // wrong — much better UX than letting the background job fail
+  // silently 5 minutes later.
+  let meta;
+  try {
+    meta = await fetchRepoMetadata(parsed.owner, parsed.repo, token);
+  } catch (err) {
+    if (err instanceof GitHubFetchError) {
+      throw new Error(err.message);
+    }
+    throw err;
+  }
+
+  const branch =
+    (input.branch?.trim() || parsed.branch || meta.defaultBranch).trim();
+
+  // De-dupe: same (project, owner, repo, branch) returns the
+  // existing row. Re-syncing is the user's responsibility — we
+  // don't want a re-import to silently wipe progress.
+  const existing = await db.query.projectRepos.findFirst({
+    where: and(
+      eq(projectRepos.projectId, projectId),
+      eq(projectRepos.owner, meta.owner.toLowerCase()),
+      eq(projectRepos.repo, meta.repo.toLowerCase()),
+      eq(projectRepos.branch, branch),
+    ),
+  });
+  if (existing) {
+    return { repoId: existing.id, existed: true };
+  }
+
+  const [inserted] = await db
+    .insert(projectRepos)
+    .values({
+      teamId,
+      projectId,
+      owner: meta.owner.toLowerCase(),
+      repo: meta.repo.toLowerCase(),
+      branch,
+      accessToken: token,
+      status: "pending",
+      importedById: session.user.id,
+    })
+    .returning();
+
+  // Kick off the indexer in the background. The server action
+  // returns the row id immediately; the UI polls for status.
+  after(() => runRepoIndex(inserted.id));
+
+  await logActivity({
+    teamId,
+    actorId: session.user.id,
+    verb: "created",
+    subjectType: "repo",
+    subjectId: inserted.id,
+    subjectName: `${meta.owner}/${meta.repo}`,
+    metadata: { branch, action: "import" },
+  });
+
+  revalidatePath(`/p/${input.projectSlug}/brain`);
+  return { repoId: inserted.id, existed: false };
+}
+
+/* ─── resync ──────────────────────────────────────────── */
+
+export async function resyncRepo(input: {
+  projectSlug: string;
+  repoId: string;
+}): Promise<void> {
+  const { projectId, teamId, session } = await requireActiveProject(
+    input.projectSlug,
+  );
+
+  const repo = await db.query.projectRepos.findFirst({
+    where: and(
+      eq(projectRepos.id, input.repoId),
+      eq(projectRepos.projectId, projectId),
+    ),
+  });
+  if (!repo) {
+    throw new Error("Repo not found in this project.");
+  }
+  if (repo.status === "indexing") {
+    // Already running — return quietly. The UI will keep polling.
+    return;
+  }
+
+  await markRepoPending(repo.id);
+  after(() => runRepoIndex(repo.id));
+
+  await logActivity({
+    teamId,
+    actorId: session.user.id,
+    verb: "executed",
+    subjectType: "repo",
+    subjectId: repo.id,
+    subjectName: `${repo.owner}/${repo.repo}`,
+    metadata: { branch: repo.branch, action: "resync" },
+  });
+
+  revalidatePath(`/p/${input.projectSlug}/brain`);
+}
+
+/* ─── delete ──────────────────────────────────────────── */
+
+export async function deleteRepo(input: {
+  projectSlug: string;
+  repoId: string;
+}): Promise<void> {
+  const { projectId, teamId, session } = await requireActiveProject(
+    input.projectSlug,
+  );
+
+  const repo = await db.query.projectRepos.findFirst({
+    where: and(
+      eq(projectRepos.id, input.repoId),
+      eq(projectRepos.projectId, projectId),
+    ),
+  });
+  if (!repo) {
+    return;
+  }
+
+  // Wipe brain chunks first; if the row delete fails after that
+  // the user can re-trigger and we end up consistent. Reversing
+  // the order would leave orphan chunks if the chunk delete
+  // failed mid-way.
+  await unindexRepo(repo.id);
+  await db.delete(projectRepos).where(eq(projectRepos.id, repo.id));
+
+  await logActivity({
+    teamId,
+    actorId: session.user.id,
+    verb: "deleted",
+    subjectType: "repo",
+    subjectId: repo.id,
+    subjectName: `${repo.owner}/${repo.repo}`,
+  });
+
+  revalidatePath(`/p/${input.projectSlug}/brain`);
+}

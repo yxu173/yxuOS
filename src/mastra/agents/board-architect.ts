@@ -5,6 +5,7 @@ import { models } from "@/lib/ai";
 
 import { canvasTools } from "../tools/canvas";
 import { searchProjectKnowledgeTool } from "../tools/search-knowledge";
+import { readFileTool, searchCodeTool } from "../tools/search-code";
 
 /**
  * The whiteboard agent. The user is collaborating on an infinite
@@ -149,5 +150,11 @@ Treat it as the source of truth: a screenshot, hand sketch, or reference diagram
     // chat route; project-less legacy boards skip the namespace,
     // and this tool then refuses with a clear error.
     search_project_knowledge: searchProjectKnowledgeTool,
+    // Code brain. When the user asks the board agent to diagram
+    // an existing system ("draw our auth flow", "map the API
+    // layer"), reach for `search_code` first — the architecture
+    // is what the code actually does, not what we wish it did.
+    search_code: searchCodeTool,
+    read_file: readFileTool,
   },
 });

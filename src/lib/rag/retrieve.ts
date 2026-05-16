@@ -88,11 +88,19 @@ export async function searchProjectKnowledge(
   // varies; the text form works on every Neon driver we use.
   const vecLiteral = `[${queryVec.join(",")}]`;
 
-  // The `kinds` filter is interpolated as a JSON array literal so
-  // we don't need a separate `IN (...)` builder.
-  const kindFilterSql = opts.kinds && opts.kinds.length > 0
-    ? sql`AND source_type = ANY(${opts.kinds})`
-    : sql``;
+  // The `kinds` filter is built as an explicit `IN (...)` list.
+  // Neon's HTTP protocol serialises a JS array as a JSON string,
+  // so `ANY(${opts.kinds})` would arrive at Postgres as the
+  // literal `'["repo_file"]'` and blow up on `array_in`. Each
+  // value is a controlled enum member, but we still parameterise
+  // each one (sql.join) so the audit log stays clean.
+  const kindFilterSql =
+    opts.kinds && opts.kinds.length > 0
+      ? sql`AND source_type IN (${sql.join(
+          opts.kinds.map((k) => sql`${k}`),
+          sql`, `,
+        )})`
+      : sql``;
 
   const rows = await db.execute(sql`
     SELECT
@@ -170,6 +178,24 @@ export function hrefForHit(
       // the parent artifact id in `metadata.parent` so we can
       // route there.
       return null;
+    case "repo_file": {
+      // Repo files link out to GitHub. We deep-link to the indexed
+      // SHA when we have one (so the line numbers in the anchor
+      // still match) and fall back to the branch ref otherwise.
+      const meta = hit.metadata as {
+        path?: string;
+        sha?: string | null;
+        branch?: string;
+        repoOwner?: string;
+        repoName?: string;
+      } | null;
+      if (!meta || !meta.path || !meta.repoOwner || !meta.repoName) {
+        return null;
+      }
+      const ref = meta.sha ?? meta.branch ?? "HEAD";
+      const anchor = hit.anchor ? `#${hit.anchor.toLowerCase()}` : "";
+      return `https://github.com/${meta.repoOwner}/${meta.repoName}/blob/${ref}/${meta.path}${anchor}`;
+    }
     default:
       return null;
   }

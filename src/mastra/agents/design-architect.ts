@@ -5,6 +5,7 @@ import { models } from "@/lib/ai";
 
 import { designCanvasTools } from "../tools/design-canvas";
 import { searchProjectKnowledgeTool } from "../tools/search-knowledge";
+import { readFileTool, searchCodeTool } from "../tools/search-code";
 
 /**
  * The design agent. Materializes UI mockups (landing pages, dashboards,
@@ -328,5 +329,10 @@ Treat it as source of truth. Describe it in one line, then design.
     // design chat route attaches `requestContext.get("project")`
     // when the design belongs to a project.
     search_project_knowledge: searchProjectKnowledgeTool,
+    // Code brain. Helpful when the design needs to reflect an
+    // actual data model or API — `search_code` for the type
+    // definition, then mirror its shape in the design.
+    search_code: searchCodeTool,
+    read_file: readFileTool,
   },
 });

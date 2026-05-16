@@ -87,7 +87,14 @@ const envSchema = z.object({
 
   // ─── Integrations (Module 7) ───────────────────────────
   GITHUB_APP_ID: z.preprocess(empty, z.string().optional()),
+  GITHUB_APP_CLIENT_ID: z.preprocess(empty, z.string().optional()),
+  GITHUB_APP_CLIENT_SECRET: z.preprocess(empty, z.string().optional()),
+  // PKCS#1 (`-----BEGIN RSA PRIVATE KEY-----`) or PKCS#8 PEM. For
+  // local dev paste the multi-line PEM in double quotes. For Vercel
+  // (which strips newlines in its dashboard UI) prefer the base64
+  // variant below — the loader falls back to it automatically.
   GITHUB_APP_PRIVATE_KEY: z.preprocess(empty, z.string().optional()),
+  GITHUB_APP_PRIVATE_KEY_B64: z.preprocess(empty, z.string().optional()),
   GITHUB_WEBHOOK_SECRET: z.preprocess(empty, z.string().optional()),
   FIGMA_ACCESS_TOKEN: z.preprocess(empty, z.string().optional()),
   SLACK_BOT_TOKEN: z.preprocess(empty, z.string().optional()),

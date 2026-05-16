@@ -5,6 +5,7 @@ import { models } from "@/lib/ai";
 
 import { planningWorkspaceTools } from "../tools/planning-workspace";
 import { searchProjectKnowledgeTool } from "../tools/search-knowledge";
+import { readFileTool, searchCodeTool } from "../tools/search-code";
 
 /**
  * The **Planner** agent.
@@ -115,5 +116,11 @@ If \`update_plan_row\` or \`remove_plan_row\` returns \`preconditions_failed\` w
     // boards before drafting plan rows. The plan-chat route
     // attaches `requestContext.get("project")` for this tool.
     search_project_knowledge: searchProjectKnowledgeTool,
+    // Code brain. Plans for non-trivial features should be grounded
+    // in what already exists — `search_code` for "do we already
+    // have a notifications service?", `read_file` to study its
+    // shape before slicing new work.
+    search_code: searchCodeTool,
+    read_file: readFileTool,
   },
 });

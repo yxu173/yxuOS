@@ -3,6 +3,7 @@
 import {
   CheckSquare,
   ClipboardList,
+  Code2,
   FileText,
   Layers,
   LayoutGrid,
@@ -68,6 +69,11 @@ const KIND_META: Partial<Record<KnowledgeKind, KindMeta>> = {
     icon: MessageSquare,
     accent: "text-zinc-400",
   },
+  repo_file: {
+    label: "Code",
+    icon: Code2,
+    accent: "text-sky-400",
+  },
 };
 
 // The order the filter pills are rendered in. Matters for muscle
@@ -78,6 +84,7 @@ const FILTER_KINDS: KnowledgeKind[] = [
   "task",
   "board",
   "design",
+  "repo_file",
   "comment",
 ];
 

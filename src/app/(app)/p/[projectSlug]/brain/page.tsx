@@ -1,4 +1,5 @@
 import { BrainSearch } from "@/components/brain/brain-search";
+import { RepoList } from "@/components/brain/repo-list";
 import { AppTopBar } from "@/components/workspaces/app-top-bar";
 import { requireActiveProject } from "@/lib/permissions";
 import { listProjectsForTeam } from "@/lib/projects";
@@ -55,6 +56,8 @@ export default async function BrainPage({
             it questions — the agents use this same store.
           </p>
         </header>
+
+        <RepoList projectSlug={projectSlug} />
 
         <BrainSearch projectSlug={projectSlug} />
       </main>

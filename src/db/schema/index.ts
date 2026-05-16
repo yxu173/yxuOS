@@ -16,6 +16,7 @@ export * from "./design-components";
 export * from "./design-folders";
 export * from "./designs";
 export * from "./project-knowledge";
+export * from "./project-repos";
 export * from "./projects";
 export * from "./research-notes";
 export * from "./task-boards";

@@ -24,3 +24,10 @@ export { indexDesign, unindexDesign } from "./design";
 export { indexResearchNote, unindexResearchNote } from "./research-note";
 export { indexTask, unindexTask } from "./task";
 export { indexTaskPlan, unindexTaskPlan } from "./task-plan";
+export {
+  buildRepoFileSourceId,
+  indexRepoFile,
+  parseRepoFileSourceId,
+  unindexRepo,
+} from "./repo-file";
+export { markRepoPending, runRepoIndex } from "./repo";

@@ -36,7 +36,8 @@ export type KnowledgeKind =
   | "board"
   | "design"
   | "design_chat"
-  | "comment";
+  | "comment"
+  | "repo_file";
 
 /**
  * Knowledge / RAG store: one row per **chunk** of project content.

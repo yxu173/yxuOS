@@ -6,6 +6,7 @@ import { models } from "@/lib/ai";
 import { exaSearchTool } from "../tools/exa-search";
 import { researchWorkspaceTools } from "../tools/research-workspace";
 import { searchProjectKnowledgeTool } from "../tools/search-knowledge";
+import { readFileTool, searchCodeTool } from "../tools/search-code";
 
 /**
  * The **Researcher** agent.
@@ -126,5 +127,15 @@ Retry budget: one retry per failed call, then move on with what you have.
     // The tool reads its scope from `requestContext.get("project")`,
     // which the research-chat route attaches to every turn.
     search_project_knowledge: searchProjectKnowledgeTool,
+    // Code brain. Same project scope; restricted to imported repos.
+    // When the user references implementation ("how do we hash
+    // passwords", "where is the cache invalidated"), prefer
+    // `search_code` over the web — the answer is almost certainly
+    // in the repo, not on the internet.
+    search_code: searchCodeTool,
+    // `read_file` follows up on a `search_code` hit when the snippet
+    // isn't enough. Cap at 600 lines per call — don't read whole
+    // mega-files in one go.
+    read_file: readFileTool,
   },
 });

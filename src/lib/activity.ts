@@ -36,7 +36,8 @@ export type ActivitySubjectType =
   | "task"
   | "project"
   | "research_note"
-  | "task_plan";
+  | "task_plan"
+  | "repo";
 
 export interface LogActivityInput {
   teamId: string;
