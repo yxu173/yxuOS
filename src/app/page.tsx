@@ -391,7 +391,7 @@ function SignedOutLanding() {
         <FeatureCard
           icon={LayoutDashboard}
           title="Boards"
-          description="tldraw whiteboards with an agent that drops Mermaid diagrams, sticky notes, and shapes on demand."
+          description="Excalidraw whiteboards with an agent that drops Mermaid diagrams, sticky notes, and shapes on demand."
         />
         <FeatureCard
           icon={Palette}

@@ -17,6 +17,7 @@ import {
   type BoardMentionComposerHandle,
 } from "./board-mention-composer";
 import type { BoardMentionItem } from "./board-mention-suggestion";
+import { ChatError } from "@/components/chat/chat-error";
 import { ScrollToBottomPill } from "@/components/chat/scroll-to-bottom-pill";
 import {
   ToolPart,
@@ -145,7 +146,7 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
   // render) keeps react-hooks/refs happy.
   const tokensRef = useRef(tokens);
 
-  const { messages, sendMessage, status, error, addToolOutput, stop } =
+  const { messages, sendMessage, status, error, regenerate, addToolOutput, stop } =
     useChat({
       messages: initialMessages,
       transport: new DefaultChatTransport({
@@ -660,9 +661,13 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
             ))
           )}
           {error ? (
-            <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300 break-words">
-              {error.message ?? "Something went wrong."}
-            </p>
+            <ChatError
+              error={error}
+              onRetry={() => {
+                void regenerate();
+              }}
+              isRetrying={isStreaming}
+            />
           ) : null}
         </div>
       </div>

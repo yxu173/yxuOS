@@ -7,12 +7,18 @@ import { idempotencyKeyField, toolResultSchema } from "./_envelope";
  * Canvas tools. None of them define an `execute` function — they're
  * client-side tools. The server (Mastra agent) advertises them to the
  * model with `description + inputSchema + outputSchema` only; the live
- * tldraw editor in the browser actually executes them via `useChat`'s
- * `onToolCall`.
+ * Excalidraw canvas in the browser actually executes them via
+ * `useChat`'s `onToolCall`, which routes through `tool-dispatcher.ts`.
  *
  * Every tool's outputSchema is wrapped in the standard envelope from
  * `_envelope.ts`. The agent reads `result.ok` to decide whether to
  * unpack `result.data` or recover via `result.error.code`.
+ *
+ * The vocabulary describes what the canvas SHOULD do at a level
+ * above the rendering engine: `geo` is "the rectangle / ellipse /
+ * diamond family"; arrows bind by id; cards are markdown / mermaid.
+ * Kept intentionally narrow so a future engine swap can re-map the
+ * same intents without changing the agent prompt.
  */
 
 const positionSchema = z.object({
@@ -38,28 +44,18 @@ const colorSchema = z.enum([
 const sizeSchema = z.enum(["s", "m", "l", "xl"]);
 const fillSchema = z.enum(["none", "semi", "solid", "pattern"]);
 
-const geoSchema = z.enum([
-  "rectangle",
-  "ellipse",
-  "diamond",
-  "triangle",
-  "rhombus",
-  "trapezoid",
-  "hexagon",
-  "octagon",
-  "star",
-  "cloud",
-  "x-box",
-  "check-box",
-  "oval",
-]);
+// Engine-neutral geo enum. Both canvases support these three
+// natively; legacy values (cloud, star, hexagon, …) used to
+// exist but are silently mapped to `rectangle` so older saved
+// prompts still draw something sensible.
+const geoSchema = z.enum(["rectangle", "ellipse", "diamond"]);
 
 // Shape input — what the model emits per shape it wants to draw.
 const shapeInputSchema = z.object({
   type: z
     .enum(["geo", "arrow", "text", "note", "frame"])
     .describe(
-      "tldraw shape type. `geo` covers rectangle/ellipse/diamond/etc. (set props.geo). `arrow` connects two points or shape ids. `text` is a label. `note` is a sticky note. `frame` groups shapes with a title.",
+      "Shape family. `geo` is a rectangle / ellipse / diamond (set `geo` to pick the subtype). `arrow` connects two points or shape ids. `text` is a free-standing label. `note` is a sticky note (yellow rectangle). `frame` is a titled group that contains other shapes.",
     ),
   x: z
     .number()
@@ -68,7 +64,9 @@ const shapeInputSchema = z.object({
   y: z.number().optional(),
   geo: geoSchema
     .optional()
-    .describe("Sub-type for `geo` shapes. Defaults to rectangle."),
+    .describe(
+      "Subtype for `geo` shapes. One of `rectangle`, `ellipse`, `diamond`. Defaults to `rectangle`.",
+    ),
   w: z.number().optional().describe("Width for box-like shapes."),
   h: z.number().optional().describe("Height for box-like shapes."),
   text: z
@@ -220,7 +218,7 @@ export const findShapesTool = createTool({
 export const addShapesTool = createTool({
   id: "add_shapes",
   description:
-    "Bulk-create one or more native tldraw shapes (hand-drawn rectangles, ellipses, arrows, text, sticky notes, frames). Use this for diagrams composed of geometric primitives. Coordinates are in page space — call `query_canvas` first if you need to place things relative to existing content. For a single arrow between two existing shapes, prefer the higher-level `connect_shapes`.",
+    "Bulk-create one or more hand-drawn canvas shapes (rectangles / ellipses / diamonds, arrows, text, sticky notes, frames). Use this for diagrams composed of geometric primitives. Coordinates are in page space — call `query_canvas` first if you need to place things relative to existing content. For a single arrow between two existing shapes, prefer the higher-level `connect_shapes`.",
   inputSchema: z.object({
     shapes: z
       .array(shapeInputSchema)
@@ -398,7 +396,7 @@ const shapeUpdateSchema = z.object({
   id: z
     .string()
     .describe(
-      "tldraw shape id, returned by `query_canvas` or `add_shapes` (looks like `shape:abc...`).",
+      "Canvas shape id, returned by `query_canvas`, `find_shapes`, or `add_shapes`. Opaque string — don't try to parse it.",
     ),
   x: z.number().optional().describe("Move to this page-space X."),
   y: z.number().optional().describe("Move to this page-space Y."),
@@ -418,7 +416,7 @@ const shapeUpdateSchema = z.object({
 export const updateShapesTool = createTool({
   id: "update_shapes",
   description:
-    "Modify properties of EXISTING tldraw shapes. Use this for iterations like 'make the auth box red', 'rename that frame to Backend', 'move the database 200px right', 'make those arrows thicker'. Provide only the fields that change; everything else is preserved. Target shapes by their `id` (from `query_canvas`, `find_shapes`, or the output of `add_shapes`). Don't recreate shapes when an update is enough.",
+    "Modify properties of EXISTING canvas shapes. Use this for iterations like 'make the auth box red', 'rename that frame to Backend', 'move the database 200px right', 'make those arrows thicker'. Provide only the fields that change; everything else is preserved. Target shapes by their `id` (from `query_canvas`, `find_shapes`, or the output of `add_shapes`). Don't recreate shapes when an update is enough.",
   inputSchema: z.object({
     shapes: z
       .array(shapeUpdateSchema)
@@ -443,12 +441,12 @@ export const updateShapesTool = createTool({
 export const deleteShapesTool = createTool({
   id: "delete_shapes",
   description:
-    "Remove one or more shapes from the whiteboard by id. Use this when the user says 'remove the auth box', 'clear that arrow', or wants to undo a previous addition. Bound arrows pointing at a deleted shape are detached automatically by tldraw.",
+    "Remove one or more shapes from the whiteboard by id. Use this when the user says 'remove the auth box', 'clear that arrow', or wants to undo a previous addition. Arrows bound to a deleted shape are detached automatically.",
   inputSchema: z.object({
     shapeIds: z
       .array(z.string())
       .min(1)
-      .describe("tldraw shape ids to delete (from `query_canvas` etc.)."),
+      .describe("Canvas shape ids to delete (from `query_canvas` etc.)."),
     idempotencyKey: idempotencyKeyField,
   }),
   outputSchema: toolResultSchema(

@@ -13,7 +13,7 @@ const newId = () => nanoid();
 
 /**
  * Comment on a board or design — optionally pinned to a specific element
- * inside it (a tldraw shape id for boards, a DesignNode id for designs).
+ * inside it (an Excalidraw element id for boards, a DesignNode id for designs).
  *
  * Storage choices:
  * - `subjectType` + `subjectId` is a polymorphic pointer at the surface
@@ -42,7 +42,7 @@ export const comments = pgTable(
     /** Surface id (board id or design id). Lives in board/designs tables. */
     subjectId: text("subject_id").notNull(),
     /**
-     * Optional sub-target inside the surface — a tldraw shape id (boards)
+     * Optional sub-target inside the surface — an Excalidraw element id (boards)
      * or a DesignNode id (designs). Null = comment on the surface itself.
      */
     targetId: text("target_id"),

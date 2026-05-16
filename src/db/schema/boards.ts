@@ -10,8 +10,10 @@ const newId = () => nanoid();
 /**
  * One whiteboard per row.
  *
- * - `snapshot` holds the full tldraw store as a single JSONB blob (MVP); we
- *   debounce-save the snapshot whenever the user / agent edits the canvas.
+ * - `snapshot` holds the full Excalidraw scene as a single JSONB blob;
+ *   we debounce-save the snapshot whenever the user / agent edits the
+ *   canvas. Shape is `ExcalidrawSnapshotV1` from
+ *   `src/components/board/excalidraw/snapshot.ts`.
  * - `threadId` ties the board to a Mastra memory thread so chat history
  *   survives between sessions.
  */

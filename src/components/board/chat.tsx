@@ -9,6 +9,7 @@ import {
 import { ArrowUp, Sparkles, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { ChatError } from "@/components/chat/chat-error";
 import { ScrollToBottomPill } from "@/components/chat/scroll-to-bottom-pill";
 import {
   ToolPart,
@@ -19,21 +20,9 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
-import {
-  executeAddMarkdownCard,
-  executeAddMermaidCard,
-  executeAddShapes,
-  executeAlignShapes,
-  executeConnectShapes,
-  executeDeleteShapes,
-  executeDistributeShapes,
-  executeFindShapes,
-  executeGroupIntoFrame,
-  executeQueryCanvas,
-  executeUpdateShapes,
-} from "./canvas-tools";
 import { ChatMarkdown } from "./chat-markdown";
-import { useBoardEditorRef } from "./editor-context";
+import { useBoardCanvasHandle } from "./editor-context";
+import { dispatchCanvasTool } from "./tool-dispatcher";
 
 export interface ChatProps {
   boardId: string;
@@ -55,11 +44,11 @@ const TOOL_LABELS: Record<string, string> = {
 };
 
 export function Chat({ boardId, initialMessages }: ChatProps) {
-  const editorRef = useBoardEditorRef();
+  const handleRef = useBoardCanvasHandle();
   const [input, setInput] = useState("");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const { messages, sendMessage, status, error, addToolOutput, stop } = useChat(
+  const { messages, sendMessage, status, error, regenerate, addToolOutput, stop } = useChat(
     {
       messages: initialMessages,
       transport: new DefaultChatTransport({
@@ -69,10 +58,13 @@ export function Chat({ boardId, initialMessages }: ChatProps) {
       async onToolCall({ toolCall }) {
         if (toolCall.dynamic) return;
 
-        const editor = editorRef.current;
+        const handle = handleRef.current;
 
-        // Helper: emit a successful tool output (envelope already produced
-        // by the executor — ok/err alike, both go through `output`).
+        // Tool-level failures (validation, not_found, etc.) come back
+        // inside the envelope as `{ ok: false, error }`. Catastrophic
+        // transport-level failures (canvas not mounted, dispatcher
+        // crash) use `output-error` and are framed apologetically
+        // to the agent in its system prompt.
         const emit = (
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           output: any,
@@ -83,10 +75,6 @@ export function Chat({ boardId, initialMessages }: ChatProps) {
             toolCallId: toolCall.toolCallId,
             output,
           });
-
-        // Catastrophic transport-level failures use `output-error`.
-        // Tool-level failures (validation, not_found, etc.) come back
-        // inside the envelope as `{ ok: false, error }` via `emit`.
         const fatal = (errorText: string) =>
           addToolOutput({
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -96,7 +84,7 @@ export function Chat({ boardId, initialMessages }: ChatProps) {
             errorText,
           });
 
-        if (!editor) {
+        if (!handle) {
           fatal(
             "Canvas isn't ready yet. Try again in a second once the whiteboard finishes loading.",
           );
@@ -104,110 +92,15 @@ export function Chat({ boardId, initialMessages }: ChatProps) {
         }
 
         try {
-          switch (toolCall.toolName) {
-            case "query_canvas": {
-              emit(
-                executeQueryCanvas(
-                  editor,
-                  toolCall.input as Parameters<typeof executeQueryCanvas>[1],
-                ),
-              );
-              break;
-            }
-            case "find_shapes": {
-              emit(
-                executeFindShapes(
-                  editor,
-                  toolCall.input as Parameters<typeof executeFindShapes>[1],
-                ),
-              );
-              break;
-            }
-            case "add_shapes": {
-              emit(
-                executeAddShapes(
-                  editor,
-                  toolCall.input as Parameters<typeof executeAddShapes>[1],
-                ),
-              );
-              break;
-            }
-            case "connect_shapes": {
-              emit(
-                executeConnectShapes(
-                  editor,
-                  toolCall.input as Parameters<typeof executeConnectShapes>[1],
-                ),
-              );
-              break;
-            }
-            case "align_shapes": {
-              emit(
-                executeAlignShapes(
-                  editor,
-                  toolCall.input as Parameters<typeof executeAlignShapes>[1],
-                ),
-              );
-              break;
-            }
-            case "distribute_shapes": {
-              emit(
-                executeDistributeShapes(
-                  editor,
-                  toolCall.input as Parameters<typeof executeDistributeShapes>[1],
-                ),
-              );
-              break;
-            }
-            case "group_into_frame": {
-              emit(
-                executeGroupIntoFrame(
-                  editor,
-                  toolCall.input as Parameters<typeof executeGroupIntoFrame>[1],
-                ),
-              );
-              break;
-            }
-            case "update_shapes": {
-              emit(
-                executeUpdateShapes(
-                  editor,
-                  toolCall.input as Parameters<typeof executeUpdateShapes>[1],
-                ),
-              );
-              break;
-            }
-            case "delete_shapes": {
-              emit(
-                executeDeleteShapes(
-                  editor,
-                  toolCall.input as Parameters<typeof executeDeleteShapes>[1],
-                ),
-              );
-              break;
-            }
-            case "add_markdown_card": {
-              emit(
-                executeAddMarkdownCard(
-                  editor,
-                  toolCall.input as Parameters<typeof executeAddMarkdownCard>[1],
-                ),
-              );
-              break;
-            }
-            case "add_mermaid_card": {
-              emit(
-                await executeAddMermaidCard(
-                  editor,
-                  toolCall.input as Parameters<typeof executeAddMermaidCard>[1],
-                ),
-              );
-              break;
-            }
-            default: {
-              fatal(`Unknown tool: ${toolCall.toolName}`);
-            }
-          }
+          // `dispatchCanvasTool` translates the tool name into the
+          // matching `executeXxx` call against the Excalidraw API.
+          // See `tool-dispatcher.ts`.
+          const result = await dispatchCanvasTool(
+            handle,
+            toolCall.toolName,
+            toolCall.input,
+          );
+          emit(result);
         } catch (err) {
           fatal(err instanceof Error ? err.message : "Tool failed");
         }
@@ -275,9 +168,13 @@ export function Chat({ boardId, initialMessages }: ChatProps) {
             ))
           )}
           {error ? (
-            <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300 break-words">
-              {error.message ?? "Something went wrong."}
-            </p>
+            <ChatError
+              error={error}
+              onRetry={() => {
+                void regenerate();
+              }}
+              isRetrying={isStreaming}
+            />
           ) : null}
         </div>
       </div>

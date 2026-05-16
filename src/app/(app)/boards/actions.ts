@@ -52,7 +52,7 @@ export async function createBoard(projectSlug?: string | FormData) {
 }
 
 /**
- * Persists the latest tldraw snapshot for a board. Any team member can
+ * Persists the latest Excalidraw snapshot for a board. Any team member can
  * edit any team board.
  */
 export async function saveBoardSnapshot(

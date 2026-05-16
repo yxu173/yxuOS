@@ -1,5 +1,7 @@
 import { handleChatStream } from "@mastra/ai-sdk";
 import { createUIMessageStreamResponse } from "ai";
+
+import { safeChatStream } from "@/lib/ai/safe-chat-stream";
 import { and, asc, eq, inArray } from "drizzle-orm";
 
 import { db } from "@/db";
@@ -83,7 +85,7 @@ export async function POST(
     }
   }
 
-  const stream = await handleChatStream({
+  const upstream = await handleChatStream({
     version: "v6",
     mastra,
     agentId: "designArchitect",
@@ -97,7 +99,10 @@ export async function POST(
     },
   });
 
-  return createUIMessageStreamResponse({ stream });
+  // Wrap the raw stream so mid-stream provider failures (429s, etc.)
+  // surface as a plain-English message to the client instead of a
+  // JSON-shaped AI_APICallError blob.
+  return createUIMessageStreamResponse({ stream: safeChatStream(upstream) });
 }
 
 /* ─── helpers ──────────────────────────────────────────── */

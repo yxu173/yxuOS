@@ -16,6 +16,7 @@ import {
   ToolPart,
   type ToolUIPartLike,
 } from "@/components/chat/tool-part";
+import { ChatError } from "@/components/chat/chat-error";
 import { useChatAutoScroll } from "@/components/chat/use-chat-auto-scroll";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -56,7 +57,7 @@ export function PlanChat({
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const seededRef = useRef(false);
 
-  const { messages, sendMessage, status, error, stop } = useChat({
+  const { messages, sendMessage, status, error, regenerate, stop } = useChat({
     messages: initialMessages,
     transport: new DefaultChatTransport({
       api: `/api/plan-chat/${planId}`,
@@ -127,9 +128,13 @@ export function PlanChat({
             ))
           )}
           {error ? (
-            <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300 break-words">
-              {error.message ?? "Something went wrong."}
-            </p>
+            <ChatError
+              error={error}
+              onRetry={() => {
+                void regenerate();
+              }}
+              isRetrying={isStreaming}
+            />
           ) : null}
         </div>
       </div>

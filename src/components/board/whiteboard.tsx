@@ -2,15 +2,25 @@
 
 import dynamic from "next/dynamic";
 
-import type { TldrawCanvasProps } from "./tldraw-canvas";
+import type { ExcalidrawCanvasProps } from "./excalidraw/excalidraw-canvas";
 
 /**
- * Tldraw must only run in the browser — it reaches for `window` /
- * `document` at module load. Loading it through `next/dynamic` with
- * `ssr: false` keeps it out of the server bundle entirely.
+ * The visible canvas. We dynamic-import Excalidraw with
+ * `ssr: false` because the package reads `window` / `document` at
+ * module load (it ships as a React component with a sizeable CSS
+ * bundle), so importing it server-side would crash the build.
+ *
+ * Phase 4 of the migration plan dropped tldraw entirely — this used
+ * to be a runtime engine selector. If you need a record of what the
+ * tldraw mount looked like, check git history before the Phase 4
+ * commit. There's no engine flag and no per-board `engine` column
+ * any more; every board renders on Excalidraw, full stop.
  */
-const TldrawCanvas = dynamic(
-  () => import("./tldraw-canvas").then((mod) => mod.TldrawCanvas),
+const ExcalidrawCanvas = dynamic(
+  () =>
+    import("./excalidraw/excalidraw-canvas").then(
+      (mod) => mod.ExcalidrawCanvas,
+    ),
   {
     ssr: false,
     loading: () => (
@@ -21,6 +31,8 @@ const TldrawCanvas = dynamic(
   },
 );
 
-export function Whiteboard(props: TldrawCanvasProps) {
-  return <TldrawCanvas {...props} />;
+export type WhiteboardProps = ExcalidrawCanvasProps;
+
+export function Whiteboard(props: WhiteboardProps) {
+  return <ExcalidrawCanvas {...props} />;
 }

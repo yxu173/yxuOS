@@ -1,5 +1,7 @@
 import { handleChatStream } from "@mastra/ai-sdk";
 import { createUIMessageStreamResponse } from "ai";
+
+import { safeChatStream } from "@/lib/ai/safe-chat-stream";
 import { and, eq } from "drizzle-orm";
 
 import { db } from "@/db";
@@ -34,7 +36,7 @@ export async function POST(
 
   const body = await req.json();
 
-  const stream = await handleChatStream({
+  const upstream = await handleChatStream({
     version: "v6",
     mastra,
     agentId: "boardArchitect",
@@ -48,5 +50,6 @@ export async function POST(
     },
   });
 
-  return createUIMessageStreamResponse({ stream });
+  // Friendly-error wrap — see `safeChatStream` for the rationale.
+  return createUIMessageStreamResponse({ stream: safeChatStream(upstream) });
 }

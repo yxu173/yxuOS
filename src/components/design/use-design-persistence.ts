@@ -14,7 +14,7 @@ const SAVE_DEBOUNCE_MS = 1500;
  * intentionally *not* persisted — it's UI ephemera, not part of the
  * design.
  *
- * Mirrors the pattern we use for tldraw boards (debounced editor.store
+ * Mirrors the pattern we use for Excalidraw boards (debounced scene
  * listener, last-chance flush on unmount).
  */
 export function useDesignPersistence(designId: string) {

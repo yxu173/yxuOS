@@ -17,7 +17,7 @@ export interface BoardRightPanelProps {
   initialComments: CommentItemData[];
   members: MentionTarget[];
   /**
-   * tldraw shape currently selected by the user, if exactly one shape is
+   * Excalidraw element currently selected by the user, if exactly one is
    * selected. Used to pin new comments to that shape.
    */
   selectedShapeId: string | null;

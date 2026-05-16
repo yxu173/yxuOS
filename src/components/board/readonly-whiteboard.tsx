@@ -2,12 +2,16 @@
 
 import dynamic from "next/dynamic";
 
-import type { ReadonlyTldrawCanvasProps } from "./readonly-tldraw-canvas";
+import type { ReadonlyExcalidrawCanvasProps } from "./excalidraw/readonly-excalidraw-canvas";
 
-const ReadonlyTldrawCanvas = dynamic(
+/**
+ * Read-only canvas mounted on the public `/share/<token>` page.
+ * Excalidraw-only since Phase 4 — see `whiteboard.tsx` for context.
+ */
+const ReadonlyExcalidrawCanvas = dynamic(
   () =>
-    import("./readonly-tldraw-canvas").then(
-      (mod) => mod.ReadonlyTldrawCanvas,
+    import("./excalidraw/readonly-excalidraw-canvas").then(
+      (mod) => mod.ReadonlyExcalidrawCanvas,
     ),
   {
     ssr: false,
@@ -19,6 +23,8 @@ const ReadonlyTldrawCanvas = dynamic(
   },
 );
 
-export function ReadonlyWhiteboard(props: ReadonlyTldrawCanvasProps) {
-  return <ReadonlyTldrawCanvas {...props} />;
+export type ReadonlyWhiteboardProps = ReadonlyExcalidrawCanvasProps;
+
+export function ReadonlyWhiteboard(props: ReadonlyWhiteboardProps) {
+  return <ReadonlyExcalidrawCanvas {...props} />;
 }

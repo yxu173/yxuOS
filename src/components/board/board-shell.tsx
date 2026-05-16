@@ -2,7 +2,6 @@
 
 import type { UIMessage } from "ai";
 import { useCallback, useEffect, useState } from "react";
-import type { Editor } from "tldraw";
 
 import { Whiteboard } from "@/components/board/whiteboard";
 import type {
@@ -15,7 +14,10 @@ import type { WorkspaceSwitcherTeam } from "@/components/workspaces/workspace-sw
 import { BoardName } from "./board-name";
 import {
   EditorRefProvider,
-  useBoardEditorRef,
+  focusShape,
+  readShapeLabel,
+  selectNone,
+  useBoardCanvasHandle,
   useBoardSelection,
 } from "./editor-context";
 import { LeftPanel, type BoardSummary } from "./left-panel";
@@ -69,7 +71,7 @@ function BoardShellInner({
 }: BoardShellProps) {
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
-  const editorRef = useBoardEditorRef();
+  const handleRef = useBoardCanvasHandle();
   const { selectedShapeIds } = useBoardSelection();
 
   // Keyboard shortcuts: Cmd/Ctrl + \ → left panel, Cmd/Ctrl + / → right panel.
@@ -101,27 +103,20 @@ function BoardShellInner({
   useEffect(() => {
     setSelectedShapeLabel(
       selectedShapeId
-        ? readShapeLabel(editorRef.current, selectedShapeId)
+        ? readShapeLabel(handleRef.current, selectedShapeId)
         : null,
     );
-  }, [selectedShapeId, editorRef]);
+  }, [selectedShapeId, handleRef]);
 
   const onClearSelection = useCallback(() => {
-    editorRef.current?.selectNone();
-  }, [editorRef]);
+    selectNone(handleRef.current);
+  }, [handleRef]);
 
   const onFocusShape = useCallback(
     (shapeId: string) => {
-      const editor = editorRef.current;
-      if (!editor) return;
-      const shape = editor.getShape(
-        shapeId as Parameters<typeof editor.getShape>[0],
-      );
-      if (!shape) return;
-      editor.select(shape.id);
-      editor.zoomToSelection({ animation: { duration: 200 } });
+      focusShape(handleRef.current, shapeId);
     },
-    [editorRef],
+    [handleRef],
   );
 
   // For per-comment "on …" pills we just show a generic label — resolving
@@ -182,27 +177,9 @@ function BoardShellInner({
   );
 }
 
-function truncate(value: string, max: number): string {
-  return value.length > max ? `${value.slice(0, max).trim()}…` : value;
-}
-
-/**
- * Read the friendliest text label off a shape, falling back to its type.
- * Pulled out so the effect that mirrors selection state can use it
- * without adding a render-time ref read.
- */
-function readShapeLabel(editor: Editor | null, shapeId: string): string {
-  if (!editor) return "shape";
-  const shape = editor.getShape(
-    shapeId as Parameters<typeof editor.getShape>[0],
-  );
-  if (!shape) return "deleted shape";
-  const props = shape.props as Record<string, unknown>;
-  if (typeof props.text === "string" && props.text.trim()) {
-    return truncate(props.text, 28);
-  }
-  if (typeof props.name === "string" && props.name.trim()) {
-    return truncate(props.name, 28);
-  }
-  return shape.type;
-}
+// `readShapeLabel`, `selectNone`, `focusShape` live in
+// `editor-context.tsx` — thin wrappers around the Excalidraw API
+// imported here. Pre-Phase 4 they branched on `handle.engine` to
+// route to one of two engines; after Phase 4 they're Excalidraw-only.
+// The indirection still pays for itself: keeps the shell free of
+// imperative API calls.

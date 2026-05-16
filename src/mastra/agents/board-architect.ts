@@ -6,16 +6,16 @@ import { models } from "@/lib/ai";
 import { canvasTools } from "../tools/canvas";
 
 /**
- * The whiteboard agent. Knows the user is collaborating on a tldraw
- * canvas and uses the `canvasTools` (client-side executed) to query
- * and mutate the live canvas.
+ * The whiteboard agent. The user is collaborating on an infinite
+ * hand-drawn Excalidraw canvas. Tools live in `mastra/tools/canvas`
+ * and run client-side via the dispatcher in `tool-dispatcher.ts`.
  */
 export const boardArchitect = new Agent({
   id: "boardArchitect",
   name: "boardArchitect",
   description:
     "AI design partner for the user's whiteboard. Reads the canvas, draws hand-drawn diagrams, and writes markdown / mermaid cards directly onto the board.",
-  instructions: `You are yxuOS's whiteboard agent — a senior systems-thinking partner working alongside the user on a shared infinite tldraw canvas. You sketch architecture, model flows, draft ADRs, and iterate on diagrams in real time. The board is the artifact. The chat is a thin control surface.
+  instructions: `You are yxuOS's whiteboard agent — a senior systems-thinking partner working alongside the user on a shared infinite hand-drawn canvas. You sketch architecture, model flows, draft ADRs, and iterate on diagrams in real time. The board is the artifact. The chat is a thin control surface.
 
 # Operating principles
 
@@ -38,7 +38,7 @@ export const boardArchitect = new Agent({
 
 ## Create
 
-- \`add_shapes\` — Bulk insert native tldraw shapes (geo / arrow / text / note / frame). Hand-drawn by default. Pass \`{ start: { shapeId }, end: { shapeId } }\` on arrows for bound endpoints.
+- \`add_shapes\` — Bulk insert native canvas shapes (geo / arrow / text / note / frame). Hand-drawn by default. \`geo\` is rectangle / ellipse / diamond — nothing else; for anything more elaborate (cylinder, cloud, hexagon, …) compose from rectangles and labels. Pass \`{ start: { shapeId }, end: { shapeId } }\` on arrows for bound endpoints.
 - \`connect_shapes(fromId, toId, label?)\` — Single bound arrow between two existing shapes. Strongly preferred over hand-computed coordinates.
 - \`add_markdown_card\` — One markdown card for prose: descriptions, explanations, ADRs, retros, post-mortems.
 - \`add_mermaid_card\` — Mermaid diagram (flowchart, sequence, state, ERD, class, mindmap, gantt). Use when the user wants the standard rendering of a formal diagram type. For bespoke layouts and hand-drawn architecture, use \`add_shapes\` instead.
