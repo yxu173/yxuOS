@@ -47,6 +47,16 @@ import { indexRepoFile, unindexRepo } from "./repo-file";
 
 const PROGRESS_FLUSH_EVERY = 25;
 
+/**
+ * If an `indexing` row hasn't moved in this long, we assume the
+ * previous run was killed (e.g. dev-server hot reload, Vercel
+ * function timeout, OOM) and treat the row as resumable. Five
+ * minutes is comfortable: even a 5k-file repo flushes progress
+ * every 25 files, so a healthy run updates `updatedAt` every
+ * few seconds.
+ */
+const STUCK_INDEXING_TIMEOUT_MS = 5 * 60 * 1000;
+
 export async function runRepoIndex(repoId: string): Promise<void> {
   const repo = await db.query.projectRepos.findFirst({
     where: eq(projectRepos.id, repoId),
@@ -57,11 +67,22 @@ export async function runRepoIndex(repoId: string): Promise<void> {
     return;
   }
 
-  // Idempotency: if another caller already moved this row from
-  // pending → indexing, don't double-run.
+  // Idempotency: if another caller is *actively* indexing this
+  // row, don't double-run. "Actively" = `updatedAt` is recent.
+  // A stale `indexing` row means the previous worker was killed
+  // (dev reload, function timeout) and we must take over, not
+  // sit on our hands forever.
   if (repo.status === "indexing") {
-    console.warn(`[rag/repo] skipping ${repoId} — already indexing`);
-    return;
+    const ageMs = Date.now() - new Date(repo.updatedAt).getTime();
+    if (ageMs < STUCK_INDEXING_TIMEOUT_MS) {
+      console.warn(
+        `[rag/repo] skipping ${repoId} — already indexing (${Math.round(ageMs / 1000)}s ago)`,
+      );
+      return;
+    }
+    console.warn(
+      `[rag/repo] taking over stale indexing run for ${repoId} (${Math.round(ageMs / 1000)}s stale)`,
+    );
   }
 
   // Transition: pending|ready|failed → indexing
@@ -85,6 +106,12 @@ export async function runRepoIndex(repoId: string): Promise<void> {
   let skipped = 0;
   let failedFiles = 0;
   let sinceFlush = 0;
+  // Per-reason histogram of per-file failures — written into
+  // the row's `error` field on success so the operator can
+  // see at-a-glance whether the indexer is healthy or whether
+  // something systemic (e.g. "all chunks rejected by the
+  // embedder") is silently degrading the brain.
+  const failureReasons: Record<string, number> = {};
 
   const flush = async () => {
     sinceFlush = 0;
@@ -141,12 +168,15 @@ export async function runRepoIndex(repoId: string): Promise<void> {
           } else {
             failedFiles++;
             // Log only the first few; otherwise a syntax-error
-            // repo would flood the logs.
+            // repo would flood the logs. The per-reason bucket
+            // count below gives an aggregate signal for the rest.
             if (failedFiles <= 5) {
               console.warn(
                 `[rag/repo] ${repo.owner}/${repo.repo} — file ${path} failed: ${result.reason}`,
               );
             }
+            failureReasons[result.reason] =
+              (failureReasons[result.reason] ?? 0) + 1;
           }
           sinceFlush++;
           if (sinceFlush >= PROGRESS_FLUSH_EVERY) {
@@ -165,7 +195,16 @@ export async function runRepoIndex(repoId: string): Promise<void> {
       },
     );
 
-    // Terminal flush + status flip.
+    // Terminal flush + status flip. If anything failed, surface
+    // a one-line histogram in `error` so the operator sees it
+    // without having to grep dev-server logs.
+    const failureSummary =
+      failedFiles > 0
+        ? `${failedFiles} file(s) failed: ${Object.entries(failureReasons)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(", ")}`
+        : null;
+
     await db
       .update(projectRepos)
       .set({
@@ -175,13 +214,15 @@ export async function runRepoIndex(repoId: string): Promise<void> {
         totalFiles: kept + skipped + failedFiles,
         lastIndexedSha: sha,
         lastSyncedAt: new Date(),
-        error: null,
+        error: failureSummary,
         updatedAt: new Date(),
       })
       .where(eq(projectRepos.id, repoId));
 
     console.log(
-      `[rag/repo] indexed ${repo.owner}/${repo.repo}@${repo.branch} — ${kept} files, ${skipped} skipped, ${failedFiles} failed`,
+      `[rag/repo] indexed ${repo.owner}/${repo.repo}@${repo.branch} — ${kept} files, ${skipped} skipped, ${failedFiles} failed${
+        failureSummary ? ` (${failureSummary})` : ""
+      }`,
     );
   } catch (err) {
     const msg =

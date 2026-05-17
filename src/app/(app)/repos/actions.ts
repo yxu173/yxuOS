@@ -70,6 +70,13 @@ function toRow(r: ProjectRepo): RepoRow {
 
 /* ─── list ────────────────────────────────────────────── */
 
+/**
+ * Rows in `indexing` with no progress update in this long are
+ * treated as stuck (worker died) and auto-recovered when the brain
+ * page loads. Matches `STUCK_INDEXING_TIMEOUT_MS` in the orchestrator.
+ */
+const STUCK_INDEXING_TIMEOUT_MS = 5 * 60 * 1000;
+
 export async function listProjectRepos(
   projectSlug: string,
 ): Promise<RepoRow[]> {
@@ -78,6 +85,36 @@ export async function listProjectRepos(
     where: eq(projectRepos.projectId, projectId),
     orderBy: [desc(projectRepos.importedAt)],
   });
+
+  // Self-heal stuck rows on render. The list endpoint is hit on
+  // every brain-page visit and every poll tick, so a row left
+  // dangling by a killed worker (dev-server reload, function
+  // timeout) bounces back to `pending` within ~5 minutes and the
+  // next user action / poll picks it up. We don't auto-rerun
+  // indexing here — just clear the lock and surface the failure
+  // so the user can hit Resync.
+  const now = Date.now();
+  const stuck = rows.filter(
+    (r) =>
+      r.status === "indexing" &&
+      now - new Date(r.updatedAt).getTime() > STUCK_INDEXING_TIMEOUT_MS,
+  );
+  if (stuck.length > 0) {
+    for (const r of stuck) {
+      await db
+        .update(projectRepos)
+        .set({
+          status: "failed",
+          error:
+            "Indexing worker stopped responding. Click Resync to retry.",
+          updatedAt: new Date(),
+        })
+        .where(eq(projectRepos.id, r.id));
+      r.status = "failed";
+      r.error = "Indexing worker stopped responding. Click Resync to retry.";
+    }
+  }
+
   return rows.map(toRow);
 }
 
@@ -185,11 +222,14 @@ export async function resyncRepo(input: {
   if (!repo) {
     throw new Error("Repo not found in this project.");
   }
-  if (repo.status === "indexing") {
-    // Already running — return quietly. The UI will keep polling.
-    return;
-  }
-
+  // `markRepoPending` flips status unconditionally back to `pending`.
+  // We deliberately do NOT bail on an existing `indexing` row here:
+  // a dev-server hot-reload or a serverless function timeout can
+  // leave a row marked `indexing` with no worker actually running.
+  // The user clicking Resync is the recovery path; making them wait
+  // for a 5-minute staleness window would be hostile UX. The
+  // `runRepoIndex` orchestrator has its own takeover logic for the
+  // automatic case, but for an explicit user click we just go.
   await markRepoPending(repo.id);
   after(() => runRepoIndex(repo.id));
 
