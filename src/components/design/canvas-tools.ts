@@ -26,6 +26,20 @@ import type {
 } from "./component-library-context";
 import type { DesignNode } from "./design-node";
 import {
+  alignNodesInTree,
+  arrangeArtboards,
+  auditTree,
+  distributeChildrenInTree,
+  replaceNodeInTree,
+  setNodeHiddenInTree,
+  unwrapNodeInTree,
+  wrapNodesInTree,
+  type AlignMode,
+  type ArrangeStrategy,
+  type AuditIssue,
+  type DistributeMode,
+} from "./design-ops";
+import {
   cloneSubtreeWithFreshIds,
   collectFlowEdgesFromArtboards,
   deleteNodesInTree,
@@ -1496,7 +1510,355 @@ export function executeListFlows(): ToolResult<ListFlowsOutput> {
   });
 }
 
-/* ─── helpers ──────────────────────────────────────────── */
+/* ─── wrap_nodes ───────────────────────────────────────── */
+
+export interface WrapNodesInput {
+  artboardId: string;
+  nodeIds: string[];
+  containerType: "div" | "section" | "card" | "frame" | "nav";
+  style?: Record<string, string | number>;
+  idempotencyKey?: string;
+}
+
+export function executeWrapNodes(
+  input: WrapNodesInput,
+): ToolResult<{
+  artboardId: string;
+  containerId: string;
+  wrappedNodeIds: string[];
+}> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
+    const ab = state.artboards.find((a) => a.id === input.artboardId);
+    if (!ab) return fail("not_found", `Artboard "${input.artboardId}" not found.`);
+    if (!ab.design)
+      return fail(
+        "preconditions_failed",
+        `Artboard "${ab.name}" is empty.`,
+        "Use `add_artboard` first.",
+      );
+    const result = wrapNodesInTree(
+      ab.design,
+      input.nodeIds,
+      input.containerType,
+      input.style,
+    );
+    if ("error" in result) {
+      const isMissing = result.error.message.includes("not found");
+      return fail(
+        isMissing ? "not_found" : "preconditions_failed",
+        result.error.message,
+        result.error.hint,
+      );
+    }
+    state.updateArtboard(input.artboardId, { design: result.tree });
+    return ok({
+      artboardId: input.artboardId,
+      containerId: result.containerId,
+      wrappedNodeIds: result.wrappedNodeIds,
+    });
+  });
+}
+
+/* ─── unwrap_node ──────────────────────────────────────── */
+
+export interface UnwrapNodeInput {
+  artboardId: string;
+  nodeId: string;
+  idempotencyKey?: string;
+}
+
+export function executeUnwrapNode(
+  input: UnwrapNodeInput,
+): ToolResult<{ artboardId: string; promotedNodeIds: string[] }> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
+    const ab = state.artboards.find((a) => a.id === input.artboardId);
+    if (!ab) return fail("not_found", `Artboard "${input.artboardId}" not found.`);
+    if (!ab.design)
+      return fail("preconditions_failed", `Artboard "${ab.name}" is empty.`);
+    const result = unwrapNodeInTree(ab.design, input.nodeId);
+    if ("error" in result) {
+      const isMissing = result.error.message.includes("not found");
+      return fail(
+        isMissing ? "not_found" : "preconditions_failed",
+        result.error.message,
+        result.error.hint,
+      );
+    }
+    state.updateArtboard(input.artboardId, { design: result.tree });
+    return ok({
+      artboardId: input.artboardId,
+      promotedNodeIds: result.promotedNodeIds,
+    });
+  });
+}
+
+/* ─── replace_node ─────────────────────────────────────── */
+
+export interface ReplaceNodeInput {
+  artboardId: string;
+  nodeId: string;
+  replacement: DesignNode;
+  idempotencyKey?: string;
+}
+
+export function executeReplaceNode(
+  input: ReplaceNodeInput,
+): ToolResult<{ artboardId: string; newNodeId: string }> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
+    const ab = state.artboards.find((a) => a.id === input.artboardId);
+    if (!ab) return fail("not_found", `Artboard "${input.artboardId}" not found.`);
+    if (!ab.design)
+      return fail("preconditions_failed", `Artboard "${ab.name}" is empty.`);
+    const violation = validateTree(input.replacement);
+    if (violation) {
+      return fail("validation_failed", violation.message, violation.hint);
+    }
+    const result = replaceNodeInTree(ab.design, input.nodeId, input.replacement);
+    if (!result) {
+      return fail(
+        "not_found",
+        `Node "${input.nodeId}" not found, or is the artboard root.`,
+        "For root replacement, use `update_artboard` with the new tree.",
+      );
+    }
+    state.updateArtboard(input.artboardId, { design: result.tree });
+    return ok({ artboardId: input.artboardId, newNodeId: result.newNodeId });
+  });
+}
+
+/* ─── set_node_visibility ──────────────────────────────── */
+
+export interface SetNodeVisibilityInput {
+  artboardId: string;
+  nodeId: string;
+  hidden: boolean;
+  idempotencyKey?: string;
+}
+
+export function executeSetNodeVisibility(
+  input: SetNodeVisibilityInput,
+): ToolResult<{ artboardId: string; nodeId: string; hidden: boolean }> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
+    const ab = state.artboards.find((a) => a.id === input.artboardId);
+    if (!ab) return fail("not_found", `Artboard "${input.artboardId}" not found.`);
+    if (!ab.design)
+      return fail("preconditions_failed", `Artboard "${ab.name}" is empty.`);
+    const next = setNodeHiddenInTree(ab.design, input.nodeId, input.hidden);
+    if (!next) {
+      return fail(
+        "not_found",
+        `Node "${input.nodeId}" not found in artboard "${ab.name}".`,
+      );
+    }
+    state.updateArtboard(input.artboardId, { design: next });
+    return ok({
+      artboardId: input.artboardId,
+      nodeId: input.nodeId,
+      hidden: input.hidden,
+    });
+  });
+}
+
+/* ─── align_nodes ──────────────────────────────────────── */
+
+export interface AlignNodesInput {
+  artboardId: string;
+  nodeIds: string[];
+  /** Cross-axis alignment via `alignSelf`. */
+  align?: AlignMode;
+  /** Optional parent id to set `justifyContent` on (distributes its kids). */
+  distributeParentId?: string;
+  distribute?: DistributeMode;
+  idempotencyKey?: string;
+}
+
+export function executeAlignNodes(
+  input: AlignNodesInput,
+): ToolResult<{
+  artboardId: string;
+  alignedNodeIds: string[];
+  distributedParentId: string | null;
+}> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
+    const ab = state.artboards.find((a) => a.id === input.artboardId);
+    if (!ab) return fail("not_found", `Artboard "${input.artboardId}" not found.`);
+    if (!ab.design)
+      return fail("preconditions_failed", `Artboard "${ab.name}" is empty.`);
+    if (!input.align && !input.distribute) {
+      return fail(
+        "invalid_input",
+        "Provide `align` or `distribute` (or both).",
+      );
+    }
+    let tree = ab.design;
+    let alignedNodeIds: string[] = [];
+    if (input.align && input.nodeIds.length > 0) {
+      const result = alignNodesInTree(tree, input.nodeIds, input.align);
+      tree = result.tree;
+      alignedNodeIds = result.patchedNodeIds;
+    }
+    let distributedParentId: string | null = null;
+    if (input.distribute) {
+      const parentId =
+        input.distributeParentId ?? (tree.id ?? null);
+      if (!parentId) {
+        return fail(
+          "invalid_input",
+          "distribute requires `distributeParentId` (defaults to artboard root).",
+        );
+      }
+      const next = distributeChildrenInTree(tree, parentId, input.distribute);
+      if (!next) {
+        return fail(
+          "not_found",
+          `Parent "${parentId}" not found or not a container.`,
+        );
+      }
+      tree = next;
+      distributedParentId = parentId;
+    }
+    state.updateArtboard(input.artboardId, { design: tree });
+    return ok({
+      artboardId: input.artboardId,
+      alignedNodeIds,
+      distributedParentId,
+    });
+  });
+}
+
+/* ─── audit_design ─────────────────────────────────────── */
+
+export interface AuditDesignInput {
+  /** Artboard to audit. Omit to audit every artboard on the canvas. */
+  artboardId?: string;
+}
+
+export interface AuditDesignOutput {
+  artboards: Array<{
+    artboardId: string;
+    artboardName: string;
+    issues: AuditIssue[];
+  }>;
+  totalIssues: number;
+  summary: {
+    error: number;
+    warning: number;
+    info: number;
+  };
+}
+
+export function executeAuditDesign(
+  input: AuditDesignInput,
+): ToolResult<AuditDesignOutput> {
+  const state = useDesignCanvas.getState();
+  const targets = input.artboardId
+    ? state.artboards.filter((a) => a.id === input.artboardId)
+    : state.artboards;
+  if (input.artboardId && targets.length === 0) {
+    return fail("not_found", `Artboard "${input.artboardId}" not found.`);
+  }
+  const summary = { error: 0, warning: 0, info: 0 };
+  const out: AuditDesignOutput["artboards"] = [];
+  for (const ab of targets) {
+    if (!ab.design) {
+      out.push({ artboardId: ab.id, artboardName: ab.name, issues: [] });
+      continue;
+    }
+    const issues = auditTree(ab.design);
+    for (const issue of issues) summary[issue.severity] += 1;
+    out.push({ artboardId: ab.id, artboardName: ab.name, issues });
+  }
+  return ok({
+    artboards: out,
+    totalIssues: summary.error + summary.warning + summary.info,
+    summary,
+  });
+}
+
+/* ─── arrange_artboards ────────────────────────────────── */
+
+export interface ArrangeArtboardsInput {
+  strategy: ArrangeStrategy;
+  /** Restrict to these artboards; defaults to all. */
+  artboardIds?: string[];
+  gap?: number;
+  originX?: number;
+  originY?: number;
+  idempotencyKey?: string;
+}
+
+export function executeArrangeArtboards(
+  input: ArrangeArtboardsInput,
+): ToolResult<{
+  movedArtboardIds: string[];
+}> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
+    const all = state.artboards;
+    const targets = input.artboardIds
+      ? all.filter((a) => input.artboardIds!.includes(a.id))
+      : all;
+    if (targets.length === 0) {
+      return fail("not_found", "No matching artboards to arrange.");
+    }
+    // Default origin = top-left of the current cluster so the tidy-up
+    // doesn't yank the camera to (0,0) for users with a busy canvas.
+    const ox =
+      input.originX ??
+      Math.min(...targets.map((a) => a.x));
+    const oy =
+      input.originY ??
+      Math.min(...targets.map((a) => a.y));
+    const positions = arrangeArtboards(targets, input.strategy, {
+      gap: input.gap,
+      originX: ox,
+      originY: oy,
+    });
+    const movedArtboardIds: string[] = [];
+    for (const id of Object.keys(positions)) {
+      const ab = targets.find((a) => a.id === id);
+      if (!ab) continue;
+      // Skip locked artboards — the user pinned them in place.
+      if (ab.locked) continue;
+      const { x, y } = positions[id]!;
+      if (x !== ab.x || y !== ab.y) {
+        state.updateArtboard(id, { x, y });
+        movedArtboardIds.push(id);
+      }
+    }
+    return ok({ movedArtboardIds });
+  });
+}
+
+/* ─── set_artboard_background ──────────────────────────── */
+
+export interface SetArtboardBackgroundInput {
+  artboardId: string;
+  background: string;
+  idempotencyKey?: string;
+}
+
+export function executeSetArtboardBackground(
+  input: SetArtboardBackgroundInput,
+): ToolResult<{ artboardId: string; background: string }> {
+  return withIdempotency(input.idempotencyKey, () => {
+    const state = useDesignCanvas.getState();
+    const ab = state.artboards.find((a) => a.id === input.artboardId);
+    if (!ab) return fail("not_found", `Artboard "${input.artboardId}" not found.`);
+    state.updateArtboard(input.artboardId, { background: input.background });
+    return ok({
+      artboardId: input.artboardId,
+      background: input.background,
+    });
+  });
+}
+
+/* ─── helpers ──────────────────────────────────────── */
 
 // Re-exported so the chat can ask "is this id even in the tree?" before
 // dispatching multi-node tools — currently unused but kept here so the

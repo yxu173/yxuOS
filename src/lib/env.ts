@@ -40,13 +40,13 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.preprocess(empty, z.string().optional()),
   ANTHROPIC_API_KEY: z.preprocess(empty, z.string().optional()),
 
-  // Azure AI Foundry — Anthropic Messages-compatible endpoint.
-  // Base URL like `https://<resource>.services.ai.azure.com/anthropic`.
-  AZURE_ANTHROPIC_BASE_URL: z.preprocess(empty, z.string().url().optional()),
-  AZURE_ANTHROPIC_API_KEY: z.preprocess(empty, z.string().optional()),
-  AZURE_ANTHROPIC_MODEL: z.preprocess(
+  // Azure AI Foundry — OpenAI-compatible endpoint.
+  // Base URL like `https://<resource>.services.ai.azure.com`.
+  AZURE_OPENAI_BASE_URL: z.preprocess(empty, z.string().url().optional()),
+  AZURE_OPENAI_API_KEY: z.preprocess(empty, z.string().optional()),
+  AZURE_OPENAI_MODEL: z.preprocess(
     empty,
-    z.string().default("claude-opus-4-7-1"),
+    z.string().default("gpt-oss-120b"),
   ),
 
   // Azure AI Foundry — OpenAI-compatible embeddings endpoint. Used
@@ -84,6 +84,21 @@ const envSchema = z.object({
   // `uploadDesignAsset` throws a clear error in the UI.
   // Get one at https://vercel.com/dashboard → Storage → Blob.
   BLOB_READ_WRITE_TOKEN: z.preprocess(empty, z.string().optional()),
+
+  // ─── Cache (Upstash Redis REST) ────────────────────────
+  // When both are set the app caches expensive read paths
+  // (permissions, project listings, etc.) in Upstash. Leave
+  // unset to fall back to the per-request React `cache()` only.
+  // Get values at https://console.upstash.com/redis → your DB
+  // → "REST API" panel.
+  UPSTASH_REDIS_REST_URL: z.preprocess(empty, z.string().url().optional()),
+  UPSTASH_REDIS_REST_TOKEN: z.preprocess(empty, z.string().optional()),
+  /**
+   * Namespace prepended to every Redis key. Defaults to `y` (yxuOS).
+   * Set per-environment (e.g. `y-prod`, `y-staging`) so multiple
+   * deployments can share one Upstash database without colliding.
+   */
+  CACHE_NAMESPACE: z.preprocess(empty, z.string().default("y")),
 
   // ─── Integrations (Module 7) ───────────────────────────
   GITHUB_APP_ID: z.preprocess(empty, z.string().optional()),

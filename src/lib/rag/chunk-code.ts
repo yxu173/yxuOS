@@ -1,6 +1,51 @@
+import { createRequire } from "node:module";
 import path from "node:path";
 
 import Parser from "web-tree-sitter";
+
+/**
+ * Resolve the `tree-sitter-wasms` package directory once, lazily,
+ * via `createRequire(import.meta.url)`. This works in three places
+ * the previous `path.join(process.cwd(), "node_modules", ...)` did
+ * NOT work in:
+ *
+ *   1. **Vercel / serverless functions.** `process.cwd()` is
+ *      `/var/task`, not the repo root, and even when it matches,
+ *      the bundler may hoist the package somewhere else.
+ *   2. **pnpm / bun isolated installs.** The grammar package lives
+ *      under `.pnpm/<hash>/node_modules/tree-sitter-wasms`, never
+ *      `<cwd>/node_modules/tree-sitter-wasms`.
+ *   3. **Monorepo subfolders.** `cwd` is whichever package you
+ *      ran from — not necessarily the one that depends on us.
+ *
+ * `require.resolve` consults the actual module graph that loaded
+ * this file, so it returns the right path regardless of layout.
+ *
+ * Memo: the resolution is module-level so we pay the lookup once
+ * per process, then reuse the directory for every grammar.
+ */
+let _wasmDir: string | null | undefined;
+function wasmDir(): string | null {
+  if (_wasmDir !== undefined) return _wasmDir;
+  try {
+    const req = createRequire(import.meta.url);
+    const pkgPath = req.resolve("tree-sitter-wasms/package.json");
+    _wasmDir = path.join(path.dirname(pkgPath), "out");
+    return _wasmDir;
+  } catch {
+    // Last-ditch fallback for environments where createRequire
+    // can't find the package (vanishingly rare). Keeps the old
+    // behaviour so we don't regress local dev.
+    const guess = path.join(
+      process.cwd(),
+      "node_modules",
+      "tree-sitter-wasms",
+      "out",
+    );
+    _wasmDir = guess;
+    return _wasmDir;
+  }
+}
 
 import type { Chunk } from "./chunk";
 
@@ -165,13 +210,13 @@ async function initParser(): Promise<void> {
 async function loadLanguage(grammar: string): Promise<Parser.Language> {
   const cached = languageCache.get(grammar);
   if (cached) return cached;
-  const wasmPath = path.join(
-    process.cwd(),
-    "node_modules",
-    "tree-sitter-wasms",
-    "out",
-    `tree-sitter-${grammar}.wasm`,
-  );
+  const dir = wasmDir();
+  if (!dir) {
+    throw new Error(
+      "tree-sitter-wasms package not resolvable — reinstall deps",
+    );
+  }
+  const wasmPath = path.join(dir, `tree-sitter-${grammar}.wasm`);
   // web-tree-sitter accepts a path string in Node.
   const p = Parser.Language.load(wasmPath);
   languageCache.set(grammar, p);
@@ -242,13 +287,25 @@ export async function chunkCodeFile(
     }
 
     return packDeclarationsIntoChunks(lines, tops, opts.filePath);
-  } catch {
+  } catch (err) {
     // Tree-sitter failure (parse error, OOM, missing grammar
     // build) shouldn't kill the indexer — fall back to line
-    // windowing and keep going.
+    // windowing and keep going. Log the first few so a real
+    // misconfiguration (e.g. wasm files missing in deployment)
+    // is visible instead of silently degrading every file.
+    if (!_warnedGrammars.has(grammar)) {
+      _warnedGrammars.add(grammar);
+      console.warn(
+        `[rag/chunk-code] tree-sitter '${grammar}' unavailable; using line-window fallback. cause:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
     return lineWindowChunks(content, opts.filePath);
   }
 }
+
+/** One-warning-per-grammar so deployment misconfigs surface loudly once. */
+const _warnedGrammars = new Set<string>();
 
 /**
  * Pack a sequence of declaration ranges into chunks bounded by

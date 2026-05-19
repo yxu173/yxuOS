@@ -9,7 +9,13 @@ import {
 } from "@/lib/repos/github";
 
 import { formatRagError } from "../log";
-import { indexRepoFile, unindexRepo } from "./repo-file";
+import {
+  hashFileContent,
+  indexRepoFile,
+  loadRepoFileHashes,
+  prunePathsRemovedFromRepo,
+  unindexRepo,
+} from "./repo-file";
 
 /**
  * Whole-repo indexing orchestrator.
@@ -18,31 +24,60 @@ import { indexRepoFile, unindexRepo } from "./repo-file";
  * each kept file, embed + persist, and update progress + status on
  * the `project_repos` row so the UI can poll for progress.
  *
- * Design notes:
+ * # What changed vs the v1 design
  *
- * - **Streamed.** Files are processed one at a time as they fall
- *   out of the tar parser. Memory stays bounded.
+ * v1 wiped every prior chunk for the repo at the top of the pass
+ * and re-embedded every file from scratch. Embeddings dominate
+ * indexing cost (latency + $$$), and ~95% of files don't change
+ * between resyncs, so this was the single biggest waste in the
+ * pipeline. v2 (this file) is **incremental**:
  *
- * - **Progress is committed in batches.** Updating `indexed_files`
- *   after every single file would multiply DB writes by 25x with
- *   no UX benefit. We flush every PROGRESS_FLUSH_EVERY files or
- *   on terminal events.
+ *   1. **SHA short-circuit.** If `lastIndexedSha === HEAD`, the
+ *      branch hasn't moved \u2014 mark `ready` and return. The cost is
+ *      one cheap GitHub branch lookup; the benefit is a no-op
+ *      resync on an unchanged repo.
  *
- * - **Self-cleanup on full re-index.** Before the pass starts we
- *   wipe every prior chunk for this repo. Cheaper than diffing
- *   per-file and lets the per-file indexer stay free of
- *   "is-this-the-first-pass" branching. The catch: re-syncing a
- *   5k-file repo re-embeds 5k files even if nothing changed. We
- *   accept that cost in MVP; SHA-aware skipping is a follow-up.
+ *   2. **Per-file hash diff.** Before the tarball stream, load the
+ *      `path \u2192 fileContentHash` map for every file currently
+ *      indexed (one SQL query, restricted to `chunk_index = 0`).
+ *      During the stream, hash each decoded file; if the hash
+ *      matches what we already have, mark the path "seen" and skip
+ *      chunking + embedding entirely. Files that genuinely
+ *      changed (or are new) take the slow path through
+ *      `indexRepoFile`, which itself only re-embeds the chunks
+ *      whose content hash changed (the in-place dedupe layer in
+ *      `upsertKnowledge`).
  *
- * - **Status transitions:** `pending` → `indexing` → `ready` |
- *   `failed`. The UI never sees an inconsistent intermediate
- *   state because each transition is one SQL update.
+ *   3. **Seen-set prune.** After a successful pass, delete chunks
+ *      for any previously-indexed path that wasn't seen this round
+ *      (file deleted, renamed, or moved under an ignored dir).
+ *      One batched DELETE, scoped to the actually-removed paths
+ *      \u2014 never the whole repo.
  *
- * - **Errors are caught at the boundary.** Any throw inside the
- *   pass flips status to `failed` and records the error message;
- *   it does not propagate out. The caller is `after(...)` — there
- *   is no user-visible request waiting on this.
+ * Net effect: a resync of an unchanged 5k-file repo went from
+ * "re-embed all 5k files" to "one branch-SHA lookup, return". A
+ * resync after a 10-file change indexes 10 files.
+ *
+ * # Memory / streaming
+ *
+ * Tarball entries are still processed one at a time. The diff map
+ * is ~64 bytes per file (path + sha256 hex) which is bounded by
+ * the file-count cap (50k) \u2014 a few megabytes worst-case, fine.
+ *
+ * # Progress
+ *
+ * `indexedFiles` now counts files we KEPT in the brain after this
+ * pass (changed-and-embedded plus unchanged-and-reused), so the
+ * UI's progress bar reflects "files searchable now", not "files
+ * we embedded this run". A separate field could expose the
+ * cheap/expensive split if the UI ever wants to surface it.
+ *
+ * # Failure model
+ *
+ * On thrown error, status flips to `failed`, partial progress is
+ * preserved, and **no prune happens**. That keeps already-indexed
+ * files searchable even after a failed resync. The next attempt
+ * picks up where this one left off.
  */
 
 const PROGRESS_FLUSH_EVERY = 25;
@@ -85,32 +120,79 @@ export async function runRepoIndex(repoId: string): Promise<void> {
     );
   }
 
+  // ── SHA short-circuit ────────────────────────────────────
+  //
+  // Resolve HEAD up-front. If it matches what we already indexed,
+  // there's no work to do. We flip status to `ready` and refresh
+  // `lastSyncedAt` so the UI shows "synced just now" \u2014 same UX as
+  // a successful resync, but the cost is one branch lookup.
+  let headSha: string;
+  try {
+    headSha = await fetchBranchSha(
+      repo.owner,
+      repo.repo,
+      repo.branch,
+      repo.accessToken,
+    );
+  } catch (err) {
+    const msg =
+      err instanceof GitHubFetchError
+        ? `${err.kind}: ${err.message}`
+        : formatRagError(err);
+    console.error(`[rag/repo] ${repoId} SHA lookup failed:`, msg);
+    await db
+      .update(projectRepos)
+      .set({
+        status: "failed",
+        error: msg.slice(0, 500),
+        updatedAt: new Date(),
+      })
+      .where(eq(projectRepos.id, repoId));
+    return;
+  }
+
+  if (repo.lastIndexedSha && repo.lastIndexedSha === headSha) {
+    console.log(
+      `[rag/repo] ${repo.owner}/${repo.repo}@${repo.branch} unchanged (${headSha.slice(0, 7)}) — no-op resync`,
+    );
+    await db
+      .update(projectRepos)
+      .set({
+        status: "ready",
+        error: null,
+        lastSyncedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(projectRepos.id, repoId));
+    return;
+  }
+
   // Transition: pending|ready|failed → indexing
   await db
     .update(projectRepos)
     .set({
       status: "indexing",
       error: null,
-      totalFiles: 0,
-      indexedFiles: 0,
-      skippedFiles: 0,
       updatedAt: new Date(),
     })
     .where(eq(projectRepos.id, repoId));
 
-  // Clean slate. Cheap full-reset; we'll repopulate as files
-  // flow through.
-  await unindexRepo(repoId);
+  // ── Existing-file hash map ──────────────────────────────
+  //
+  // One round-trip. Empty map on first-pass / after a manual
+  // wipe \u2014 every file then takes the slow path, as expected.
+  const existingHashes = await loadRepoFileHashes(repo.id);
 
-  let kept = 0;
-  let skipped = 0;
+  // Track every path we encountered THIS pass so we can prune
+  // the difference (removed-from-repo paths) at the end.
+  const seenPaths = new Set<string>();
+
+  let kept = 0; // files searchable in the brain after this pass
+  let reused = 0; // subset of `kept` whose hash matched (no embed)
+  let embedded = 0; // subset of `kept` we had to re-embed
+  let skipped = 0; // files filtered out (binary, too_large, ignored dir, …)
   let failedFiles = 0;
   let sinceFlush = 0;
-  // Per-reason histogram of per-file failures — written into
-  // the row's `error` field on success so the operator can
-  // see at-a-glance whether the indexer is healthy or whether
-  // something systemic (e.g. "all chunks rejected by the
-  // embedder") is silently degrading the brain.
   const failureReasons: Record<string, number> = {};
 
   const flush = async () => {
@@ -127,15 +209,6 @@ export async function runRepoIndex(repoId: string): Promise<void> {
   };
 
   try {
-    // Resolve the tip SHA before streaming so we can persist it
-    // on success even if the tarball stream uses a different ref form.
-    const sha = await fetchBranchSha(
-      repo.owner,
-      repo.repo,
-      repo.branch,
-      repo.accessToken,
-    );
-
     await streamRepoFiles(
       repo.owner,
       repo.repo,
@@ -152,6 +225,24 @@ export async function runRepoIndex(repoId: string): Promise<void> {
             skipped++;
             return;
           }
+
+          const fileContentHash = hashFileContent(content);
+
+          // Fast path: hash matches the one we stored last pass.
+          // Nothing to do \u2014 the chunks are already in place with
+          // correct embeddings. Counting it as `kept` keeps the
+          // UI's "indexed files" number meaningful (= files
+          // searchable right now).
+          if (existingHashes.get(path) === fileContentHash) {
+            seenPaths.add(path);
+            kept++;
+            reused++;
+            sinceFlush++;
+            if (sinceFlush >= PROGRESS_FLUSH_EVERY) await flush();
+            return;
+          }
+
+          // Slow path: chunk + embed + upsert.
           const result = await indexRepoFile({
             teamId: repo.teamId,
             projectId: repo.projectId,
@@ -161,10 +252,14 @@ export async function runRepoIndex(repoId: string): Promise<void> {
             branch: repo.branch,
             path,
             content,
-            sha,
+            sha: headSha,
+            fileContentHash,
           });
+
           if (result.ok) {
+            seenPaths.add(path);
             kept++;
+            embedded++;
           } else {
             failedFiles++;
             // Log only the first few; otherwise a syntax-error
@@ -195,9 +290,17 @@ export async function runRepoIndex(repoId: string): Promise<void> {
       },
     );
 
-    // Terminal flush + status flip. If anything failed, surface
-    // a one-line histogram in `error` so the operator sees it
-    // without having to grep dev-server logs.
+    // ── Prune paths that disappeared from the repo ──────────
+    //
+    // Only runs on a clean pass (no thrown error). On partial
+    // failure we leave existing chunks alone so they stay
+    // searchable until the next successful resync.
+    const pruned = await prunePathsRemovedFromRepo(
+      repo.id,
+      existingHashes.keys(),
+      seenPaths,
+    );
+
     const failureSummary =
       failedFiles > 0
         ? `${failedFiles} file(s) failed: ${Object.entries(failureReasons)
@@ -212,7 +315,7 @@ export async function runRepoIndex(repoId: string): Promise<void> {
         indexedFiles: kept,
         skippedFiles: skipped,
         totalFiles: kept + skipped + failedFiles,
-        lastIndexedSha: sha,
+        lastIndexedSha: headSha,
         lastSyncedAt: new Date(),
         error: failureSummary,
         updatedAt: new Date(),
@@ -220,9 +323,10 @@ export async function runRepoIndex(repoId: string): Promise<void> {
       .where(eq(projectRepos.id, repoId));
 
     console.log(
-      `[rag/repo] indexed ${repo.owner}/${repo.repo}@${repo.branch} — ${kept} files, ${skipped} skipped, ${failedFiles} failed${
-        failureSummary ? ` (${failureSummary})` : ""
-      }`,
+      `[rag/repo] indexed ${repo.owner}/${repo.repo}@${repo.branch}` +
+        `@${headSha.slice(0, 7)} — ${kept} files (${embedded} embedded, ` +
+        `${reused} reused), ${pruned} pruned, ${skipped} skipped, ` +
+        `${failedFiles} failed${failureSummary ? ` (${failureSummary})` : ""}`,
     );
   } catch (err) {
     const msg =
@@ -258,6 +362,33 @@ export async function markRepoPending(repoId: string): Promise<void> {
     .set({
       status: "pending",
       error: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(projectRepos.id, repoId));
+}
+
+/**
+ * Force a full re-index from scratch. Wipes every chunk for the
+ * repo and clears `lastIndexedSha` so the next `runRepoIndex` call
+ * takes the slow path on every file. Use sparingly \u2014 the normal
+ * resync is now incremental and almost always cheaper.
+ *
+ * Useful when:
+ *   - The embedding model changes (chunk metadata becomes stale).
+ *   - The chunker logic changes in a way that affects boundaries.
+ *   - A user reports stale search hits and wants a guaranteed reset.
+ */
+export async function forceFullReindex(repoId: string): Promise<void> {
+  await unindexRepo(repoId);
+  await db
+    .update(projectRepos)
+    .set({
+      lastIndexedSha: null,
+      status: "pending",
+      error: null,
+      indexedFiles: 0,
+      skippedFiles: 0,
+      totalFiles: 0,
       updatedAt: new Date(),
     })
     .where(eq(projectRepos.id, repoId));

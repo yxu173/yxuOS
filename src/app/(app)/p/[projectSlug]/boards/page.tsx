@@ -1,7 +1,4 @@
-import { and, eq } from "drizzle-orm";
-
 import { createBoard } from "@/app/(app)/boards/actions";
-import { listBoardFoldersForProject } from "@/app/(app)/boards/folder-actions";
 import { BoardFolderTree } from "@/components/board-folders/folder-tree";
 import {
   buildFolderTree,
@@ -9,8 +6,10 @@ import {
 } from "@/components/board-folders/types";
 import { Button } from "@/components/ui/button";
 import { AppTopBar } from "@/components/workspaces/app-top-bar";
-import { db } from "@/db";
-import { boards } from "@/db/schema";
+import {
+  listBoardFoldersForProjectCached,
+  listBoardsForProjectIndex,
+} from "@/lib/boards/listing";
 import { requireActiveProject } from "@/lib/permissions";
 import { listProjectsForTeam } from "@/lib/projects";
 import { listUserTeams } from "@/lib/teams";
@@ -26,30 +25,10 @@ export default async function ProjectBoardsIndexPage({ params }: PageProps) {
     await requireActiveProject(projectSlug);
 
   const [boardRows, teams, projects, folderRows] = await Promise.all([
-    db.query.boards.findMany({
-      where: and(
-        eq(boards.teamId, teamId),
-        eq(boards.projectId, projectId),
-      ),
-      columns: {
-        id: true,
-        name: true,
-        folderId: true,
-        updatedAt: true,
-      },
-      with: {
-        owner: {
-          columns: {
-            name: true,
-            username: true,
-            displayUsername: true,
-          },
-        },
-      },
-    }),
+    listBoardsForProjectIndex(teamId, projectId),
     listUserTeams(session.user.id),
     listProjectsForTeam(teamId),
-    listBoardFoldersForProject(projectId),
+    listBoardFoldersForProjectCached(projectId),
   ]);
 
   const boardEntries: Array<FolderTreeBoard & { folderId: string | null }> =
@@ -58,12 +37,7 @@ export default async function ProjectBoardsIndexPage({ params }: PageProps) {
       name: row.name,
       updatedAt: row.updatedAt,
       folderId: row.folderId,
-      creator: row.owner
-        ? {
-            name: row.owner.name,
-            username: row.owner.displayUsername ?? row.owner.username,
-          }
-        : null,
+      creator: row.creator,
     }));
 
   const { roots, rootBoards } = buildFolderTree({

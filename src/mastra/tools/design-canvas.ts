@@ -947,6 +947,242 @@ export const updateComponentTool = createTool({
   ),
 });
 
+/* ─── wrap_nodes ───────────────────────────────────────── */
+
+export const wrapNodesTool = createTool({
+  id: "wrap_nodes",
+  description:
+    "Wrap N adjacent siblings of the same parent in a fresh container (div/section/card/frame/nav). The new container takes the position of the first wrapped sibling and inherits the optional `style` you pass. Use for `group these three cards into a section`, `wrap the email + password inputs in a card`, `nest these features under one div with flex column`. The wrapped nodes must be contiguous siblings of one parent — if they aren't, call `move_nodes` first to put them next to each other.",
+  inputSchema: z.object({
+    artboardId: z.string(),
+    nodeIds: z
+      .array(z.string())
+      .min(1)
+      .describe(
+        "Ids of the nodes to wrap. Must be contiguous siblings of one parent.",
+      ),
+    containerType: z
+      .enum(["div", "section", "card", "frame", "nav"])
+      .describe("Type of container to create."),
+    style: cssSchema.describe(
+      "Optional inline style for the new container (e.g. `{ display: 'flex', flexDirection: 'column', gap: 16, padding: 24 }`).",
+    ),
+    idempotencyKey: idempotencyKeyField,
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      artboardId: z.string(),
+      containerId: z.string(),
+      wrappedNodeIds: z.array(z.string()),
+    }),
+  ),
+});
+
+/* ─── unwrap_node ────────────────────────────────────── */
+
+export const unwrapNodeTool = createTool({
+  id: "unwrap_node",
+  description:
+    "Remove a container and promote its children into its parent at the same position. Use for `flatten this section`, `the card is redundant — drop the wrapper`, `un-group these`. Inverse of `wrap_nodes`. Refuses on the artboard root or on a leaf node.",
+  inputSchema: z.object({
+    artboardId: z.string(),
+    nodeId: z
+      .string()
+      .describe("Id of the container to dissolve."),
+    idempotencyKey: idempotencyKeyField,
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      artboardId: z.string(),
+      promotedNodeIds: z.array(z.string()),
+    }),
+  ),
+});
+
+/* ─── replace_node ───────────────────────────────────── */
+
+export const replaceNodeTool = createTool({
+  id: "replace_node",
+  description:
+    "Atomically swap a node (and its entire subtree) with a brand-new DesignNode. Use when the new shape can't be expressed by `patch_node` (which only mutates fields of the same type) — e.g. `turn this button into an image`, `swap this empty placeholder with a real testimonials card`, `replace this divider with a proper section`. Refuses to replace the artboard root — use `update_artboard` for that. The replacement is validated structurally and run through id assignment so every node ends up with a stable id.",
+  inputSchema: z.object({
+    artboardId: z.string(),
+    nodeId: z
+      .string()
+      .describe("Id of the node to replace (and its entire subtree)."),
+    replacement: designNodeSchema.describe(
+      "Full DesignNode tree to drop in. Will be validated before commit.",
+    ),
+    idempotencyKey: idempotencyKeyField,
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      artboardId: z.string(),
+      newNodeId: z.string(),
+    }),
+  ),
+});
+
+/* ─── set_node_visibility ──────────────────────────────── */
+
+export const setNodeVisibilityTool = createTool({
+  id: "set_node_visibility",
+  description:
+    "Hide or show a node without deleting it. Hidden nodes stay in the tree (ids stable, layers panel still shows them dimmed) but the renderer skips them. Use for `hide this section to compare without it`, `try the page without the FAQ`, `restore the testimonials`. Cheaper than delete+re-add when iterating on layout.",
+  inputSchema: z.object({
+    artboardId: z.string(),
+    nodeId: z.string(),
+    hidden: z
+      .boolean()
+      .describe("true = hide; false = show."),
+    idempotencyKey: idempotencyKeyField,
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      artboardId: z.string(),
+      nodeId: z.string(),
+      hidden: z.boolean(),
+    }),
+  ),
+});
+
+/* ─── align_nodes ──────────────────────────────────────── */
+
+export const alignNodesTool = createTool({
+  id: "align_nodes",
+  description:
+    "Align and/or distribute nodes inside a flex container. `align` writes `alignSelf` on each target (cross-axis alignment); `distribute` writes `justifyContent` on the parent (main-axis spacing). Use for `center these three buttons`, `right-align the metric numbers`, `distribute these icons evenly`. Combine both in one call for `center and evenly space`. If neither field is provided, returns `invalid_input`.",
+  inputSchema: z.object({
+    artboardId: z.string(),
+    nodeIds: z
+      .array(z.string())
+      .describe(
+        "Ids to apply `align` to. Ignored when only `distribute` is set.",
+      ),
+    align: z
+      .enum(["start", "center", "end", "stretch"])
+      .optional()
+      .describe(
+        "Cross-axis alignment via `alignSelf`. start=flex-start, end=flex-end.",
+      ),
+    distributeParentId: z
+      .string()
+      .optional()
+      .describe(
+        "Container whose children get `justifyContent`. Defaults to the artboard root.",
+      ),
+    distribute: z
+      .enum(["space-between", "space-around", "space-evenly"])
+      .optional()
+      .describe("Main-axis spacing for the parent's children."),
+    idempotencyKey: idempotencyKeyField,
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      artboardId: z.string(),
+      alignedNodeIds: z.array(z.string()),
+      distributedParentId: z.string().nullable(),
+    }),
+  ),
+});
+
+/* ─── audit_design ─────────────────────────────────────── */
+
+export const auditDesignTool = createTool({
+  id: "audit_design",
+  description:
+    "Critique your own work against design rules: placeholder copy (Lorem ipsum / \"Button 1\" / etc.), missing alt text on images, contrast ratio below WCAG AA (4.5:1) on text, oversized button labels (>30 chars), tiny text (<12px), cramped cards (<12px padding), unlabelled inputs, duplicate h1s, empty containers. Returns a flat list of `{ code, severity, nodeId, message, hint }` per artboard. ALWAYS call this right after composing a complex artboard — then sort by `severity: error` first and bulk-fix with `patch_nodes`. The agent's main self-correction loop. Cheaper than `screenshot_artboard` for catching design rule violations the JSON tree CAN see; pair with screenshot for visual issues (overflow, alignment) that the audit can't.",
+  inputSchema: z.object({
+    artboardId: z
+      .string()
+      .optional()
+      .describe(
+        "Audit one artboard. Omit to audit every artboard on the canvas.",
+      ),
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      artboards: z.array(
+        z.object({
+          artboardId: z.string(),
+          artboardName: z.string(),
+          issues: z.array(
+            z.object({
+              code: z.string(),
+              severity: z.enum(["error", "warning", "info"]),
+              nodeId: z.string().nullable(),
+              message: z.string(),
+              hint: z.string().optional(),
+            }),
+          ),
+        }),
+      ),
+      totalIssues: z.number(),
+      summary: z.object({
+        error: z.number(),
+        warning: z.number(),
+        info: z.number(),
+      }),
+    }),
+  ),
+});
+
+/* ─── arrange_artboards ────────────────────────────────── */
+
+export const arrangeArtboardsTool = createTool({
+  id: "arrange_artboards",
+  description:
+    "Tidy the canvas by snapping artboards into a clean grid, row, or column. Use for `lay these out left-to-right as a flow`, `stack these vertically`, `tidy this mess into a grid`. Defaults: 80-px gap, origin = top-left of the existing cluster (so the camera doesn't yank to (0,0)). Locked artboards are left alone. Pair with `connect_artboards` for a multi-step flow that reads cleanly.",
+  inputSchema: z.object({
+    strategy: z
+      .enum(["grid", "row", "column"])
+      .describe(
+        "row=horizontal line left→right; column=vertical line top→bottom; grid=square-ish row-major grid.",
+      ),
+    artboardIds: z
+      .array(z.string())
+      .optional()
+      .describe("Restrict to these artboards. Defaults to all."),
+    gap: z
+      .number()
+      .min(0)
+      .max(400)
+      .optional()
+      .describe("Gap in px between artboards. Default 80."),
+    originX: z.number().optional(),
+    originY: z.number().optional(),
+    idempotencyKey: idempotencyKeyField,
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      movedArtboardIds: z.array(z.string()),
+    }),
+  ),
+});
+
+/* ─── set_artboard_background ─────────────────────────── */
+
+export const setArtboardBackgroundTool = createTool({
+  id: "set_artboard_background",
+  description:
+    "Set the artboard's page background (the surface behind every node). Use for `dark mode this page` (`#0a0a0a`), `give this a soft tint`, `move to a brand background`. Any CSS color, gradient, or `var(--…)` string is accepted. To re-skin every accent on the page in one stroke, prefer `apply_theme` / `set_tokens` instead — background is just the page color.",
+  inputSchema: z.object({
+    artboardId: z.string(),
+    background: z
+      .string()
+      .describe(
+        "CSS color or gradient. e.g. `#0a0a0a`, `linear-gradient(180deg, #fff, #fafafa)`.",
+      ),
+    idempotencyKey: idempotencyKeyField,
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      artboardId: z.string(),
+      background: z.string(),
+    }),
+  ),
+});
+
 export const designCanvasTools = {
   query_canvas: queryCanvasTool,
   add_artboard: addArtboardTool,
@@ -961,6 +1197,15 @@ export const designCanvasTools = {
   delete_nodes: deleteNodesTool,
   move_nodes: moveNodesTool,
   duplicate_node: duplicateNodeTool,
+  // World-class designer power-ups: structural refactor + self-critique.
+  wrap_nodes: wrapNodesTool,
+  unwrap_node: unwrapNodeTool,
+  replace_node: replaceNodeTool,
+  set_node_visibility: setNodeVisibilityTool,
+  align_nodes: alignNodesTool,
+  audit_design: auditDesignTool,
+  arrange_artboards: arrangeArtboardsTool,
+  set_artboard_background: setArtboardBackgroundTool,
   screenshot_artboard: screenshotArtboardTool,
   apply_theme: applyThemeTool,
   list_tokens: listTokensTool,

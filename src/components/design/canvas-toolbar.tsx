@@ -211,8 +211,13 @@ export function CanvasToolbar() {
               [
                 "desktop",
                 "laptop",
+                "macbook-16",
+                "ultrawide",
                 "tablet",
+                "ipad-pro",
                 "mobile",
+                "mobile-landscape",
+                "watch",
               ] as const
             ).map((preset) => (
               <DropdownMenuItem

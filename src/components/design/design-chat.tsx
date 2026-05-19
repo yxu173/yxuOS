@@ -30,7 +30,10 @@ import { cn } from "@/lib/utils";
 import {
   executeAddArtboard,
   executeAddNodes,
+  executeAlignNodes,
   executeApplyTheme,
+  executeArrangeArtboards,
+  executeAuditDesign,
   executeDeleteArtboard,
   executeDeleteNodes,
   executeDuplicateArtboard,
@@ -48,11 +51,16 @@ import {
   executePatchNode,
   executePatchNodes,
   executeQueryCanvas,
+  executeReplaceNode,
   executeSaveAttachmentAsAsset,
   executeScreenshotArtboard,
+  executeSetArtboardBackground,
+  executeSetNodeVisibility,
   executeSetTokens,
+  executeUnwrapNode,
   executeUpdateArtboard,
   executeUpdateComponent,
+  executeWrapNodes,
   type ChatFileLookup,
   type TokenReadContext,
   type TokenWriteContext,
@@ -94,6 +102,14 @@ const TOOL_LABELS: Record<string, string> = {
   update_component: "Updating component",
   list_components: "Reading component library",
   list_assets: "Reading uploaded assets",
+  wrap_nodes: "Wrapping in container",
+  unwrap_node: "Unwrapping container",
+  replace_node: "Replacing element",
+  set_node_visibility: "Toggling visibility",
+  align_nodes: "Aligning elements",
+  audit_design: "Auditing design",
+  arrange_artboards: "Arranging artboards",
+  set_artboard_background: "Updating background",
 };
 
 /**
@@ -389,6 +405,68 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
               break;
             case "list_flows":
               emit(executeListFlows());
+              break;
+            case "wrap_nodes":
+              emit(
+                executeWrapNodes(
+                  toolCall.input as Parameters<typeof executeWrapNodes>[0],
+                ),
+              );
+              break;
+            case "unwrap_node":
+              emit(
+                executeUnwrapNode(
+                  toolCall.input as Parameters<typeof executeUnwrapNode>[0],
+                ),
+              );
+              break;
+            case "replace_node":
+              emit(
+                executeReplaceNode(
+                  toolCall.input as Parameters<typeof executeReplaceNode>[0],
+                ),
+              );
+              break;
+            case "set_node_visibility":
+              emit(
+                executeSetNodeVisibility(
+                  toolCall.input as Parameters<
+                    typeof executeSetNodeVisibility
+                  >[0],
+                ),
+              );
+              break;
+            case "align_nodes":
+              emit(
+                executeAlignNodes(
+                  toolCall.input as Parameters<typeof executeAlignNodes>[0],
+                ),
+              );
+              break;
+            case "audit_design":
+              emit(
+                executeAuditDesign(
+                  toolCall.input as Parameters<typeof executeAuditDesign>[0],
+                ),
+              );
+              break;
+            case "arrange_artboards":
+              emit(
+                executeArrangeArtboards(
+                  toolCall.input as Parameters<
+                    typeof executeArrangeArtboards
+                  >[0],
+                ),
+              );
+              break;
+            case "set_artboard_background":
+              emit(
+                executeSetArtboardBackground(
+                  toolCall.input as Parameters<
+                    typeof executeSetArtboardBackground
+                  >[0],
+                ),
+              );
               break;
             default:
               fatal(`Unknown tool: ${toolCall.toolName}`);
@@ -1277,6 +1355,39 @@ function describeToolResult(
       const count = data?.flows?.length ?? 0;
       return `Read flows · ${count}`;
     }
+    case "wrap_nodes":
+      return data?.wrappedNodeIds
+        ? `Wrapped ${data.wrappedNodeIds.length} into ${input?.containerType ?? "container"}`
+        : "Wrapped elements";
+    case "unwrap_node":
+      return data?.promotedNodeIds
+        ? `Unwrapped · promoted ${data.promotedNodeIds.length}`
+        : "Unwrapped container";
+    case "replace_node":
+      return "Replaced element";
+    case "set_node_visibility":
+      return input?.hidden ? "Hid element" : "Showed element";
+    case "align_nodes": {
+      const align = input?.align ? `align ${input.align}` : null;
+      const dist = input?.distribute ? input.distribute : null;
+      const bits = [align, dist].filter(Boolean);
+      return `Aligned · ${bits.join(", ") || "applied"}`;
+    }
+    case "audit_design": {
+      const total = data?.totalIssues ?? 0;
+      const e = data?.summary?.error ?? 0;
+      const w = data?.summary?.warning ?? 0;
+      if (total === 0) return "Audit · no issues";
+      return `Audit · ${e} error${e === 1 ? "" : "s"}, ${w} warning${w === 1 ? "" : "s"}`;
+    }
+    case "arrange_artboards": {
+      const count = data?.movedArtboardIds?.length ?? 0;
+      return `Arranged ${count} as ${input?.strategy ?? "grid"}`;
+    }
+    case "set_artboard_background":
+      return data?.background
+        ? `Background → ${data.background.slice(0, 16)}`
+        : "Set background";
     default:
       return null;
   }

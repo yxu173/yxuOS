@@ -6,6 +6,13 @@ import { nanoid } from "nanoid";
 import { db } from "@/db";
 import { projects, taskBoards } from "@/db/schema";
 
+import { cached, cacheKey, invalidateTag } from "./cache";
+
+/** Tag every cache entry derived from a team's project list. */
+const projectListTag = (teamId: string) => `team:${teamId}:projects`;
+/** Tag every cache entry derived from a project's task boards. */
+const taskBoardsTag = (projectId: string) => `project:${projectId}:task-boards`;
+
 const DEFAULT_PROJECT_SLUG = "workspace";
 const DEFAULT_PROJECT_NAME = "Workspace";
 
@@ -19,11 +26,18 @@ const DEFAULT_TASK_BOARD_NAME = "All tasks";
 export async function ensureDefaultTaskBoard(
   projectId: string,
 ): Promise<{ id: string; name: string }> {
-  const existing = await db.query.taskBoards.findFirst({
-    where: eq(taskBoards.projectId, projectId),
-    orderBy: asc(taskBoards.createdAt),
-    columns: { id: true, name: true },
-  });
+  // Hot path: every tasks page load enters here. Cache the lookup
+  // (60s TTL, bust whenever a task board is created/renamed/deleted).
+  const existing = await cached(
+    cacheKey("task-board", projectId, "first"),
+    { ttl: 60, tags: [taskBoardsTag(projectId)] },
+    async () =>
+      db.query.taskBoards.findFirst({
+        where: eq(taskBoards.projectId, projectId),
+        orderBy: asc(taskBoards.createdAt),
+        columns: { id: true, name: true },
+      }),
+  );
   if (existing) return existing;
 
   const id = nanoid();
@@ -63,12 +77,20 @@ export interface ProjectListItem {
 export async function listProjectsForTeam(
   teamId: string,
 ): Promise<ProjectListItem[]> {
-  const rows = await db.query.projects.findMany({
-    where: and(eq(projects.teamId, teamId), eq(projects.archived, false)),
-    orderBy: asc(projects.name),
-    columns: { id: true, slug: true, name: true, color: true },
-  });
-  return rows;
+  // The project switcher in the top bar re-fetches this on EVERY page,
+  // and the list rarely changes — ideal cache candidate. 5 min TTL is
+  // generous because writes (create/rename/archive) bust the tag
+  // immediately via `invalidateTag(projectListTag(teamId))`.
+  return cached(
+    cacheKey("projects", teamId),
+    { ttl: 300, tags: [projectListTag(teamId)] },
+    async () =>
+      db.query.projects.findMany({
+        where: and(eq(projects.teamId, teamId), eq(projects.archived, false)),
+        orderBy: asc(projects.name),
+        columns: { id: true, slug: true, name: true, color: true },
+      }),
+  );
 }
 
 /* ─── create project (server action) ─────────────── */
@@ -158,6 +180,10 @@ export async function createProject(
     subjectName: trimmedName,
   });
 
+  // Bust the team's project-list cache so the new project shows up
+  // immediately in the switcher and `requireActiveProject` lookups.
+  await invalidateTag(projectListTag(teamId));
+
   revalidatePath(`/p/${candidateSlug}`);
   redirect(`/p/${candidateSlug}/boards`);
 }
@@ -197,6 +223,8 @@ export async function renameProject(
     subjectId: projectIdToRename,
     subjectName: trimmed,
   });
+
+  await invalidateTag(projectListTag(teamId));
 
   revalidatePath(`/p/${target.slug}`);
 }
@@ -240,6 +268,8 @@ export async function archiveProject(
     subjectId: projectIdToArchive,
     subjectName: target.name,
   });
+
+  await invalidateTag(projectListTag(teamId));
 
   revalidatePath(`/p/${target.slug}`);
   revalidatePath("/");

@@ -1,6 +1,17 @@
+import { createHash } from "node:crypto";
+
+import { and, eq, like, sql } from "drizzle-orm";
+
+import { db } from "@/db";
+import { projectKnowledge } from "@/db/schema/project-knowledge";
+
 import { chunkCodeFile } from "../chunk-code";
 import { formatRagError } from "../log";
-import { deleteKnowledgeForSource, upsertKnowledge } from "../upsert";
+import {
+  deleteKnowledgeForRepoPaths,
+  deleteKnowledgeForSource,
+  upsertKnowledge,
+} from "../upsert";
 
 /**
  * Per-file RAG indexer for **imported GitHub repos**.
@@ -46,11 +57,23 @@ export interface RepoFileIndexInput {
   content: string;
   /** Branch tip SHA the file was read at. */
   sha: string | null;
+  /**
+   * SHA-256 of the decoded file content. The orchestrator computes
+   * this once and passes it through so it can be stored on every
+   * chunk's metadata — enabling O(1) skip on the next resync when
+   * the file hasn't changed.
+   */
+  fileContentHash: string;
 }
 
 export type RepoFileIndexResult =
   | { ok: true; chunkCount: number }
   | { ok: false; reason: string };
+
+/** SHA-256 hex of a file's decoded UTF-8 content. */
+export function hashFileContent(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
 
 export function buildRepoFileSourceId(repoId: string, filePath: string): string {
   return `${repoId}:${filePath}`;
@@ -99,6 +122,10 @@ export async function indexRepoFile(
         branch: input.branch,
         path: input.path,
         sha: input.sha,
+        // Persisted on every chunk; the orchestrator queries
+        // `chunk_index = 0` rows on the next resync to decide
+        // whether the file changed without re-chunking it.
+        fileContentHash: input.fileContentHash,
       },
       chunks,
     });
@@ -110,14 +137,13 @@ export async function indexRepoFile(
 
 /**
  * Wipe every chunk for every file under a repo. Called when the
- * user deletes a repo or kicks off a forced re-sync that wants
- * to start clean.
+ * user deletes a repo. **No longer called at the start of an
+ * index pass** — the orchestrator now diffs by `fileContentHash`
+ * and prunes only the paths that actually disappeared, so a
+ * resync of an unchanged repo is essentially free.
  */
 export async function unindexRepo(repoId: string): Promise<void> {
   try {
-    // We can't use `deleteKnowledgeForSource` directly because
-    // each file has a different `sourceId`. The repo-wide delete
-    // is implemented in `../upsert.ts` as `deleteKnowledgeForRepoFiles`.
     const { deleteKnowledgeForRepoFiles } = await import("../upsert");
     await deleteKnowledgeForRepoFiles(repoId);
   } catch (err) {
@@ -126,4 +152,70 @@ export async function unindexRepo(repoId: string): Promise<void> {
       formatRagError(err),
     );
   }
+}
+
+/**
+ * Load the per-file content hash for every file currently indexed
+ * under `repoId`. Returns a `path → hash` map the orchestrator uses
+ * to decide which files actually changed since last pass.
+ *
+ * We read `chunk_index = 0` only because every chunk of one file
+ * carries the same `fileContentHash` in metadata, so chunk 0 is a
+ * unique row-per-file. That collapses the result set from O(chunks)
+ * (~50k for a 5k-file repo) to O(files) (~5k) without needing a
+ * `DISTINCT` aggregate — the existing `(sourceType, sourceId,
+ * chunkIndex)` unique index makes this a cheap range scan.
+ *
+ * Files indexed before the `fileContentHash` field landed will
+ * return `null`. The orchestrator treats `null` as "unknown → must
+ * re-index", which is the correct conservative behaviour for the
+ * one-shot migration window.
+ */
+export async function loadRepoFileHashes(
+  repoId: string,
+): Promise<Map<string, string | null>> {
+  const rows = await db
+    .select({
+      sourceId: projectKnowledge.sourceId,
+      // `metadata` is jsonb; extract the text field directly so we
+      // don't drag the whole JSON over the wire for 5k rows.
+      hash: sql<string | null>`(${projectKnowledge.metadata} ->> 'fileContentHash')`,
+    })
+    .from(projectKnowledge)
+    .where(
+      and(
+        eq(projectKnowledge.sourceType, "repo_file"),
+        like(projectKnowledge.sourceId, `${repoId}:%`),
+        eq(projectKnowledge.chunkIndex, 0),
+      ),
+    );
+
+  const out = new Map<string, string | null>();
+  for (const row of rows) {
+    const parsed = parseRepoFileSourceId(row.sourceId);
+    if (!parsed) continue;
+    out.set(parsed.path, row.hash ?? null);
+  }
+  return out;
+}
+
+/**
+ * After a pass, remove chunks for any path that disappeared from
+ * the repo (file deleted, renamed, or moved into an ignored
+ * directory). Takes the set of paths actually seen during this
+ * pass and the map of paths previously indexed; deletes the
+ * difference in one batch.
+ */
+export async function prunePathsRemovedFromRepo(
+  repoId: string,
+  previousPaths: Iterable<string>,
+  seenPaths: Set<string>,
+): Promise<number> {
+  const toRemove: string[] = [];
+  for (const path of previousPaths) {
+    if (!seenPaths.has(path)) toRemove.push(path);
+  }
+  if (toRemove.length === 0) return 0;
+  await deleteKnowledgeForRepoPaths(repoId, toRemove);
+  return toRemove.length;
 }

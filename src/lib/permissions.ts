@@ -1,11 +1,23 @@
 import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
+import { cache as reactCache } from "react";
 
 import { db } from "@/db";
 import { member, projects } from "@/db/schema";
 
 import { auth } from "./auth";
+import { cached, cacheKey } from "./cache";
 import { ensureDefaultProject } from "./projects";
+
+/**
+ * TTLs are deliberately short. Permissions are the one cache where
+ * staleness has security implications — a 30 s window between a role
+ * change and the cache catching up is acceptable, but minutes isn't.
+ * Invalidations on writes (in `teams/[teamId]/actions.ts`) bring the
+ * effective freshness window to ~0 for the team that issued the write.
+ */
+const MEMBER_TTL = 30; // seconds
+const PROJECT_TTL = 60; // seconds
 
 /* ─── Roles ─────────────────────────────────────────── */
 
@@ -23,7 +35,13 @@ function rolePassesMinimum(role: TeamRole, minRole: TeamRole): boolean {
 
 /* ─── Helpers ───────────────────────────────────────── */
 
-async function requireSession() {
+/**
+ * `getSession` reads the cookie, validates the session, and may hit
+ * the DB. Wrapping in `react.cache()` means a layout + page + N
+ * server components on the same render all share ONE lookup — a huge
+ * speed win on its own, even before Redis enters the picture.
+ */
+const requireSession = reactCache(async () => {
   const session = await auth.api.getSession({
     headers: await headers(),
   });
@@ -31,13 +49,28 @@ async function requireSession() {
     throw new Error("Unauthorized");
   }
   return session;
-}
+});
 
 async function requireMemberRow(userId: string, teamId: string) {
-  const memberRow = await db.query.member.findFirst({
-    where: and(eq(member.userId, userId), eq(member.organizationId, teamId)),
-    columns: { id: true, role: true },
-  });
+  // Cache key chosen so role updates can bust `member:user:${userId}`
+  // (when one user's role changes) OR `team:${teamId}:members` (when
+  // members are added / removed in bulk).
+  const key = cacheKey("member", userId, teamId);
+  const memberRow = await cached(
+    key,
+    {
+      ttl: MEMBER_TTL,
+      tags: [`member:user:${userId}`, `team:${teamId}:members`],
+    },
+    async () =>
+      db.query.member.findFirst({
+        where: and(
+          eq(member.userId, userId),
+          eq(member.organizationId, teamId),
+        ),
+        columns: { id: true, role: true },
+      }),
+  );
   if (!memberRow) {
     throw new Error("Not a member of this team");
   }
@@ -60,10 +93,18 @@ export async function requireActiveTeam(minRole: TeamRole = "member") {
   let activeOrgId = session.session.activeOrganizationId;
 
   if (!activeOrgId) {
-    const firstMember = await db.query.member.findFirst({
-      where: eq(member.userId, session.user.id),
-      columns: { organizationId: true },
-    });
+    const firstMember = await cached(
+      cacheKey("member", session.user.id, "first"),
+      {
+        ttl: MEMBER_TTL,
+        tags: [`member:user:${session.user.id}`],
+      },
+      async () =>
+        db.query.member.findFirst({
+          where: eq(member.userId, session.user.id),
+          columns: { organizationId: true },
+        }),
+    );
     if (!firstMember) {
       throw new Error(
         "No active team. Sign out and back in to claim your personal team.",
@@ -150,10 +191,21 @@ export async function requireActiveProject(
     };
   }
 
-  const project = await db.query.projects.findFirst({
-    where: and(eq(projects.teamId, team.teamId), eq(projects.slug, slug)),
-    columns: { id: true, slug: true, name: true, archived: true },
-  });
+  const project = await cached(
+    cacheKey("project", team.teamId, slug),
+    {
+      ttl: PROJECT_TTL,
+      tags: [`team:${team.teamId}:projects`],
+    },
+    async () =>
+      db.query.projects.findFirst({
+        where: and(
+          eq(projects.teamId, team.teamId),
+          eq(projects.slug, slug),
+        ),
+        columns: { id: true, slug: true, name: true, archived: true },
+      }),
+  );
   if (!project) {
     throw new Error(`Project "${slug}" not found in this team`);
   }

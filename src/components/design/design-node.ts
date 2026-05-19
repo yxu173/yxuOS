@@ -32,6 +32,20 @@ interface BaseNode {
   id?: string;
   /** Inline styles. Take precedence over the node-type defaults. */
   style?: CSSProps;
+  /**
+   * Hide the node (and its subtree) from the rendered canvas without
+   * deleting it. Lets the agent (and designers) stash variants /
+   * exploration states without destructive ops. Defaults to false.
+   * Renderer returns `null` for hidden nodes; layers panel still
+   * shows them dimmed.
+   */
+  hidden?: boolean;
+  /**
+   * Optional human-readable name. Used by the layers panel / inspector
+   * breadcrumbs so the agent can save a saved nav as "Top nav" without
+   * extracting it as a component yet.
+   */
+  name?: string;
 }
 
 export interface DivNode extends BaseNode {

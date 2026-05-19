@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { boardFolders, boards } from "@/db/schema";
 import { logActivity } from "@/lib/activity";
+import { bustProjectBoards } from "@/lib/boards/listing";
 import { requireActiveProject } from "@/lib/permissions";
 
 const MAX_NAME = 80;
@@ -72,6 +73,8 @@ export async function createBoardFolder(
     metadata: { kind: "folder", parentFolderId: input.parentFolderId ?? null },
   });
 
+  await bustProjectBoards(projectId);
+
   revalidatePath(`/p/${projectSlug}/boards`);
   return { id: created.id };
 }
@@ -117,6 +120,8 @@ export async function renameBoardFolder(
     metadata: { kind: "folder" },
   });
 
+  await bustProjectBoards(projectId);
+
   revalidatePath(`/p/${projectSlug}/boards`);
 }
 
@@ -148,6 +153,8 @@ export async function deleteBoardFolder(folderId: string): Promise<void> {
     subjectName: folder.name,
     metadata: { kind: "folder" },
   });
+
+  await bustProjectBoards(projectId);
 
   revalidatePath(`/p/${projectSlug}/boards`);
 }
@@ -190,6 +197,8 @@ export async function moveBoardFolder(
     subjectName: folder.name,
     metadata: { kind: "folder", movedTo: parentFolderId },
   });
+
+  await bustProjectBoards(projectId);
 
   revalidatePath(`/p/${projectSlug}/boards`);
 }
@@ -251,6 +260,8 @@ export async function moveBoardToFolder(
     subjectName: board.name,
     metadata: { movedToFolderId: folderId },
   });
+
+  await bustProjectBoards(projectId);
 
   revalidatePath(`/p/${projectSlug}/boards`);
 }

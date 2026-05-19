@@ -7,7 +7,20 @@ import { nanoid } from "nanoid";
 import { db } from "@/db";
 import { member, organization, user } from "@/db/schema";
 import { logActivity } from "@/lib/activity";
+import { invalidateTag } from "@/lib/cache";
 import { requireMembership, type TeamRole } from "@/lib/permissions";
+
+/**
+ * Bust every cache entry tied to a team's membership rows. Use this
+ * after add / remove / role-change so the next `requireMembership`
+ * lookup sees the change instead of waiting for the 30 s TTL.
+ */
+async function bustTeamMembership(teamId: string, userId: string) {
+  await invalidateTag([
+    `team:${teamId}:members`,
+    `member:user:${userId}`,
+  ]);
+}
 
 const ASSIGNABLE_ROLES = new Set<TeamRole>(["owner", "admin", "member"]);
 
@@ -85,6 +98,8 @@ export async function addMemberByUsername(
     metadata: { role, username },
   });
 
+  await bustTeamMembership(teamId, target.id);
+
   revalidatePath(`/teams/${teamId}`);
   return { memberId: created.id, userName: target.name };
 }
@@ -149,8 +164,11 @@ export async function removeTeamMember(teamId: string, memberId: string) {
     metadata: { role: targetRole },
   });
 
+  await bustTeamMembership(teamId, target.userId);
+
   revalidatePath(`/teams/${teamId}`);
 }
+
 
 /* ─── change role ─────────────────────────────────────── */
 
@@ -194,6 +212,8 @@ export async function updateMemberRole(
     .update(member)
     .set({ role })
     .where(and(eq(member.id, memberId), eq(member.organizationId, teamId)));
+
+  await bustTeamMembership(teamId, target.userId);
 
   revalidatePath(`/teams/${teamId}`);
 }
@@ -301,6 +321,8 @@ export async function leaveTeam(teamId: string) {
   await db
     .delete(member)
     .where(and(eq(member.id, memberId), eq(member.organizationId, teamId)));
+
+  await bustTeamMembership(teamId, session.user.id);
 
   await logActivity({
     teamId,

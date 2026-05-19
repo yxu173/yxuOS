@@ -1,12 +1,13 @@
 import { toAISdkMessages } from "@mastra/ai-sdk/ui";
 import type { UIMessage } from "ai";
-import { and, desc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 
 import { listCommentsForSubject } from "@/app/(app)/comments/actions";
 import { BoardShell } from "@/components/board/board-shell";
 import { db } from "@/db";
 import { boards } from "@/db/schema";
+import { listBoardsForProject } from "@/lib/boards/listing";
 import { requireActiveProject } from "@/lib/permissions";
 import { listTeamMembers, listUserTeams } from "@/lib/teams";
 import { mastra } from "@/mastra";
@@ -38,6 +39,10 @@ export default async function BoardPage({
     await requireActiveProject(projectSlug);
 
   const [board, userBoards, teams, members, commentRows] = await Promise.all([
+    // Board itself — NOT cached. The `snapshot` column is mutated on
+    // every debounced save during editing; writing it through Redis
+    // would burn bandwidth for near-zero hit rate. Read straight from
+    // Postgres.
     db.query.boards.findFirst({
       where: and(
         eq(boards.id, boardId),
@@ -62,19 +67,9 @@ export default async function BoardPage({
       },
     }),
     // Left-panel listing scopes to the same project so the user can
-    // jump to siblings without crossing project boundaries.
-    db.query.boards.findMany({
-      where: and(
-        eq(boards.teamId, teamId),
-        eq(boards.projectId, projectId),
-      ),
-      orderBy: desc(boards.updatedAt),
-      columns: {
-        id: true,
-        name: true,
-        updatedAt: true,
-      },
-    }),
+    // jump to siblings without crossing project boundaries. Cached —
+    // changes only on create / rename / delete / folder-move.
+    listBoardsForProject(teamId, projectId),
     listUserTeams(session.user.id),
     listTeamMembers(teamId),
     listCommentsForSubject("board", boardId),

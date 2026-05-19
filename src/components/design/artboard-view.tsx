@@ -51,7 +51,7 @@ export function ArtboardView({
       }}
       onPointerDown={(event) => onPointerDownArtboard(event, artboard.id)}
     >
-      {/* Header: device label + name */}
+      {/* Header: device label + name + lock indicator */}
       <div
         className="absolute -top-9 left-0 flex items-center gap-2 whitespace-nowrap"
         style={{ fontSize: 14 }}
@@ -68,6 +68,14 @@ export function ArtboardView({
         <span className="text-[10px] uppercase tracking-wide text-zinc-500">
           {deviceLabel}
         </span>
+        {artboard.locked ? (
+          <span
+            className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-amber-300"
+            title="Locked — direct manipulation disabled. Toggle in the inspector."
+          >
+            locked
+          </span>
+        ) : null}
       </div>
 
       {/* Frame — `data-artboard-frame-id` lets the screenshot tool grab

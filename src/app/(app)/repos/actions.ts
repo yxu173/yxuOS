@@ -9,7 +9,11 @@ import { projectRepos, type ProjectRepo, type RepoStatus } from "@/db/schema";
 import { logActivity } from "@/lib/activity";
 import { requireActiveProject } from "@/lib/permissions";
 import { unindexRepo } from "@/lib/rag/indexers/repo-file";
-import { markRepoPending, runRepoIndex } from "@/lib/rag/indexers/repo";
+import {
+  forceFullReindex,
+  markRepoPending,
+  runRepoIndex,
+} from "@/lib/rag/indexers/repo";
 import {
   fetchRepoMetadata,
   GitHubFetchError,
@@ -205,6 +209,15 @@ export async function importRepo(
 
 /* ─── resync ──────────────────────────────────────────── */
 
+/**
+ * Cheap incremental resync. `runRepoIndex` no-ops when
+ * `lastIndexedSha === HEAD`, hash-diffs every file against the
+ * previously-stored content hash to skip unchanged ones before
+ * chunking / embedding, and prunes only the paths that disappeared
+ * from the repo. Resyncing an unchanged repo is ~one GitHub
+ * branch-SHA lookup; a small diff costs proportional to the diff.
+ * Use {@link forceReindexRepo} for a full wipe.
+ */
 export async function resyncRepo(input: {
   projectSlug: string;
   repoId: string;
@@ -241,6 +254,51 @@ export async function resyncRepo(input: {
     subjectId: repo.id,
     subjectName: `${repo.owner}/${repo.repo}`,
     metadata: { branch: repo.branch, action: "resync" },
+  });
+
+  revalidatePath(`/p/${input.projectSlug}/brain`);
+}
+
+/* ─── force full reindex ──────────────────────── */
+
+/**
+ * Nukes every chunk for this repo and re-indexes from scratch.
+ * Use when an incremental resync can't pick up a needed change —
+ * embedding-model swap, chunker-logic change, or a user-reported
+ * stale-result that survives a normal resync.
+ *
+ * Same auth + activity-log surface as `resyncRepo`; differs only
+ * in the orchestration call.
+ */
+export async function forceReindexRepo(input: {
+  projectSlug: string;
+  repoId: string;
+}): Promise<void> {
+  const { projectId, teamId, session } = await requireActiveProject(
+    input.projectSlug,
+  );
+
+  const repo = await db.query.projectRepos.findFirst({
+    where: and(
+      eq(projectRepos.id, input.repoId),
+      eq(projectRepos.projectId, projectId),
+    ),
+  });
+  if (!repo) {
+    throw new Error("Repo not found in this project.");
+  }
+
+  await forceFullReindex(repo.id);
+  after(() => runRepoIndex(repo.id));
+
+  await logActivity({
+    teamId,
+    actorId: session.user.id,
+    verb: "executed",
+    subjectType: "repo",
+    subjectId: repo.id,
+    subjectName: `${repo.owner}/${repo.repo}`,
+    metadata: { branch: repo.branch, action: "force_reindex" },
   });
 
   revalidatePath(`/p/${input.projectSlug}/brain`);

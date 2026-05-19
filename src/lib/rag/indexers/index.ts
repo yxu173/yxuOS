@@ -26,8 +26,15 @@ export { indexTask, unindexTask } from "./task";
 export { indexTaskPlan, unindexTaskPlan } from "./task-plan";
 export {
   buildRepoFileSourceId,
+  hashFileContent,
   indexRepoFile,
+  loadRepoFileHashes,
   parseRepoFileSourceId,
+  prunePathsRemovedFromRepo,
   unindexRepo,
 } from "./repo-file";
-export { markRepoPending, runRepoIndex } from "./repo";
+export {
+  forceFullReindex,
+  markRepoPending,
+  runRepoIndex,
+} from "./repo";

@@ -113,6 +113,11 @@ function NodeRenderer({ node }: { node: DesignNode }): JSX.Element {
     tokens: tokens.merged,
   };
 
+  // Hidden nodes are skipped entirely — they stay in the tree (so the
+  // agent can toggle them back on, the layers panel can show them, and
+  // every id remains stable) but never paint.
+  if (node.hidden) return <></>;
+
   switch (node.type) {
     case "div":
       return (

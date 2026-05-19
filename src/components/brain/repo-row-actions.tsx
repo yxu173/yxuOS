@@ -2,17 +2,28 @@
 
 import { Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useTransition } from "react";
+import { type MouseEvent, useTransition } from "react";
 
-import { deleteRepo, resyncRepo } from "@/app/(app)/repos/actions";
+import {
+  deleteRepo,
+  forceReindexRepo,
+  resyncRepo,
+} from "@/app/(app)/repos/actions";
 import { useToast } from "@/components/ui/toast";
 
 /**
  * Per-row action buttons for an imported repo.
  *
- * `Resync` re-runs the indexer (full re-index for now). `Delete`
- * wipes the repo row + every chunk for it from the brain. Both
- * are server actions; the row's status flip is shown by the
+ * `Resync` (click) runs the cheap incremental indexer — SHA
+ * short-circuit, hash-diff per file, prune-only-removed-paths.
+ * Resyncing an unchanged repo is essentially free.
+ *
+ * `Force re-index` (Shift+click on Resync) wipes every chunk and
+ * starts from scratch. Use after an embedding-model or chunker
+ * change, or as a last resort for stale-result reports.
+ *
+ * `Delete` wipes the repo row + every chunk for it. All three are
+ * server actions; the row's status flip is shown by the
  * server-side rerender after `router.refresh()`.
  */
 export function RepoRowActions({
@@ -32,12 +43,24 @@ export function RepoRowActions({
   const [resyncing, startResync] = useTransition();
   const [deleting, startDelete] = useTransition();
 
-  function handleResync() {
+  function handleResync(e: MouseEvent<HTMLButtonElement>) {
     if (disabled) return;
+    // Shift+click escalates to a full reindex — power-user escape
+    // hatch. Confirm explicitly because it costs real embedding
+    // budget on big repos.
+    const force = e.shiftKey;
+    if (force && !confirm(`Force full re-index of ${repoLabel}?`)) {
+      return;
+    }
     startResync(async () => {
       try {
-        await resyncRepo({ projectSlug, repoId });
-        toast.success(`${repoLabel} is re-indexing.`);
+        if (force) {
+          await forceReindexRepo({ projectSlug, repoId });
+          toast.success(`${repoLabel} is being rebuilt from scratch.`);
+        } else {
+          await resyncRepo({ projectSlug, repoId });
+          toast.success(`${repoLabel} is re-indexing.`);
+        }
         router.refresh();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Resync failed.");
@@ -64,7 +87,7 @@ export function RepoRowActions({
         type="button"
         onClick={handleResync}
         disabled={disabled || resyncing || deleting}
-        title="Re-index"
+        title="Re-index (Shift+click to force full rebuild)"
         className="rounded p-1.5 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100 disabled:opacity-30"
       >
         {resyncing ? (

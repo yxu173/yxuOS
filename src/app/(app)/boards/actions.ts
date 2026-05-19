@@ -9,6 +9,7 @@ import { nanoid } from "nanoid";
 import { db } from "@/db";
 import { boards } from "@/db/schema";
 import { logActivity } from "@/lib/activity";
+import { bustProjectBoards } from "@/lib/boards/listing";
 import { indexBoard, unindexBoard } from "@/lib/rag/indexers/board";
 import {
   requireActiveProject,
@@ -48,6 +49,8 @@ export async function createBoard(projectSlug?: string | FormData) {
     subjectId: board.id,
     subjectName: board.name,
   });
+
+  await bustProjectBoards(projectId);
 
   revalidatePath(`/p/${resolvedSlug}/boards`);
   redirect(`/p/${resolvedSlug}/boards/${board.id}`);
@@ -91,10 +94,21 @@ export async function renameBoard(boardId: string, name: string) {
     throw new Error("Board name cannot be empty");
   }
 
+  // Need the board's project to bust the right cache tag.
+  const target = await db.query.boards.findFirst({
+    where: and(eq(boards.id, boardId), eq(boards.teamId, teamId)),
+    columns: { projectId: true },
+  });
+
   await db
     .update(boards)
     .set({ name: trimmed, updatedAt: new Date() })
     .where(and(eq(boards.id, boardId), eq(boards.teamId, teamId)));
+
+  // `projectId` is nullable on boards — only legacy / unattached boards
+  // would skip this bust, and they aren't listed in any project sidebar
+  // anyway, so the conditional is correct.
+  if (target?.projectId) await bustProjectBoards(target.projectId);
 
   // Title is denormalised onto every chunk so a rename has to
   // re-walk the artifact, even if the snapshot didn't change.
@@ -116,15 +130,18 @@ export async function renameBoard(boardId: string, name: string) {
 export async function deleteBoard(boardId: string) {
   const { session, teamId } = await requireActiveTeam();
 
-  // Snapshot the name before deleting so the activity feed reads cleanly.
+  // Snapshot the name + project before deleting so the activity feed
+  // reads cleanly and we know which project's cache to bust.
   const existing = await db.query.boards.findFirst({
     where: and(eq(boards.id, boardId), eq(boards.teamId, teamId)),
-    columns: { name: true },
+    columns: { name: true, projectId: true },
   });
 
   await db
     .delete(boards)
     .where(and(eq(boards.id, boardId), eq(boards.teamId, teamId)));
+
+  if (existing?.projectId) await bustProjectBoards(existing.projectId);
 
   after(() => unindexBoard(boardId));
 

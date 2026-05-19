@@ -237,7 +237,10 @@ export async function deleteKnowledgeForSource(
 
 /**
  * Wipe every `repo_file` chunk belonging to a given repo. Used when
- * a repo is deleted or force-resynced.
+ * a repo is deleted; **not** used at the start of a resync pass
+ * any more — the orchestrator diffs by file hash and prunes only
+ * the paths that actually disappeared, so resyncing an unchanged
+ * repo costs ~one SELECT instead of N embeddings.
  *
  * The `sourceId` shape for repo files is `"<repoId>:<path>"` (see
  * `indexers/repo-file.ts`), so a `LIKE '<repoId>:%'` prefix-match
@@ -255,6 +258,35 @@ export async function deleteKnowledgeForRepoFiles(
         like(projectKnowledge.sourceId, `${repoId}:%`),
       ),
     );
+}
+
+/**
+ * Delete every chunk for a specific set of (repo, path) pairs.
+ * Used by the orchestrator's prune step to remove files that
+ * disappeared from the repo (deletion / rename / moved into an
+ * ignored directory) since the last successful pass.
+ *
+ * Batched in groups of 500 so we don't hit Postgres's parameter
+ * limit on very large diffs.
+ */
+export async function deleteKnowledgeForRepoPaths(
+  repoId: string,
+  paths: string[],
+): Promise<void> {
+  if (paths.length === 0) return;
+  const BATCH = 500;
+  for (let i = 0; i < paths.length; i += BATCH) {
+    const slice = paths.slice(i, i + BATCH);
+    const sourceIds = slice.map((p) => `${repoId}:${p}`);
+    await db
+      .delete(projectKnowledge)
+      .where(
+        and(
+          eq(projectKnowledge.sourceType, "repo_file"),
+          inArray(projectKnowledge.sourceId, sourceIds),
+        ),
+      );
+  }
 }
 
 /** Hex SHA-256, the dedupe signal for chunk content. */
