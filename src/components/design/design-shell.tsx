@@ -203,14 +203,13 @@ export function DesignShell({
         <main className="relative flex-1 overflow-hidden">
           <CanvasViewport />
         </main>
-        {rightOpen ? (
-          <DesignRightPanel
-            designId={designId}
-            initialMessages={initialMessages}
-            initialComments={initialComments}
-            members={members}
-          />
-        ) : null}
+        <DesignRightPanel
+          designId={designId}
+          initialMessages={initialMessages}
+          initialComments={initialComments}
+          members={members}
+          hidden={!rightOpen}
+        />
       </div>
       </div>
     </ComponentLibraryProvider>

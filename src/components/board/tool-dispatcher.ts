@@ -46,7 +46,8 @@ export type CanvasToolName =
   | "add_markdown_card"
   | "add_mermaid_card"
   | "set_selection"
-  | "focus_camera";
+  | "focus_camera"
+  | "screenshot_canvas";
 
 /**
  * Dispatch a single tool call against the mounted Excalidraw canvas.
@@ -113,6 +114,8 @@ export async function dispatchCanvasTool(
       return excalidrawTools.executeSetSelection(api, input);
     case "focus_camera":
       return excalidrawTools.executeFocusCamera(api, input);
+    case "screenshot_canvas":
+      return excalidrawTools.executeScreenshotCanvas(api, input);
     default:
       return {
         ok: false,

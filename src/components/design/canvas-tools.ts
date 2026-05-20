@@ -1858,6 +1858,320 @@ export function executeSetArtboardBackground(
   });
 }
 
+/* ─── diff_artboards ──────────────────────────────────── */
+
+export interface DiffArtboardsInput {
+  artboardIdA: string;
+  artboardIdB: string;
+}
+
+export interface DiffEntry {
+  kind: "added" | "removed" | "modified";
+  path: string;
+  nodeIdA: string | null;
+  nodeIdB: string | null;
+  summary: string;
+}
+
+export interface DiffArtboardsOutput {
+  summary: string;
+  additions: number;
+  removals: number;
+  modifications: number;
+  entries: DiffEntry[];
+}
+
+function childrenOf(node: DesignNode): DesignNode[] {
+  if (node.type === "div" || node.type === "section" || node.type === "nav" || node.type === "card" || node.type === "frame") {
+    return (node as { children?: DesignNode[] }).children ?? [];
+  }
+  return [];
+}
+
+function nodeSignature(node: DesignNode): string {
+  const parts: string[] = [node.type];
+  if (node.type === "text") parts.push(`text=${(node as { text: string }).text}`);
+  if (node.type === "button") parts.push(`label=${(node as { label: string }).label}`);
+  if (node.type === "link") parts.push(`label=${(node as { label: string }).label}`);
+  if (node.type === "icon") parts.push(`name=${(node as { name: string }).name}`);
+  if (node.type === "image") parts.push(`src=${(node as { src?: string }).src ?? ""}`);
+  if (node.style) parts.push(`style=${JSON.stringify(node.style)}`);
+  return parts.join("|");
+}
+
+function describeNode(node: DesignNode): string {
+  if (node.type === "text") return `"${(node as { text: string }).text.slice(0, 40)}"`;
+  if (node.type === "button") return `button "${(node as { label: string }).label}"`;
+  if (node.type === "link") return `link "${(node as { label: string }).label}"`;
+  if (node.type === "image") return `image (${(node as { src?: string }).src ?? "placeholder"})`;
+  if (node.type === "icon") return `icon "${(node as { name: string }).name}"`;
+  if (node.type === "frame") {
+    const title = (node as { title?: string }).title;
+    return title ? `frame "${title}"` : "frame";
+  }
+  return node.type;
+}
+
+function walkDiff(
+  a: DesignNode | null,
+  b: DesignNode | null,
+  path: string,
+  out: DiffEntry[],
+): void {
+  if (a && !b) {
+    out.push({
+      kind: "removed",
+      path,
+      nodeIdA: a.id ?? null,
+      nodeIdB: null,
+      summary: `${describeNode(a)} removed`,
+    });
+    return;
+  }
+  if (!a && b) {
+    out.push({
+      kind: "added",
+      path,
+      nodeIdA: null,
+      nodeIdB: b.id ?? null,
+      summary: `${describeNode(b)} added`,
+    });
+    return;
+  }
+  if (!a || !b) return;
+
+  if (a.type !== b.type) {
+    out.push({
+      kind: "modified",
+      path,
+      nodeIdA: a.id ?? null,
+      nodeIdB: b.id ?? null,
+      summary: `type changed: ${a.type} → ${b.type}`,
+    });
+  } else if (nodeSignature(a) !== nodeSignature(b)) {
+    out.push({
+      kind: "modified",
+      path,
+      nodeIdA: a.id ?? null,
+      nodeIdB: b.id ?? null,
+      summary: `${describeNode(a)} modified`,
+    });
+  }
+
+  const aKids = childrenOf(a);
+  const bKids = childrenOf(b);
+  const max = Math.max(aKids.length, bKids.length);
+  for (let i = 0; i < max; i++) {
+    walkDiff(aKids[i] ?? null, bKids[i] ?? null, `${path}.children[${i}]`, out);
+  }
+}
+
+export function executeDiffArtboards(
+  input: DiffArtboardsInput,
+): ToolResult<DiffArtboardsOutput> {
+  const state = useDesignCanvas.getState();
+  const a = state.artboards.find((ab) => ab.id === input.artboardIdA);
+  const b = state.artboards.find((ab) => ab.id === input.artboardIdB);
+  if (!a) return fail("not_found", `Artboard A "${input.artboardIdA}" not found.`);
+  if (!b) return fail("not_found", `Artboard B "${input.artboardIdB}" not found.`);
+
+  const entries: DiffEntry[] = [];
+  walkDiff(a.design ?? null, b.design ?? null, "root", entries);
+
+  const additions = entries.filter((e) => e.kind === "added").length;
+  const removals = entries.filter((e) => e.kind === "removed").length;
+  const modifications = entries.filter((e) => e.kind === "modified").length;
+
+  const summary =
+    entries.length === 0
+      ? `No structural differences between "${a.name}" and "${b.name}".`
+      : `${additions} added, ${removals} removed, ${modifications} modified.`;
+
+  return ok({
+    summary,
+    additions,
+    removals,
+    modifications,
+    entries,
+  });
+}
+
+/* ─── export_jsx ──────────────────────────────────────── */
+
+export interface ExportJsxInput {
+  artboardId: string;
+  target?: "react" | "html";
+  indent?: "2" | "4" | "tab";
+}
+
+export interface ExportJsxOutput {
+  artboardId: string;
+  target: "react" | "html";
+  code: string;
+  nodeCount: number;
+  lineCount: number;
+}
+
+const TAG_BY_TYPE: Record<string, string> = {
+  div: "div",
+  section: "section",
+  nav: "nav",
+  card: "div",
+  frame: "div",
+  text: "span",
+  button: "button",
+  image: "img",
+  input: "input",
+  icon: "span",
+  link: "a",
+  divider: "hr",
+  "component-ref": "div",
+};
+
+function indentStr(level: number, kind: "2" | "4" | "tab"): string {
+  if (kind === "tab") return "\t".repeat(level);
+  return " ".repeat(Number(kind) * level);
+}
+
+function styleToString(
+  style: Record<string, string | number> | undefined,
+  target: "react" | "html",
+): string | null {
+  if (!style || Object.keys(style).length === 0) return null;
+  if (target === "react") {
+    const entries = Object.entries(style)
+      .map(([k, v]) => `${k}: ${typeof v === "string" ? JSON.stringify(v) : v}`)
+      .join(", ");
+    return `{{ ${entries} }}`;
+  }
+  const css = Object.entries(style)
+    .map(([k, v]) => {
+      const kebab = k.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+      const value = typeof v === "number" ? `${v}px` : v;
+      return `${kebab}: ${value}`;
+    })
+    .join("; ");
+  return `"${css.replace(/"/g, "&quot;")}"`;
+}
+
+function escapeText(text: string, target: "react" | "html"): string {
+  if (target === "react") {
+    return text.replace(/[<>{}]/g, (c) => `{${JSON.stringify(c)}}`);
+  }
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function renderNode(
+  node: DesignNode,
+  level: number,
+  target: "react" | "html",
+  indent: "2" | "4" | "tab",
+  count: { n: number },
+): string {
+  if (node.hidden) return "";
+  count.n += 1;
+  const pad = indentStr(level, indent);
+  const tag = TAG_BY_TYPE[node.type] ?? "div";
+  const attrs: string[] = [];
+
+  const styleAttr = styleToString(
+    node.style as Record<string, string | number> | undefined,
+    target,
+  );
+  const styleKey = target === "react" ? "style" : "style";
+  if (styleAttr) attrs.push(`${styleKey}=${styleAttr}`);
+
+  if (node.type === "image") {
+    const src = (node as { src?: string }).src ?? "";
+    const alt = (node as { alt?: string }).alt ?? "";
+    if (src) attrs.push(`src=${JSON.stringify(src)}`);
+    if (alt) attrs.push(`alt=${JSON.stringify(alt)}`);
+    return `${pad}<img ${attrs.join(" ")} />`;
+  }
+  if (node.type === "input") {
+    const placeholder = (node as { placeholder?: string }).placeholder;
+    const inputType = (node as { inputType?: string }).inputType ?? "text";
+    attrs.push(`type=${JSON.stringify(inputType)}`);
+    if (placeholder) attrs.push(`placeholder=${JSON.stringify(placeholder)}`);
+    return `${pad}<input ${attrs.join(" ")} />`;
+  }
+  if (node.type === "divider") {
+    return `${pad}<hr ${attrs.join(" ")} />`;
+  }
+  if (node.type === "text") {
+    const t = (node as { text: string; tag?: string }).text;
+    const semantic = (node as { tag?: string }).tag ?? "span";
+    const inner = escapeText(t, target);
+    return `${pad}<${semantic} ${attrs.join(" ")}>${inner}</${semantic}>`;
+  }
+  if (node.type === "button") {
+    const label = (node as { label: string }).label;
+    return `${pad}<button ${attrs.join(" ")}>${escapeText(label, target)}</button>`;
+  }
+  if (node.type === "link") {
+    const label = (node as { label: string }).label;
+    const href = (node as { href?: string }).href;
+    if (href) attrs.push(`href=${JSON.stringify(href)}`);
+    return `${pad}<a ${attrs.join(" ")}>${escapeText(label, target)}</a>`;
+  }
+  if (node.type === "icon") {
+    const name = (node as { name: string }).name;
+    const aria = `aria-label=${JSON.stringify(name)}`;
+    return `${pad}<span ${aria} ${attrs.join(" ")}>{/* icon: ${name} */}</span>`;
+  }
+  if (node.type === "component-ref") {
+    const slug = (node as { componentSlug: string }).componentSlug;
+    return `${pad}<div ${attrs.join(" ")}>{/* component-ref: ${slug} */}</div>`;
+  }
+
+  const kids = childrenOf(node);
+  const opening = `${pad}<${tag}${attrs.length ? " " + attrs.join(" ") : ""}>`;
+  if (kids.length === 0) {
+    return `${opening}</${tag}>`;
+  }
+  const renderedKids = kids
+    .map((c) => renderNode(c, level + 1, target, indent, count))
+    .filter(Boolean)
+    .join("\n");
+  return `${opening}\n${renderedKids}\n${pad}</${tag}>`;
+}
+
+export function executeExportJsx(
+  input: ExportJsxInput,
+): ToolResult<ExportJsxOutput> {
+  const state = useDesignCanvas.getState();
+  const ab = state.artboards.find((a) => a.id === input.artboardId);
+  if (!ab) {
+    return fail(
+      "not_found",
+      `Artboard "${input.artboardId}" not found.`,
+      "Call query_canvas to refresh artboard ids.",
+    );
+  }
+  if (!ab.design) {
+    return fail(
+      "preconditions_failed",
+      "Artboard has no design tree yet — nothing to export.",
+      "Add at least one node before exporting.",
+    );
+  }
+  const target = input.target ?? "react";
+  const indent = input.indent ?? "2";
+  const count = { n: 0 };
+  const code = renderNode(ab.design, 0, target, indent, count);
+
+  return ok({
+    artboardId: input.artboardId,
+    target,
+    code,
+    nodeCount: count.n,
+    lineCount: code.split("\n").length,
+  });
+}
+
 /* ─── helpers ──────────────────────────────────────── */
 
 // Re-exported so the chat can ask "is this id even in the tree?" before

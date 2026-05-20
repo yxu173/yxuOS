@@ -1,38 +1,77 @@
-import { createAzure } from "@ai-sdk/azure";
+import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 
 import { env } from "./env";
 
 /**
- * Azure AI Foundry exposes OpenAI-compatible models at
- * `https://<resource>.services.ai.azure.com/openai/v1/...`.
- * We use `@ai-sdk/azure` with a custom `baseURL` — the provider
- * appends `/v1` automatically (as the default `apiVersion`) and
- * uses the standard `/v1/chat/completions` path.
+ * Amazon Bedrock provider for Anthropic Claude models.
+ * We use `@ai-sdk/amazon-bedrock` with either long-term API keys
+ * (apiKey + region) or standard AWS credentials
+ * (accessKeyId + secretAccessKey + region).
+ *
+ * Claude Opus 4.6 is accessed via the cross-region inference profile
+ * `us.anthropic.claude-opus-4-6-v1` (default) so it works across all
+ * US regions without requiring in-region availability.
  */
-function buildAzureOpenAI() {
-  if (!env.AZURE_OPENAI_BASE_URL || !env.AZURE_OPENAI_API_KEY) {
+function buildBedrock() {
+  if (!env.BEDROCK_REGION) {
     throw new Error(
-      "AZURE_OPENAI_BASE_URL and AZURE_OPENAI_API_KEY must be set in .env.local to use Azure OpenAI models.",
+      "BEDROCK_REGION must be set in .env.local to use Amazon Bedrock models.",
     );
   }
 
-  return createAzure({
-    baseURL: env.AZURE_OPENAI_BASE_URL + "/openai",
-    apiKey: env.AZURE_OPENAI_API_KEY,
-  });
-}
-
-let _azureOpenAI: ReturnType<typeof createAzure> | null = null;
-
-function azureOpenAI() {
-  if (!_azureOpenAI) {
-    _azureOpenAI = buildAzureOpenAI();
+  if (env.BEDROCK_API_KEY) {
+    return createAmazonBedrock({
+      region: env.BEDROCK_REGION,
+      apiKey: env.BEDROCK_API_KEY,
+    });
   }
-  return _azureOpenAI;
+
+  if (env.BEDROCK_ACCESS_KEY_ID && env.BEDROCK_SECRET_ACCESS_KEY) {
+    return createAmazonBedrock({
+      region: env.BEDROCK_REGION,
+      accessKeyId: env.BEDROCK_ACCESS_KEY_ID,
+      secretAccessKey: env.BEDROCK_SECRET_ACCESS_KEY,
+    });
+  }
+
+  throw new Error(
+    "BEDROCK_API_KEY or (BEDROCK_ACCESS_KEY_ID + BEDROCK_SECRET_ACCESS_KEY) must be set in .env.local to use Amazon Bedrock models.",
+  );
 }
 
+let _bedrock: ReturnType<typeof createAmazonBedrock> | null = null;
+
+function bedrock() {
+  if (!_bedrock) {
+    _bedrock = buildBedrock();
+  }
+  return _bedrock;
+}
+
+/**
+ * Tiered model registry. Agents pick the cheapest model that can do
+ * the job:
+ *
+ * - `opus`   — composition-heavy turns (drafting an architecture
+ *              diagram, designing a whole landing page, writing a
+ *              plan from scratch).
+ * - `sonnet` — second opinions, audits, structured criticism, and
+ *              re-reads after a big mutation (`analyze_canvas` /
+ *              `audit_design` follow-ups).
+ * - `haiku`  — single-tool turns: renames, colour swaps, "make this
+ *              red", `set_selection` / `focus_camera` only.
+ *
+ * Each getter is lazy so we don't pay the Bedrock client construction
+ * cost for tiers a given agent never uses.
+ */
 export const models = {
   get opus() {
-    return azureOpenAI().chat(env.AZURE_OPENAI_MODEL);
+    return bedrock().languageModel(env.BEDROCK_MODEL);
+  },
+  get sonnet() {
+    return bedrock().languageModel(env.BEDROCK_MODEL_MID);
+  },
+  get haiku() {
+    return bedrock().languageModel(env.BEDROCK_MODEL_FAST);
   },
 };

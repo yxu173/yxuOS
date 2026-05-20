@@ -319,15 +319,7 @@ function DisabledBanner() {
   return (
     <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
       <strong className="font-medium">Embeddings disabled.</strong>{" "}
-      Set either the Azure pair
-      <code className="mx-1 rounded bg-black/40 px-1 py-0.5 font-mono">
-        AZURE_EMBEDDINGS_ENDPOINT
-      </code>
-      +
-      <code className="mx-1 rounded bg-black/40 px-1 py-0.5 font-mono">
-        AZURE_EMBEDDINGS_API_KEY
-      </code>{" "}
-      or
+      Set
       <code className="mx-1 rounded bg-black/40 px-1 py-0.5 font-mono">
         OPENAI_API_KEY
       </code>

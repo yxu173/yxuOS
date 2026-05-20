@@ -49,8 +49,7 @@ async function main() {
   if (!isEmbeddingsEnabled()) {
     console.error(
       "No embedding provider configured — backfill needs embeddings.\n" +
-        "Set either the Azure pair AZURE_EMBEDDINGS_ENDPOINT +\n" +
-        "AZURE_EMBEDDINGS_API_KEY (recommended) or OPENAI_API_KEY.",
+        "Set OPENAI_API_KEY.",
     );
     process.exit(1);
   }

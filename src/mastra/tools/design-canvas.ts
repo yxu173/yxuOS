@@ -1183,6 +1183,77 @@ export const setArtboardBackgroundTool = createTool({
   ),
 });
 
+/* ─── diff_artboards ──────────────────────────────────── */
+
+const diffEntrySchema = z.object({
+  kind: z
+    .enum(["added", "removed", "modified"])
+    .describe(
+      "`added` = node exists only in B. `removed` = only in A. `modified` = same id in both, but type / style / payload changed.",
+    ),
+  path: z
+    .string()
+    .describe(
+      "Dot path from the artboard root, e.g. `root.children[2].children[0]`, so the agent can `find_nodes` / `patch_node` against the right id.",
+    ),
+  nodeIdA: z.string().nullable(),
+  nodeIdB: z.string().nullable(),
+  summary: z
+    .string()
+    .describe(
+      "One-line description suitable for the chat reply: `Hero title changed from \"X\" to \"Y\"`, `Pricing card added`, `Footer removed`.",
+    ),
+});
+
+export const diffArtboardsTool = createTool({
+  id: "diff_artboards",
+  description:
+    "Compare two artboards' design trees and return a structured list of added / removed / modified nodes plus a top-level summary. Use when the user asks 'what changed between these two?' or before / after a big iteration to verify the change matches intent. Cheap and pure (no LLM call); reach for it freely.",
+  inputSchema: z.object({
+    artboardIdA: z.string().describe("The 'before' artboard."),
+    artboardIdB: z.string().describe("The 'after' artboard."),
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      summary: z.string(),
+      additions: z.number().int(),
+      removals: z.number().int(),
+      modifications: z.number().int(),
+      entries: z.array(diffEntrySchema),
+    }),
+  ),
+});
+
+/* ─── export_jsx ──────────────────────────────────────── */
+
+export const exportJsxTool = createTool({
+  id: "export_jsx",
+  description:
+    "Convert an artboard's design tree into ready-to-paste JSX (React) or HTML. Use when the user asks to 'hand this off to dev', 'export this', 'turn this into code'. Returns a single string the user can drop into a `.tsx` / `.html` file. Token refs (`{color.accent}`) are resolved to literals at export time so the snippet is self-contained.",
+  inputSchema: z.object({
+    artboardId: z.string(),
+    target: z
+      .enum(["react", "html"])
+      .optional()
+      .describe(
+        "Output flavour. `react` emits JSX with camelCase style props + className-free divs (suitable for shadcn / Tailwind work). `html` emits plain HTML + inline `style=\"…\"`. Defaults to `react`.",
+      ),
+    indent: z
+      .enum(["2", "4", "tab"])
+      .optional()
+      .describe("Indentation. Defaults to `2`."),
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      artboardId: z.string(),
+      target: z.enum(["react", "html"]),
+      code: z.string().describe("The exported snippet. Always a non-empty string when ok."),
+      nodeCount: z.number().int(),
+      lineCount: z.number().int(),
+    }),
+  ),
+});
+
 export const designCanvasTools = {
   query_canvas: queryCanvasTool,
   add_artboard: addArtboardTool,
@@ -1218,4 +1289,6 @@ export const designCanvasTools = {
   connect_artboards: connectArtboardsTool,
   disconnect_artboards: disconnectArtboardsTool,
   list_flows: listFlowsTool,
+  diff_artboards: diffArtboardsTool,
+  export_jsx: exportJsxTool,
 };

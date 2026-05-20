@@ -40,35 +40,36 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.preprocess(empty, z.string().optional()),
   ANTHROPIC_API_KEY: z.preprocess(empty, z.string().optional()),
 
-  // Azure AI Foundry — OpenAI-compatible endpoint.
-  // Base URL like `https://<resource>.services.ai.azure.com`.
-  AZURE_OPENAI_BASE_URL: z.preprocess(empty, z.string().url().optional()),
-  AZURE_OPENAI_API_KEY: z.preprocess(empty, z.string().optional()),
-  AZURE_OPENAI_MODEL: z.preprocess(
+  // Amazon Bedrock — chat model provider (Claude Opus 4.6).
+  // Supports two auth methods:
+  //   1. Long-term API key: BEDROCK_API_KEY + BEDROCK_REGION
+  //   2. AWS credentials: BEDROCK_ACCESS_KEY_ID + BEDROCK_SECRET_ACCESS_KEY + BEDROCK_REGION
+  // Get a key at https://console.aws.amazon.com/bedrock/home#/api-keys
+  BEDROCK_REGION: z.preprocess(
     empty,
-    z.string().default("gpt-oss-120b"),
+    z.string().default("us-east-1"),
   ),
-
-  // Azure AI Foundry — OpenAI-compatible embeddings endpoint. Used
-  // by the project-brain RAG layer. Set all three to switch the
-  // embedding provider from OpenAI direct to Azure; leave unset to
-  // fall back to `OPENAI_API_KEY` (or disable embeddings entirely).
-  //
-  // Endpoint shape: `https://<resource>.services.ai.azure.com`
-  // (the "services" Foundry endpoint, NOT the legacy
-  // `<resource>.openai.azure.com`). The `/openai` suffix is added
-  // automatically inside `embed.ts` to match the Azure provider's
-  // `{baseURL}/v1{path}` convention.
-  AZURE_EMBEDDINGS_ENDPOINT: z.preprocess(
+  BEDROCK_MODEL: z.preprocess(
     empty,
-    z.string().url().optional(),
+    z.string().default("us.anthropic.claude-opus-4-6-v1"),
   ),
-  AZURE_EMBEDDINGS_API_KEY: z.preprocess(empty, z.string().optional()),
-  /** Deployment name in your Foundry resource. Typically matches the model id. */
-  AZURE_EMBEDDINGS_DEPLOYMENT: z.preprocess(
+  // Mid-tier and fast-tier model ids on Bedrock. Used by agents that
+  // want to spend less context / latency on cheap turns (renames,
+  // colour swaps, audits) while keeping `BEDROCK_MODEL` (opus) for
+  // composition-heavy turns. Override per environment if Anthropic
+  // ships new ids; defaults track the latest cross-region inference
+  // profiles available in US regions.
+  BEDROCK_MODEL_MID: z.preprocess(
     empty,
-    z.string().default("text-embedding-3-large"),
+    z.string().default("us.anthropic.claude-sonnet-4-6-v1"),
   ),
+  BEDROCK_MODEL_FAST: z.preprocess(
+    empty,
+    z.string().default("us.anthropic.claude-haiku-4-6-v1"),
+  ),
+  BEDROCK_API_KEY: z.preprocess(empty, z.string().optional()),
+  BEDROCK_ACCESS_KEY_ID: z.preprocess(empty, z.string().optional()),
+  BEDROCK_SECRET_ACCESS_KEY: z.preprocess(empty, z.string().optional()),
 
   // ─── Mastra ────────────────────────────────────────────
   MASTRA_TELEMETRY_DISABLED: z.preprocess(empty, z.string().optional()),

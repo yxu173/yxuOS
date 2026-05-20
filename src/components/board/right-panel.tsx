@@ -8,6 +8,7 @@ import type {
   MentionTarget,
 } from "@/components/comments/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
 
 import { Chat } from "./chat";
 
@@ -25,6 +26,9 @@ export interface BoardRightPanelProps {
   onFocusShape: (shapeId: string) => void;
   resolveTargetLabel: (shapeId: string) => string | null;
   selectedShapeLabel: string | null;
+  // When false, the panel is hidden via CSS instead of unmounted so the
+  // Chat's in-memory message history survives collapse/expand cycles.
+  hidden?: boolean;
 }
 
 export function BoardRightPanel({
@@ -37,9 +41,16 @@ export function BoardRightPanel({
   onFocusShape,
   resolveTargetLabel,
   selectedShapeLabel,
+  hidden = false,
 }: BoardRightPanelProps) {
   return (
-    <aside className="flex h-full w-96 min-w-0 shrink-0 flex-col overflow-hidden border-l border-white/5 bg-zinc-950/40 backdrop-blur">
+    <aside
+      className={cn(
+        "flex h-full w-96 min-w-0 shrink-0 flex-col overflow-hidden border-l border-white/5 bg-zinc-950/40 backdrop-blur",
+        hidden && "hidden",
+      )}
+      aria-hidden={hidden}
+    >
       <Tabs defaultValue="chat" className="flex h-full flex-col">
         <TabsList className="m-2 grid w-auto grid-cols-2">
           <TabsTrigger value="chat">Chat</TabsTrigger>
@@ -54,7 +65,8 @@ export function BoardRightPanel({
         </TabsList>
         <TabsContent
           value="chat"
-          className="m-0 flex min-h-0 flex-1 flex-col overflow-hidden"
+          forceMount
+          className="m-0 flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden"
         >
           <Chat boardId={boardId} initialMessages={initialMessages} />
         </TabsContent>

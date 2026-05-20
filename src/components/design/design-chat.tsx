@@ -36,8 +36,10 @@ import {
   executeAuditDesign,
   executeDeleteArtboard,
   executeDeleteNodes,
+  executeDiffArtboards,
   executeDuplicateArtboard,
   executeDuplicateNode,
+  executeExportJsx,
   executeExtractComponent,
   executeFindNodes,
   executeGetArtboard,
@@ -110,6 +112,8 @@ const TOOL_LABELS: Record<string, string> = {
   audit_design: "Auditing design",
   arrange_artboards: "Arranging artboards",
   set_artboard_background: "Updating background",
+  diff_artboards: "Diffing artboards",
+  export_jsx: "Exporting JSX",
 };
 
 /**
@@ -465,6 +469,20 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
                   toolCall.input as Parameters<
                     typeof executeSetArtboardBackground
                   >[0],
+                ),
+              );
+              break;
+            case "diff_artboards":
+              emit(
+                executeDiffArtboards(
+                  toolCall.input as Parameters<typeof executeDiffArtboards>[0],
+                ),
+              );
+              break;
+            case "export_jsx":
+              emit(
+                executeExportJsx(
+                  toolCall.input as Parameters<typeof executeExportJsx>[0],
                 ),
               );
               break;
@@ -1388,6 +1406,26 @@ function describeToolResult(
       return data?.background
         ? `Background → ${data.background.slice(0, 16)}`
         : "Set background";
+    case "diff_artboards": {
+      if (!data) return "Compared artboards";
+      const { additions = 0, removals = 0, modifications = 0 } = data as {
+        additions?: number;
+        removals?: number;
+        modifications?: number;
+      };
+      if (additions + removals + modifications === 0) {
+        return "Diff · no changes";
+      }
+      return `Diff · +${additions} / -${removals} / ~${modifications}`;
+    }
+    case "export_jsx": {
+      if (!data) return "Exported snippet";
+      const { lineCount = 0, target = "react" } = data as {
+        lineCount?: number;
+        target?: string;
+      };
+      return `Exported ${target.toUpperCase()} · ${lineCount} lines`;
+    }
     default:
       return null;
   }

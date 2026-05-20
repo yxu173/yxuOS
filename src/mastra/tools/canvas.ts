@@ -1206,6 +1206,58 @@ export const addImageTool = createTool({
   ),
 });
 
+/* ─── screenshot_canvas ──────────────────────────────── */
+
+export const screenshotCanvasTool = createTool({
+  id: "screenshot_canvas",
+  description:
+    "Capture a PNG of the current Excalidraw scene (or a subset of shapes) and hand it back as a data URL. Use AFTER `analyze_canvas` for any non-trivial build — the screenshot catches visual problems the structured audit can't measure (label clipping, arrow tangle, off-canvas drift). The executor auto-shrinks the export to fit a 2 MB budget; if even the smallest scale is too big you'll get `size_limit` and should narrow `shapeIds` / `frameId` to a smaller region.",
+  inputSchema: z.object({
+    shapeIds: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "Restrict the screenshot to these shape ids (plus their bound text / arrows). Omit to capture the whole scene.",
+      ),
+    frameId: z
+      .string()
+      .optional()
+      .describe(
+        "Restrict to a single frame and its contents. Mutually exclusive with `shapeIds` — `frameId` wins if both are passed.",
+      ),
+    padding: z
+      .number()
+      .nonnegative()
+      .max(200)
+      .optional()
+      .describe(
+        "White-space margin around the captured region in pixels. Defaults to 24.",
+      ),
+    scale: z
+      .number()
+      .positive()
+      .max(2)
+      .optional()
+      .describe(
+        "Pixel ratio. `1` = native; `2` = retina. The executor walks the scale down if the resulting PNG exceeds the size budget, so this is just the starting point.",
+      ),
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      dataUrl: z
+        .string()
+        .describe("`data:image/png;base64,...` you can read directly."),
+      width: z.number(),
+      height: z.number(),
+      scale: z.number(),
+      sizeBytes: z.number(),
+      shapeCount: z
+        .number()
+        .describe("Number of shapes included in the capture."),
+    }),
+  ),
+});
+
 export const canvasTools = {
   query_canvas: queryCanvasTool,
   find_shapes: findShapesTool,
@@ -1232,6 +1284,7 @@ export const canvasTools = {
   add_mermaid_card: addMermaidCardTool,
   set_selection: setSelectionTool,
   focus_camera: focusCameraTool,
+  screenshot_canvas: screenshotCanvasTool,
 };
 
 export type CanvasShapeInput = z.infer<typeof shapeInputSchema>;

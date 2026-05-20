@@ -20,7 +20,7 @@ async function main() {
 
   if (!isEmbeddingsEnabled()) {
     console.error(
-      "No embedding provider configured. Set AZURE_EMBEDDINGS_* or OPENAI_API_KEY.",
+      "No embedding provider configured. Set OPENAI_API_KEY.",
     );
     process.exit(1);
   }

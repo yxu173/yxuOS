@@ -4679,3 +4679,142 @@ export function executeAddImage(
     }
   });
 }
+
+/* ─── screenshot_canvas ──────────────────────────────── */
+
+export interface ScreenshotCanvasInput {
+  shapeIds?: string[];
+  frameId?: string;
+  padding?: number;
+  scale?: number;
+}
+
+export interface ScreenshotCanvasOutput {
+  dataUrl: string;
+  width: number;
+  height: number;
+  scale: number;
+  sizeBytes: number;
+  shapeCount: number;
+}
+
+const SCREENSHOT_MAX_BYTES = 2 * 1024 * 1024;
+const SCREENSHOT_FALLBACK_SCALES = [1, 0.75, 0.5, 0.35, 0.25] as const;
+
+function estimateDataUrlBytes(dataUrl: string): number {
+  const i = dataUrl.indexOf(",");
+  if (i < 0) return dataUrl.length;
+  const b64 = dataUrl.length - (i + 1);
+  return Math.ceil((b64 * 3) / 4);
+}
+
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("FileReader failed"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+export async function executeScreenshotCanvas(
+  api: ExcalidrawImperativeAPI,
+  input: ScreenshotCanvasInput,
+): Promise<ToolResult<ScreenshotCanvasOutput>> {
+  const all = api.getSceneElements();
+  if (all.length === 0) {
+    return fail(
+      "preconditions_failed",
+      "Canvas is empty — nothing to screenshot.",
+      "Add shapes first, then call screenshot_canvas again.",
+    );
+  }
+
+  let target: readonly NonDeletedExcalidrawElement[] = all;
+  if (input.frameId) {
+    const frame = all.find((el) => el.id === input.frameId);
+    if (!frame) {
+      return fail(
+        "not_found",
+        `Frame "${input.frameId}" not found.`,
+        "Call query_canvas to refresh ids.",
+      );
+    }
+    target = all.filter(
+      (el) => el.id === input.frameId || el.frameId === input.frameId,
+    );
+  } else if (input.shapeIds?.length) {
+    const wanted = new Set(input.shapeIds);
+    target = all.filter((el) => wanted.has(el.id));
+    if (target.length === 0) {
+      return fail(
+        "not_found",
+        `None of the supplied shapeIds matched the current scene.`,
+        "Call query_canvas / find_shapes to refresh ids.",
+      );
+    }
+  }
+
+  const appState = api.getAppState();
+  const files = api.getFiles();
+
+  let mod: typeof import("@excalidraw/excalidraw");
+  try {
+    mod = await import("@excalidraw/excalidraw");
+  } catch (err) {
+    return fail(
+      "internal",
+      err instanceof Error ? err.message : "excalidraw export unavailable",
+    );
+  }
+
+  const padding = Math.max(0, Math.min(input.padding ?? 24, 200));
+  const requested = input.scale ?? 1;
+  const scales = SCREENSHOT_FALLBACK_SCALES.filter((s) => s <= requested);
+  if (scales.length === 0) scales.push(0.25);
+
+  let lastErr: unknown = null;
+  for (const scale of scales) {
+    try {
+      const blob = await mod.exportToBlob({
+        elements: target as readonly NonDeletedExcalidrawElement[],
+        appState: {
+          ...appState,
+          exportBackground: true,
+          exportWithDarkMode: appState.theme === "dark",
+        } as Partial<AppState>,
+        files,
+        mimeType: "image/png",
+        exportPadding: padding,
+        getDimensions: (w: number, h: number) => ({
+          width: w,
+          height: h,
+          scale,
+        }),
+      });
+      const dataUrl = await blobToDataUrl(blob);
+      const sizeBytes = estimateDataUrlBytes(dataUrl);
+      if (sizeBytes <= SCREENSHOT_MAX_BYTES) {
+        return ok({
+          dataUrl,
+          width: Math.round((blob as Blob & { width?: number }).width ?? 0),
+          height: Math.round((blob as Blob & { height?: number }).height ?? 0),
+          scale,
+          sizeBytes,
+          shapeCount: target.length,
+        });
+      }
+      lastErr = `scale ${scale} produced ${sizeBytes} bytes (> ${SCREENSHOT_MAX_BYTES})`;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+
+  return fail(
+    "size_limit",
+    lastErr instanceof Error
+      ? lastErr.message
+      : "PNG export exceeded the 2 MB budget at every fallback scale.",
+    "Narrow the capture via `shapeIds` / `frameId`, or shrink the diagram before retrying.",
+  );
+}

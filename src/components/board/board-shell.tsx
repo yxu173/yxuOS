@@ -159,19 +159,18 @@ function BoardShellInner({
           <Whiteboard boardId={boardId} initialSnapshot={initialSnapshot} />
         </main>
 
-        {rightOpen ? (
-          <BoardRightPanel
-            boardId={boardId}
-            initialMessages={initialMessages}
-            initialComments={initialComments}
-            members={members}
-            selectedShapeId={selectedShapeId}
-            onClearSelection={onClearSelection}
-            onFocusShape={onFocusShape}
-            resolveTargetLabel={resolveTargetLabel}
-            selectedShapeLabel={selectedShapeLabel}
-          />
-        ) : null}
+        <BoardRightPanel
+          boardId={boardId}
+          initialMessages={initialMessages}
+          initialComments={initialComments}
+          members={members}
+          selectedShapeId={selectedShapeId}
+          onClearSelection={onClearSelection}
+          onFocusShape={onFocusShape}
+          resolveTargetLabel={resolveTargetLabel}
+          selectedShapeLabel={selectedShapeLabel}
+          hidden={!rightOpen}
+        />
       </div>
     </div>
   );

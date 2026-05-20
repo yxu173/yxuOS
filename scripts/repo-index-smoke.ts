@@ -5,7 +5,7 @@
  *
  * Requires:
  *   - DATABASE_URL set (writes to the project_repos + project_knowledge tables)
- *   - Azure / OpenAI embeddings configured (else embeddings are no-ops)
+ *   - OPENAI_API_KEY set for embeddings (else embeddings are no-ops)
  *   - The first project + team in the DB (we use them as the scope)
  *
  *   bun scripts/repo-index-smoke.ts [owner/repo]

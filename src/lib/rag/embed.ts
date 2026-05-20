@@ -1,4 +1,3 @@
-import { createAzure } from "@ai-sdk/azure";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { EmbeddingModelV3 } from "@ai-sdk/provider";
 import { embed, embedMany } from "ai";
@@ -14,33 +13,18 @@ import { env } from "@/lib/env";
  *
  * # Provider selection
  *
- * We support two providers, picked at startup in this order:
- *
- *   1. **Azure AI Foundry** — when `AZURE_EMBEDDINGS_ENDPOINT` and
- *      `AZURE_EMBEDDINGS_API_KEY` are both set. Calls OpenAI-compatible
- *      embedding deployments hosted on Azure (Foundry resource).
- *      Model id (deployment name) comes from `AZURE_EMBEDDINGS_DEPLOYMENT`
- *      and defaults to `text-embedding-3-large`.
- *
- *   2. **OpenAI direct** — when `OPENAI_API_KEY` is set. Calls
+ *   1. **OpenAI direct** — when `OPENAI_API_KEY` is set. Calls
  *      `text-embedding-3-small` (1536 dims) against api.openai.com.
  *
- *   3. **Disabled** — when neither is configured. Helpers return
- *      empty arrays / nulls so the rest of the app keeps working;
- *      the brain just has nothing in it.
+ *   2. **Disabled** — when not configured. Helpers return empty arrays /
+ *      nulls so the rest of the app keeps working; the brain just has
+ *      nothing in it.
  *
  * # Dimensions
  *
  * The DB column is fixed at **1536** dims (`vector(1536)`), set by
- * the initial migration. Both providers are made to return 1536-dim
- * vectors:
- *
- *   - `text-embedding-3-small` is natively 1536 — no override needed.
- *   - `text-embedding-3-large` is natively 3072, but supports the
- *     `dimensions` parameter (via Matryoshka representations). We
- *     request 1536 to stay backward-compatible with the column and
- *     with any chunks already indexed by the small model. The
- *     quality loss vs. native 3072 is negligible at project scale.
+ * the initial migration. `text-embedding-3-small` is natively 1536 —
+ * no override needed.
  *
  * # `EMBED_MODEL_ID`
  *
@@ -53,14 +37,12 @@ import { env } from "@/lib/env";
 export const EMBED_DIMENSIONS = 1536;
 
 /** Tag for the active provider — surfaces in banners and chunk metadata. */
-export type EmbeddingProviderKind = "azure" | "openai";
+export type EmbeddingProviderKind = "openai";
 
 /**
- * Maximum number of inputs per `embedMany` call. OpenAI and Azure
- * both accept up to 2048 in a single request; 96 keeps individual
- * HTTP timeouts sane and surfaces transient errors on smaller blast
- * radii. (Important for Azure where quota errors take ~30s to
- * surface.)
+ * Maximum number of inputs per `embedMany` call. OpenAI accepts up
+ * to 2048 in a single request; 96 keeps individual HTTP timeouts
+ * sane and surfaces transient errors on smaller blast radii.
  */
 const BATCH_SIZE = 96;
 
@@ -71,9 +53,8 @@ interface Provider {
   /** Built embedding model handle. */
   model: EmbeddingModelV3;
   /**
-   * Provider-specific options to pass on every embed call. For
-   * `text-embedding-3-large` this is `{ dimensions: 1536 }`; for
-   * the small model we leave it undefined (it's already 1536).
+   * Provider-specific options to pass on every embed call.
+   * text-embedding-3-small is natively 1536 dims — no override needed.
    */
   providerOptions?: { openai: { dimensions?: number } };
 }
@@ -82,40 +63,11 @@ let _provider: Provider | null | undefined;
 
 /**
  * Resolve (and memoise) the active provider. Returns `null` when
- * neither Azure nor OpenAI is configured — callers should treat
- * that as "embeddings disabled".
+ * `OPENAI_API_KEY` is not set — callers should treat that as
+ * "embeddings disabled".
  */
 function provider(): Provider | null {
   if (_provider !== undefined) return _provider;
-
-  // Azure first: when both Foundry env vars are set we prefer it,
-  // even if `OPENAI_API_KEY` is also set, because that's the explicit
-  // intent of configuring the Azure pair.
-  if (env.AZURE_EMBEDDINGS_ENDPOINT && env.AZURE_EMBEDDINGS_API_KEY) {
-    // Foundry "services" endpoints expose OpenAI-compatible APIs at
-    // `<endpoint>/openai/v1/...`. The Azure provider appends `/v1`
-    // for us, so we hand it `<endpoint>/openai`.
-    const baseURL = env.AZURE_EMBEDDINGS_ENDPOINT.replace(/\/+$/, "")
-      + "/openai";
-    const client = createAzure({
-      baseURL,
-      apiKey: env.AZURE_EMBEDDINGS_API_KEY,
-    });
-    const modelId = env.AZURE_EMBEDDINGS_DEPLOYMENT;
-    // `text-embedding-3-large` deployments need a 1536-dim request
-    // to match our column. Any other deployment we assume is already
-    // 1536 — caller has opted in by setting AZURE_EMBEDDINGS_DEPLOYMENT.
-    const providerOptions = modelId.includes("text-embedding-3-large")
-      ? { openai: { dimensions: EMBED_DIMENSIONS } as const }
-      : undefined;
-    _provider = {
-      kind: "azure",
-      modelId,
-      model: client.embedding(modelId),
-      providerOptions,
-    };
-    return _provider;
-  }
 
   if (env.OPENAI_API_KEY) {
     const client = createOpenAI({ apiKey: env.OPENAI_API_KEY });
@@ -123,7 +75,6 @@ function provider(): Provider | null {
       kind: "openai",
       modelId: "text-embedding-3-small",
       model: client.embedding("text-embedding-3-small"),
-      // text-embedding-3-small is natively 1536 dims — no override.
       providerOptions: undefined,
     };
     return _provider;
