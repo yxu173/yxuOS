@@ -20,6 +20,7 @@ import type { CanvasEditorHandle } from "./editor-context";
 import type { ToolResult } from "@/lib/tool-result";
 
 import * as excalidrawTools from "./excalidraw/canvas-tools";
+import * as vizTools from "./excalidraw/viz-tools";
 
 export type CanvasToolName =
   | "query_canvas"
@@ -47,15 +48,14 @@ export type CanvasToolName =
   | "add_mermaid_card"
   | "set_selection"
   | "focus_camera"
-  | "screenshot_canvas";
+  | "screenshot_canvas"
+  | "add_table"
+  | "add_bar_chart"
+  | "add_mindmap"
+  | "add_orgchart"
+  | "add_timeline"
+  | "add_venn";
 
-/**
- * Dispatch a single tool call against the mounted Excalidraw canvas.
- *
- * Returns a `Promise` even for sync executors so the call site can
- * `await` uniformly — the only genuinely async tool is
- * `add_mermaid_card` (Mermaid parse is async).
- */
 export async function dispatchCanvasTool(
   handle: CanvasEditorHandle,
   toolName: string,
@@ -116,6 +116,18 @@ export async function dispatchCanvasTool(
       return excalidrawTools.executeFocusCamera(api, input);
     case "screenshot_canvas":
       return excalidrawTools.executeScreenshotCanvas(api, input);
+    case "add_table":
+      return vizTools.executeAddTable(api, input);
+    case "add_bar_chart":
+      return vizTools.executeAddBarChart(api, input);
+    case "add_mindmap":
+      return vizTools.executeAddMindmap(api, input);
+    case "add_orgchart":
+      return vizTools.executeAddOrgchart(api, input);
+    case "add_timeline":
+      return vizTools.executeAddTimeline(api, input);
+    case "add_venn":
+      return vizTools.executeAddVenn(api, input);
     default:
       return {
         ok: false,

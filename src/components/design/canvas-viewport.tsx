@@ -96,6 +96,9 @@ export function CanvasViewport() {
     h: number;
   } | null>(null);
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
+  // Modifier-key state for cursor hints (crosshair on Shift, copy on Alt).
+  const [isShiftDown, setIsShiftDown] = useState(false);
+  const [isAltDown, setIsAltDown] = useState(false);
 
   // Wheel: zoom on ctrl/meta (pinch on Mac trackpad), pan otherwise.
   useEffect(() => {
@@ -126,6 +129,9 @@ export function CanvasViewport() {
   // every selected artboard, Cmd+A → select all artboards.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Shift") setIsShiftDown(true);
+      if (event.key === "Alt") setIsAltDown(true);
+
       const target = event.target as HTMLElement | null;
       if (
         target &&
@@ -182,8 +188,16 @@ export function CanvasViewport() {
         setSelection(state.artboards.map((a) => a.id));
       }
     };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === "Shift") setIsShiftDown(false);
+      if (event.key === "Alt") setIsAltDown(false);
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKeyUp);
+    };
   }, [
     clearSelection,
     removeArtboard,
@@ -191,6 +205,17 @@ export function CanvasViewport() {
     setSelection,
     selection,
   ]);
+
+  /** Base cursor for the canvas viewport, reflecting current interaction
+   *  mode and modifier keys. Artboards and design nodes override this
+   *  via their own CSS cursor values. */
+  const viewportCursor = isPanning
+    ? "grabbing"
+    : isShiftDown
+      ? "crosshair"
+      : isAltDown
+        ? "copy"
+        : "grab";
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== PAN_BUTTON) return;
@@ -494,7 +519,7 @@ export function CanvasViewport() {
           "radial-gradient(rgb(255 255 255 / 0.05) 1px, transparent 1px)",
         backgroundSize: "24px 24px",
         backgroundPosition: `${camera.x % 24}px ${camera.y % 24}px`,
-        cursor: isPanning ? "grabbing" : "default",
+        cursor: viewportCursor,
       }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -513,6 +538,7 @@ export function CanvasViewport() {
             key={artboard.id}
             artboard={artboard}
             onPointerDownArtboard={onPointerDownArtboard}
+            isAltDown={isAltDown}
           />
         ))}
         <FlowOverlay />

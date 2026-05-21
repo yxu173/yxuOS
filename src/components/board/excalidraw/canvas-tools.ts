@@ -1242,9 +1242,22 @@ function sideToFixedPoint(
  * the terminal AT the edge is the most reliable way to force a
  * specific side without going elbow.
  */
+/**
+ * Compute the best attachment point on a shape for an arrow endpoint.
+ *
+ * When `side` is explicit, we return that edge's midpoint.
+ * When `side` is `"auto"`, we pick whichever of the 4 edge midpoints
+ * is closest to `otherPt` (typically the other shape's center). This
+ * means arrows route *around* shapes rather than through their
+ * centers, so text inside tall / wide elements is never covered.
+ *
+ * If `otherPt` is omitted (backward compat), `"auto"` falls back to
+ * the shape centre — the historical behaviour.
+ */
 function edgePoint(
   el: { x: number; y: number; width: number; height: number },
   side: "auto" | "left" | "right" | "top" | "bottom" | undefined,
+  otherPt?: { x: number; y: number },
 ): { x: number; y: number } {
   switch (side) {
     case "left":
@@ -1255,6 +1268,34 @@ function edgePoint(
       return { x: el.x + el.width / 2, y: el.y };
     case "bottom":
       return { x: el.x + el.width / 2, y: el.y + el.height };
+    case "auto":
+    case undefined: {
+      if (!otherPt) {
+        return { x: el.x + el.width / 2, y: el.y + el.height / 2 };
+      }
+      // Pick the edge midpoint closest to the other shape's centre.
+      // Right edge gets a tiny bonus so text (usually left-aligned)
+      // isn't the first thing an arrow hits.
+      const candidates: { x: number; y: number; bonus?: number }[] = [
+        { x: el.x, y: el.y + el.height / 2 },
+        { x: el.x + el.width, y: el.y + el.height / 2, bonus: -1 },
+        { x: el.x + el.width / 2, y: el.y },
+        { x: el.x + el.width / 2, y: el.y + el.height },
+        { x: el.x + el.width / 2, y: el.y + el.height / 2 },
+      ];
+      let best = candidates[0];
+      let bestDist = Infinity;
+      for (const c of candidates) {
+        const dx = c.x - otherPt.x;
+        const dy = c.y - otherPt.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) + (c.bonus ?? 0);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = c;
+        }
+      }
+      return { x: best.x, y: best.y };
+    }
     default:
       return { x: el.x + el.width / 2, y: el.y + el.height / 2 };
   }
@@ -1665,14 +1706,24 @@ function buildBoundArrow(
     return { error: `Shape(s) not found: ${missing.join(", ")}.` };
   }
 
-  // Direct routing with a side hint: position the terminal at the
-  // edge midpoint of the bound shape. Excalidraw's binding
-  // resolver then picks that edge naturally. With `auto`, we just
-  // use shape centers (the historical behaviour).
+  // Pick anchor points. When no explicit side is given ("auto"),
+  // we pass the other shape's centre so `edgePoint` can choose the
+  // nearest edge — arrows then route around shapes instead of
+  // through their centres.
   const routing = spec.routing ?? "direct";
   const elbowed = routing === "orthogonal";
-  const startPt = edgePoint(from, elbowed ? "auto" : spec.fromSide);
-  const endPt = edgePoint(to, elbowed ? "auto" : spec.toSide);
+  const fromCenter = { x: from.x + from.width / 2, y: from.y + from.height / 2 };
+  const toCenter = { x: to.x + to.width / 2, y: to.y + to.height / 2 };
+  const startPt = edgePoint(
+    from,
+    elbowed ? "auto" : spec.fromSide,
+    spec.fromSide === "auto" || (!spec.fromSide && !elbowed) ? toCenter : undefined,
+  );
+  const endPt = edgePoint(
+    to,
+    elbowed ? "auto" : spec.toSide,
+    spec.toSide === "auto" || (!spec.toSide && !elbowed) ? fromCenter : undefined,
+  );
 
   // Build the arrow with NO `start: { id }` / `end: { id }`
   // shortcut — that only resolves ids within the skeleton array,

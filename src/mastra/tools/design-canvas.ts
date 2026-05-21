@@ -1254,6 +1254,158 @@ export const exportJsxTool = createTool({
   ),
 });
 
+/* ─── find_and_replace ────────────────────────────────── */
+
+export const findAndReplaceTool = createTool({
+  id: "find_and_replace",
+  description:
+    "Search and replace text strings or style values across one artboard or the entire design. Use for 'change every Get started to Try it free', 'rebrand all #6366f1 to #10b981', 'swap Inter for Geist everywhere'. Scope controls whether text fields (labels, copy, placeholders, alt text), style values (CSS property values), or both are searched. Returns a per-artboard breakdown so you know exactly what changed.",
+  inputSchema: z.object({
+    find: z
+      .string()
+      .min(1)
+      .describe("String to search for. Case-sensitive."),
+    replace: z.string().describe("Replacement string."),
+    scope: z
+      .enum(["text", "style", "both"])
+      .optional()
+      .describe(
+        "`text` = node text/label/placeholder/alt/title fields; `style` = CSS style property values; `both` = either. Defaults to `both`.",
+      ),
+    artboardId: z
+      .string()
+      .optional()
+      .describe(
+        "Restrict to one artboard. Omit to search every artboard on the canvas.",
+      ),
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      totalMatched: z.number().int(),
+      totalReplaced: z.number().int(),
+      perArtboard: z.array(
+        z.object({
+          artboardId: z.string(),
+          artboardName: z.string(),
+          matched: z.number().int(),
+          replaced: z.number().int(),
+        }),
+      ),
+    }),
+  ),
+});
+
+/* ─── analyze_consistency ──────────────────────────────── */
+
+const consistencyIssueSchema = z.object({
+  category: z.string(),
+  severity: z.enum(["error", "warning", "info"]),
+  message: z.string(),
+  occurrences: z.number().int(),
+  values: z.array(
+    z.object({
+      value: z.string(),
+      count: z.number().int(),
+    }),
+  ),
+});
+
+export const analyzeConsistencyTool = createTool({
+  id: "analyze_consistency",
+  description:
+    "Audit the entire design for visual inconsistencies — multiple border radii, varying button heights, mixed accent colors, inconsistent font sizes, mismatched padding, etc. Returns ranked issues with occurrence counts and the specific values found. Use before declaring a design 'polished' or when the user asks 'is this consistent?' / 'tighten this up'. Pure analysis, no mutation — follow up with `set_tokens` or `patch_nodes` to fix what it finds.",
+  inputSchema: z.object({}),
+  outputSchema: toolResultSchema(
+    z.object({
+      issues: z.array(consistencyIssueSchema),
+      totalIssues: z.number().int(),
+    }),
+  ),
+});
+
+/* ─── suggest_components ─────────────────────────────── */
+
+export const suggestComponentsTool = createTool({
+  id: "suggest_components",
+  description:
+    "Walk every artboard and flag repeated structural subtrees that should be extracted as reusable components. Returns a ranked list of candidates with occurrence count, estimated node savings, and an example path. Use when the user says 'component-ize this', 'make this reusable', or before handing off to dev. Pure analysis, no mutation — follow up with `extract_component` to promote the best candidates.",
+  inputSchema: z.object({
+    minOccurrences: z
+      .number()
+      .int()
+      .min(2)
+      .optional()
+      .describe(
+        "Minimum times a pattern must appear to be suggested. Default 2.",
+      ),
+    minNodeCount: z
+      .number()
+      .int()
+      .min(2)
+      .optional()
+      .describe(
+        "Minimum nodes in a subtree to be worth extracting. Default 3.",
+      ),
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      suggestions: z.array(
+        z.object({
+          name: z.string(),
+          occurrences: z.number().int(),
+          nodeCount: z.number().int(),
+          estimatedSavings: z.number().int(),
+          examplePath: z.string(),
+        }),
+      ),
+    }),
+  ),
+});
+
+/* ─── set_grid ───────────────────────────────────────── */
+
+export const setGridTool = createTool({
+  id: "set_grid",
+  description:
+    "Apply a layout grid (columns, gutters, margins) to an artboard for alignment confidence. Use when the user says 'add a 12-column grid', 'give me 8-px gutters', 'layout grid please'. The grid is stored on the artboard and can be rendered as a faint overlay. Common presets: 12 cols / 24-px gutter / 48-px margin for desktop; 6 cols / 16-px gutter / 16-px margin for mobile.",
+  inputSchema: z.object({
+    artboardId: z.string(),
+    columns: z
+      .number()
+      .int()
+      .min(1)
+      .max(24)
+      .describe("Number of columns (e.g. 12 for standard web, 6 for mobile)."),
+    gutter: z
+      .number()
+      .min(0)
+      .max(200)
+      .describe("Gutter width in pixels between columns."),
+    margin: z
+      .number()
+      .min(0)
+      .max(400)
+      .describe("Outer margin in pixels from artboard edges."),
+    color: z
+      .string()
+      .optional()
+      .describe(
+        "Grid line color (CSS color). Defaults to a faint zinc tone.",
+      ),
+  }),
+  outputSchema: toolResultSchema(
+    z.object({
+      artboardId: z.string(),
+      grid: z.object({
+        columns: z.number(),
+        gutter: z.number(),
+        margin: z.number(),
+        color: z.string(),
+      }),
+    }),
+  ),
+});
+
 export const designCanvasTools = {
   query_canvas: queryCanvasTool,
   add_artboard: addArtboardTool,
@@ -1291,4 +1443,9 @@ export const designCanvasTools = {
   list_flows: listFlowsTool,
   diff_artboards: diffArtboardsTool,
   export_jsx: exportJsxTool,
+  // Designer workflow tools: consistency, reuse, grids.
+  find_and_replace: findAndReplaceTool,
+  analyze_consistency: analyzeConsistencyTool,
+  suggest_components: suggestComponentsTool,
+  set_grid: setGridTool,
 };

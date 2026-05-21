@@ -35,6 +35,8 @@ export interface ResearchChatProps {
    * blank composer.
    */
   initialPrompt?: string;
+  /** Called when the server emits a real-time title update via the stream. */
+  onTitleUpdate?: (title: string) => void;
 }
 
 /**
@@ -62,6 +64,7 @@ export function ResearchChat({
   noteId,
   initialMessages,
   initialPrompt,
+  onTitleUpdate,
 }: ResearchChatProps) {
   const [draft, setDraft] = useState("");
   const router = useRouter();
@@ -79,6 +82,15 @@ export function ResearchChat({
       api: `/api/research-chat/${noteId}`,
     }),
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    onData(dataPart) {
+      if (
+        dataPart.type === "data-titleUpdate" &&
+        dataPart.data &&
+        typeof (dataPart.data as { title?: string }).title === "string"
+      ) {
+        onTitleUpdate?.((dataPart.data as { title: string }).title);
+      }
+    },
     // Whenever the agent finishes a turn, refresh server data so any
     // `update_research_note` tool call is reflected in the left
     // pane's body without a manual reload.

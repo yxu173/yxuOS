@@ -11,6 +11,7 @@ import {
   user,
 } from "./auth";
 import { boardFolders } from "./board-folders";
+import { boardVersions } from "./board-versions";
 import { boards } from "./boards";
 import { comments } from "./comments";
 import { designAssets } from "./design-assets";
@@ -44,6 +45,7 @@ export const userRelations = relations(user, ({ many }) => ({
   createdTasks: many(tasks, { relationName: "task_creator" }),
   assignedTasks: many(tasks, { relationName: "task_assignee" }),
   attachments: many(attachments),
+  boardVersions: many(boardVersions),
   // Better Auth organization plugin
   members: many(member),
   invitations: many(invitation),
@@ -322,10 +324,11 @@ export const accountRelations = relations(account, ({ one }) => ({
   }),
 }));
 
-export const boardsRelations = relations(boards, ({ one }) => ({
+export const boardsRelations = relations(boards, ({ one, many }) => ({
   owner: one(user, {
     fields: [boards.ownerId],
     references: [user.id],
+    relationName: "board_owner",
   }),
   project: one(projects, {
     fields: [boards.projectId],
@@ -334,6 +337,23 @@ export const boardsRelations = relations(boards, ({ one }) => ({
   folder: one(boardFolders, {
     fields: [boards.folderId],
     references: [boardFolders.id],
+  }),
+  lockedBy: one(user, {
+    fields: [boards.lockedById],
+    references: [user.id],
+    relationName: "board_locked_by",
+  }),
+  versions: many(boardVersions),
+}));
+
+export const boardVersionsRelations = relations(boardVersions, ({ one }) => ({
+  board: one(boards, {
+    fields: [boardVersions.boardId],
+    references: [boards.id],
+  }),
+  editedBy: one(user, {
+    fields: [boardVersions.editedById],
+    references: [user.id],
   }),
 }));
 

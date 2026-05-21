@@ -95,6 +95,7 @@ export default async function BoardPage({
     <BoardShell
       boardId={board.id}
       boardName={board.name}
+      userId={session.user.id}
       userName={session.user.name}
       userEmail={session.user.email}
       shareToken={board.shareToken}

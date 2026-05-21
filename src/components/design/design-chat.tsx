@@ -31,6 +31,7 @@ import {
   executeAddArtboard,
   executeAddNodes,
   executeAlignNodes,
+  executeAnalyzeConsistency,
   executeApplyTheme,
   executeArrangeArtboards,
   executeAuditDesign,
@@ -41,6 +42,7 @@ import {
   executeDuplicateNode,
   executeExportJsx,
   executeExtractComponent,
+  executeFindAndReplace,
   executeFindNodes,
   executeGetArtboard,
   executeListAssets,
@@ -57,8 +59,10 @@ import {
   executeSaveAttachmentAsAsset,
   executeScreenshotArtboard,
   executeSetArtboardBackground,
+  executeSetGrid,
   executeSetNodeVisibility,
   executeSetTokens,
+  executeSuggestComponents,
   executeUnwrapNode,
   executeUpdateArtboard,
   executeUpdateComponent,
@@ -76,6 +80,8 @@ import { useTokens } from "./token-context";
 export interface DesignChatProps {
   designId: string;
   initialMessages?: UIMessage[];
+  /** Called when the server emits a real-time title update via the stream. */
+  onTitleUpdate?: (title: string) => void;
 }
 
 const TOOL_LABELS: Record<string, string> = {
@@ -114,6 +120,10 @@ const TOOL_LABELS: Record<string, string> = {
   set_artboard_background: "Updating background",
   diff_artboards: "Diffing artboards",
   export_jsx: "Exporting JSX",
+  find_and_replace: "Find & replace",
+  analyze_consistency: "Analyzing consistency",
+  suggest_components: "Suggesting components",
+  set_grid: "Setting grid",
 };
 
 /**
@@ -135,7 +145,7 @@ interface PendingFile {
   previewUrl: string;
 }
 
-export function DesignChat({ designId, initialMessages }: DesignChatProps) {
+export function DesignChat({ designId, initialMessages, onTitleUpdate }: DesignChatProps) {
   const [pending, setPending] = useState<PendingFile[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
   // Mirror the editor's emptiness + mention count into React state
@@ -173,6 +183,15 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
         api: `/api/design-chat/${designId}`,
       }),
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+      onData(dataPart) {
+        if (
+          dataPart.type === "data-titleUpdate" &&
+          dataPart.data &&
+          typeof (dataPart.data as { title?: string }).title === "string"
+        ) {
+          onTitleUpdate?.((dataPart.data as { title: string }).title);
+        }
+      },
       async onToolCall({ toolCall }) {
         if (toolCall.dynamic) return;
 
@@ -483,6 +502,30 @@ export function DesignChat({ designId, initialMessages }: DesignChatProps) {
               emit(
                 executeExportJsx(
                   toolCall.input as Parameters<typeof executeExportJsx>[0],
+                ),
+              );
+              break;
+            case "find_and_replace":
+              emit(
+                executeFindAndReplace(
+                  toolCall.input as Parameters<typeof executeFindAndReplace>[0],
+                ),
+              );
+              break;
+            case "analyze_consistency":
+              emit(executeAnalyzeConsistency());
+              break;
+            case "suggest_components":
+              emit(
+                executeSuggestComponents(
+                  toolCall.input as Parameters<typeof executeSuggestComponents>[0],
+                ),
+              );
+              break;
+            case "set_grid":
+              emit(
+                executeSetGrid(
+                  toolCall.input as Parameters<typeof executeSetGrid>[0],
                 ),
               );
               break;
@@ -1425,6 +1468,28 @@ function describeToolResult(
         target?: string;
       };
       return `Exported ${target.toUpperCase()} · ${lineCount} lines`;
+    }
+    case "find_and_replace": {
+      const replaced = (data as { totalReplaced?: number })?.totalReplaced ?? 0;
+      const matched = (data as { totalMatched?: number })?.totalMatched ?? 0;
+      if (replaced === 0) return `Find · ${matched} match${matched === 1 ? "" : "es"}, no changes`;
+      return `Replaced · ${replaced} / ${matched}`;
+    }
+    case "analyze_consistency": {
+      const issues = (data as { issues?: unknown[] })?.issues ?? [];
+      const total = issues.length;
+      if (total === 0) return "Consistency · all clean";
+      return `Consistency · ${total} issue${total === 1 ? "" : "s"}`;
+    }
+    case "suggest_components": {
+      const suggestions =
+        (data as { suggestions?: unknown[] })?.suggestions ?? [];
+      if (suggestions.length === 0) return "Components · no candidates";
+      return `Components · ${suggestions.length} suggestion${suggestions.length === 1 ? "" : "s"}`;
+    }
+    case "set_grid": {
+      const g = (data as { grid?: { columns?: number } })?.grid;
+      return g ? `Grid · ${g.columns} columns` : "Set grid";
     }
     default:
       return null;

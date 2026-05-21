@@ -54,6 +54,20 @@ export const boards = pgTable(
      * view this board read-only (no chat, no editing). Null disables sharing.
      */
     shareToken: text("share_token").unique(),
+    /**
+     * Board locking for real-time collaboration. When a team member
+     * has this board open, `lockedById` is set to prevent concurrent
+     * writes by others. The lock is released on disconnect / navigate
+     * away, or when another user explicitly takes over.
+     *
+     * `lockedAt` allows stale-lock detection: if a user's browser
+     * crashes, the lock is auto-released after a timeout (handled by
+     * the client's polling).
+     */
+    lockedById: text("locked_by_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    lockedAt: timestamp("locked_at"),
     createdAt: timestamp("created_at")
       .$defaultFn(() => new Date())
       .notNull(),

@@ -15,6 +15,7 @@ import { saveBoardSnapshot } from "@/app/(app)/boards/actions";
 import {
   useBoardCanvasHandle,
   useBoardSelectionWriter,
+  useBoardZoomWriter,
 } from "../editor-context";
 import { ExcalidrawCardOverlay } from "./card-overlay";
 import { buildSnapshot, toInitialData } from "./snapshot";
@@ -58,6 +59,7 @@ export function ExcalidrawCanvas({
   initialSnapshot,
 }: ExcalidrawCanvasProps) {
   const setSelectedShapeIds = useBoardSelectionWriter();
+  const setCanvasZoom = useBoardZoomWriter();
   const handleRef = useBoardCanvasHandle();
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
 
@@ -134,8 +136,12 @@ export function ExcalidrawCanvas({
 
       const ids = Object.keys(appState.selectedElementIds ?? {});
       setSelectedShapeIds(ids);
+
+      // Push zoom changes for multiplayer cursors.
+      const zoom = appState.zoom?.value ?? 1;
+      setCanvasZoom(zoom);
     },
-    [flush, setSelectedShapeIds],
+    [flush, setSelectedShapeIds, setCanvasZoom],
   );
 
   return (

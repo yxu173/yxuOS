@@ -31,6 +31,9 @@ interface EditorContextValue {
   handleRef: RefObject<CanvasEditorHandle | null>;
   selectedShapeIds: readonly string[];
   setSelectedShapeIds: (ids: readonly string[]) => void;
+  /** Live zoom level from the Excalidraw canvas. Defaults to 1. */
+  canvasZoom: number;
+  setCanvasZoom: (z: number) => void;
 }
 
 const EditorContext = createContext<EditorContextValue | null>(null);
@@ -51,6 +54,7 @@ export function EditorRefProvider({ children }: { children: ReactNode }) {
   const [selectedShapeIds, setSelectedShapeIdsState] = useState<
     readonly string[]
   >([]);
+  const [canvasZoom, setCanvasZoom] = useState(1);
 
   // Memoised so consumers that pass it through useEffect deps don't
   // churn. The identity comparison short-circuits the common case
@@ -69,6 +73,8 @@ export function EditorRefProvider({ children }: { children: ReactNode }) {
         handleRef: ref,
         selectedShapeIds,
         setSelectedShapeIds,
+        canvasZoom,
+        setCanvasZoom,
       }}
     >
       {children}
@@ -79,7 +85,9 @@ export function EditorRefProvider({ children }: { children: ReactNode }) {
 function useBoardEditorContext() {
   const value = useContext(EditorContext);
   if (!value) {
-    throw new Error("Board editor hooks must be used inside <EditorRefProvider>");
+    throw new Error(
+      "Board editor hooks must be used inside <EditorRefProvider>",
+    );
   }
   return value;
 }
@@ -100,6 +108,16 @@ export function useBoardSelection(): {
 /** Internal hook used by the canvas to push selection updates back into context. */
 export function useBoardSelectionWriter() {
   return useBoardEditorContext().setSelectedShapeIds;
+}
+
+/** Live zoom level from the canvas. */
+export function useBoardZoom(): number {
+  return useBoardEditorContext().canvasZoom;
+}
+
+/** Push zoom changes from the canvas. */
+export function useBoardZoomWriter() {
+  return useBoardEditorContext().setCanvasZoom;
 }
 
 /* ─── canvas helpers ─────────────────────────────────────
@@ -125,9 +143,7 @@ export function focusShape(
   shapeId: string,
 ): void {
   if (!handle) return;
-  const target = handle.api
-    .getSceneElements()
-    .find((el) => el.id === shapeId);
+  const target = handle.api.getSceneElements().find((el) => el.id === shapeId);
   if (!target) return;
   handle.api.updateScene({
     appState: { selectedElementIds: { [target.id]: true } },

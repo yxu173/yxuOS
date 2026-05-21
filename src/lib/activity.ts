@@ -25,7 +25,8 @@ export type ActivityVerb =
   // get first-class verbs rather than overloaded `updated`.
   | "added"
   | "removed"
-  | "executed";
+  | "executed"
+  | "mentioned";
 
 export type ActivitySubjectType =
   | "board"

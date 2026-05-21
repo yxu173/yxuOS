@@ -25,6 +25,8 @@ export interface WorkspaceTopBarProps {
   nameSlot: React.ReactNode;
   /** The share dialog component (boards or designs flavour). */
   shareSlot?: React.ReactNode;
+  /** Additional actions shown between share and panel toggles. */
+  actionsSlot?: React.ReactNode;
   userName: string;
   userEmail?: string;
   /** Teams the user belongs to, fed into the workspace switcher. */
@@ -52,6 +54,7 @@ export interface WorkspaceTopBarProps {
  */
 export function WorkspaceTopBar({
   homePath,
+  actionsSlot,
   homeLabel,
   nameSlot,
   shareSlot,
@@ -120,6 +123,7 @@ export function WorkspaceTopBar({
 
       <div className="ml-auto flex items-center gap-1.5">
         {shareSlot}
+        {actionsSlot}
         <Button
           variant="ghost"
           size="icon-sm"

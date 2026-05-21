@@ -466,6 +466,8 @@ export const addMermaidCardTool = createTool({
         "class",
         "mindmap",
         "gantt",
+        "pie",
+        "gitGraph",
       ])
       .describe("Kind of diagram — sets the renderer expectation."),
     mermaid: z
@@ -1258,6 +1260,133 @@ export const screenshotCanvasTool = createTool({
   ),
 });
 
+/* ─── data visualization ───────────────────────── */
+
+export const addTableTool = createTool({
+  id: "add_table",
+  description:
+    "Render a markdown-style table as a clean Excalidraw grid of cells. Use this for 'make a table from this', 'show this in a table', 'tabularise'. Pass `header` (column names) and `rows` (each row is an array of cell strings). Optional `caption` wraps the table in a titled frame.",
+  inputSchema: z.object({
+    caption: z.string().optional(),
+    header: z
+      .array(z.string())
+      .min(1)
+      .max(10)
+      .describe("Column header labels."),
+    rows: z
+      .array(z.array(z.string()).min(1).max(10))
+      .max(30)
+      .describe("Each member is one row of cell values."),
+    x: z.number().optional(),
+    y: z.number().optional(),
+  }),
+  outputSchema: toolResultSchema(z.object({ createdIds: z.array(z.string()) })),
+});
+
+export const addBarChartTool = createTool({
+  id: "add_bar_chart",
+  description:
+    "Draw a bar chart from numeric data. Use for 'chart this', 'graph these numbers', 'visualise it'. `labels` are the category names shown under each bar; `values` are the corresponding bar heights. Autoscales to the largest value. Optional `caption` wraps the chart in a titled frame.",
+  inputSchema: z.object({
+    caption: z.string().optional(),
+    labels: z
+      .array(z.string())
+      .min(1)
+      .max(20)
+      .describe("Category labels under each bar."),
+    values: z
+      .array(z.number())
+      .min(1)
+      .max(20)
+      .describe("Bar heights (one per label)."),
+    x: z.number().optional(),
+    y: z.number().optional(),
+  }),
+  outputSchema: toolResultSchema(z.object({ createdIds: z.array(z.string()) })),
+});
+
+export const addMindmapTool = createTool({
+  id: "add_mindmap",
+  description:
+    "Draw a radial mind-map from indented text. Use for 'mind-map this', 'brainstorm X', 'radial layout'. Each line is a node; indentation via spaces defines the hierarchy. The root is the first line. Nodes radiate outward with connecting arrows.",
+  inputSchema: z.object({
+    text: z
+      .string()
+      .min(1)
+      .max(4000)
+      .describe(
+        "Indented text where each line is a node. The first line is the root. Use 2 spaces per indentation level. Example:\n'Main Topic\n  Subtopic A\n    Detail 1\n    Detail 2\n  Subtopic B'",
+      ),
+    x: z.number().optional().describe("Centre X"),
+    y: z.number().optional().describe("Centre Y"),
+  }),
+  outputSchema: toolResultSchema(z.object({ createdIds: z.array(z.string()) })),
+});
+
+export const addOrgchartTool = createTool({
+  id: "add_orgchart",
+  description:
+    "Draw a downward-spreading org-chart / hierarchy tree. Use for 'org chart of X', 'hierarchy for Y'. `tree` has `name`, optional `role`, and `children` (recursive). Nodes are coloured rectangles connected by arrows.",
+  inputSchema: z.object({
+    tree: z.object({
+      name: z.string().describe("Name / title of this node."),
+      role: z.string().optional().describe("Role subtitle in parentheses."),
+      children: z
+        .array(z.lazy(() => z.object({
+          name: z.string(), role: z.string().optional(), children: z.array(z.any()).default([]),
+        })))
+        .default([]),
+    }),
+    x: z.number().optional(),
+    y: z.number().optional(),
+  }),
+  outputSchema: toolResultSchema(z.object({ createdIds: z.array(z.string()) })),
+});
+
+export const addTimelineTool = createTool({
+  id: "add_timeline",
+  description:
+    "Draw a horizontal timeline with events placed along an arrow. Use for 'timeline of X', 'show milestones'. Each event has a `date` (shown above/below the line, alternating) and a `label` (short description). Dots mark event positions.",
+  inputSchema: z.object({
+    events: z
+      .array(
+        z.object({
+          date: z.string().describe('Short date string (e.g. "Jan 2023").'),
+          label: z
+            .string()
+            .describe("Brief event description (1–4 words)."),
+        }),
+      )
+      .min(1)
+      .max(20),
+    x: z.number().optional(),
+    y: z.number().optional(),
+  }),
+  outputSchema: toolResultSchema(z.object({ createdIds: z.array(z.string()) })),
+});
+
+export const addVennTool = createTool({
+  id: "add_venn",
+  description:
+    "Draw a Venn diagram with labelled overlapping circles. Use for 'Venn diagram of X, Y, Z', 'show overlap'. Each set gets a coloured circle with its label. Up to 4 sets; circles are positioned in a chain with ~60 px overlap.",
+  inputSchema: z.object({
+    caption: z.string().optional(),
+    sets: z
+      .array(
+        z.object({
+          label: z.string().describe("Label for this set's circle."),
+          color: z.string().optional(),
+        }),
+      )
+      .min(2)
+      .max(4)
+      .describe("2–4 overlapping sets."),
+    x: z.number().optional(),
+    y: z.number().optional(),
+  }),
+  outputSchema: toolResultSchema(z.object({ createdIds: z.array(z.string()) })),
+});
+
 export const canvasTools = {
   query_canvas: queryCanvasTool,
   find_shapes: findShapesTool,
@@ -1285,6 +1414,12 @@ export const canvasTools = {
   set_selection: setSelectionTool,
   focus_camera: focusCameraTool,
   screenshot_canvas: screenshotCanvasTool,
+  add_table: addTableTool,
+  add_bar_chart: addBarChartTool,
+  add_mindmap: addMindmapTool,
+  add_orgchart: addOrgchartTool,
+  add_timeline: addTimelineTool,
+  add_venn: addVennTool,
 };
 
 export type CanvasShapeInput = z.infer<typeof shapeInputSchema>;

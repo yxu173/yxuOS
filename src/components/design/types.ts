@@ -57,6 +57,16 @@ export interface Artboard {
   design: DesignNodeRoot | null;
   background?: string;
   /**
+   * Layout grid overlay (columns / gutters / margins). Stored so the
+   * renderer can draw faint guide lines behind the design nodes.
+   */
+  grid?: {
+    columns: number;
+    gutter: number;
+    margin: number;
+    color: string;
+  };
+  /**
    * When true, the canvas refuses to drag/resize/delete this artboard
    * via direct manipulation — only explicit tool calls (`update_artboard`,
    * `delete_artboard`) can mutate it. Useful for "approved" designs the

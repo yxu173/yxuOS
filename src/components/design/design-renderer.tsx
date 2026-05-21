@@ -177,25 +177,26 @@ function NodeRenderer({ node }: { node: DesignNode }): JSX.Element {
 function TextRenderer({ node, ctx }: { node: TextNode; ctx: RenderContext }) {
   const Tag = (node.tag ?? "span") as keyof JSX.IntrinsicElements;
   const defaults: CSSProperties = (() => {
+    const base: CSSProperties = { cursor: "text" };
     switch (node.tag) {
       case "h1":
-        return { fontSize: 48, fontWeight: 700, lineHeight: 1.1, letterSpacing: -0.5 };
+        return { ...base, fontSize: 48, fontWeight: 700, lineHeight: 1.1, letterSpacing: -0.5 };
       case "h2":
-        return { fontSize: 32, fontWeight: 700, lineHeight: 1.15, letterSpacing: -0.3 };
+        return { ...base, fontSize: 32, fontWeight: 700, lineHeight: 1.15, letterSpacing: -0.3 };
       case "h3":
-        return { fontSize: 24, fontWeight: 600, lineHeight: 1.2 };
+        return { ...base, fontSize: 24, fontWeight: 600, lineHeight: 1.2 };
       case "h4":
-        return { fontSize: 20, fontWeight: 600, lineHeight: 1.25 };
+        return { ...base, fontSize: 20, fontWeight: 600, lineHeight: 1.25 };
       case "h5":
-        return { fontSize: 18, fontWeight: 600, lineHeight: 1.3 };
+        return { ...base, fontSize: 18, fontWeight: 600, lineHeight: 1.3 };
       case "h6":
-        return { fontSize: 16, fontWeight: 600, lineHeight: 1.4 };
+        return { ...base, fontSize: 16, fontWeight: 600, lineHeight: 1.4 };
       case "p":
-        return { fontSize: 16, lineHeight: 1.55, color: "#27272a" };
+        return { ...base, fontSize: 16, lineHeight: 1.55, color: "#27272a" };
       case "label":
-        return { fontSize: 14, fontWeight: 500, color: "#3f3f46" };
+        return { ...base, fontSize: 14, fontWeight: 500, color: "#3f3f46" };
       default:
-        return { fontSize: 14 };
+        return { ...base, fontSize: 14 };
     }
   })();
   return <Tag {...interactiveProps(node, ctx, defaults)}>{node.text}</Tag>;
@@ -279,7 +280,7 @@ function ImageRenderer({
       <img
         src={node.src}
         alt={node.alt ?? ""}
-        {...interactiveProps(node, ctx, defaults)}
+        {...interactiveProps(node, ctx, { ...defaults, cursor: "pointer" })}
       />
     );
   }
@@ -326,6 +327,7 @@ function InputRenderer({
     border: "1px solid #e4e4e7",
     borderRadius: 8,
     color: "#18181b",
+    cursor: "text",
   };
   const props = interactiveProps(node, ctx, defaults);
   const input = (
@@ -371,6 +373,7 @@ function LinkRenderer({ node, ctx }: { node: LinkNode; ctx: RenderContext }) {
     textDecoration: "underline",
     textUnderlineOffset: 2,
     fontSize: 14,
+    cursor: "pointer",
   };
   return (
     <a

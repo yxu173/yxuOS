@@ -2172,6 +2172,646 @@ export function executeExportJsx(
   });
 }
 
+/* ─── find_and_replace ────────────────────────────────── */
+
+export interface FindAndReplaceInput {
+  find: string;
+  replace: string;
+  scope?: "text" | "style" | "both";
+  artboardId?: string;
+}
+
+export interface FindAndReplaceOutput {
+  totalMatched: number;
+  totalReplaced: number;
+  perArtboard: Array<{
+    artboardId: string;
+    artboardName: string;
+    matched: number;
+    replaced: number;
+  }>;
+}
+
+/** Fields that carry user-visible text content. */
+const TEXT_FIELDS = [
+  "text",
+  "label",
+  "placeholder",
+  "alt",
+  "title",
+  "href",
+  "src",
+] as const;
+
+type TextField = (typeof TEXT_FIELDS)[number];
+
+function getTextField(node: DesignNode, key: TextField): string | undefined {
+  const n = node as unknown as Record<string, unknown>;
+  const v = n[key];
+  return typeof v === "string" ? v : undefined;
+}
+
+function setTextField(
+  node: DesignNode,
+  key: TextField,
+  value: string,
+): DesignNode {
+  return { ...node, [key]: value } as DesignNode;
+}
+
+function searchTextInNode(node: DesignNode, find: string): number {
+  let hits = 0;
+  for (const key of TEXT_FIELDS) {
+    const val = getTextField(node, key);
+    if (val !== undefined && val.includes(find)) hits += 1;
+  }
+  return hits;
+}
+
+function replaceTextInNode(node: DesignNode, find: string, replace: string): DesignNode {
+  let n = node;
+  for (const key of TEXT_FIELDS) {
+    const val = getTextField(n, key);
+    if (val !== undefined && val.includes(find)) {
+      n = setTextField(n, key, val.split(find).join(replace));
+    }
+  }
+  return n;
+}
+
+function searchStyleInNode(node: DesignNode, find: string): number {
+  if (!node.style) return 0;
+  let hits = 0;
+  for (const v of Object.values(node.style)) {
+    if (typeof v === "string" && v.includes(find)) hits += 1;
+  }
+  return hits;
+}
+
+function replaceStyleInNode(node: DesignNode, find: string, replace: string): DesignNode {
+  if (!node.style) return node;
+  const nextStyle: Record<string, string | number> = {};
+  let changed = false;
+  for (const [k, v] of Object.entries(node.style)) {
+    if (typeof v === "string" && v.includes(find)) {
+      nextStyle[k] = v.split(find).join(replace);
+      changed = true;
+    } else {
+      nextStyle[k] = v;
+    }
+  }
+  return changed ? { ...node, style: nextStyle } : node;
+}
+
+function findAndReplaceTree(
+  node: DesignNode,
+  find: string,
+  replace: string,
+  scope: "text" | "style" | "both",
+): { tree: DesignNode; matched: number; replaced: number } {
+  let matched = 0;
+  let replaced = 0;
+  let n = node;
+
+  if (scope === "text" || scope === "both") {
+    const hits = searchTextInNode(n, find);
+    if (hits > 0) {
+      matched += hits;
+      replaced += hits;
+      n = replaceTextInNode(n, find, replace);
+    }
+  }
+
+  if (scope === "style" || scope === "both") {
+    const hits = searchStyleInNode(n, find);
+    if (hits > 0) {
+      matched += hits;
+      replaced += hits;
+      n = replaceStyleInNode(n, find, replace);
+    }
+  }
+
+  const kids = childrenOf(n);
+  if (kids.length > 0) {
+    const newKids: DesignNode[] = [];
+    for (const child of kids) {
+      const r = findAndReplaceTree(child, find, replace, scope);
+      matched += r.matched;
+      replaced += r.replaced;
+      newKids.push(r.tree);
+    }
+    n = { ...n, children: newKids } as DesignNode;
+  }
+
+  return { tree: n, matched, replaced };
+}
+
+export function executeFindAndReplace(
+  input: FindAndReplaceInput,
+): ToolResult<FindAndReplaceOutput> {
+  const state = useDesignCanvas.getState();
+  const scope = input.scope ?? "both";
+  const targets = input.artboardId
+    ? state.artboards.filter((a) => a.id === input.artboardId)
+    : state.artboards;
+
+  if (input.artboardId && targets.length === 0) {
+    return fail("not_found", `Artboard "${input.artboardId}" not found.`);
+  }
+
+  let totalMatched = 0;
+  let totalReplaced = 0;
+  const perArtboard: FindAndReplaceOutput["perArtboard"] = [];
+
+  for (const ab of targets) {
+    if (!ab.design) {
+      perArtboard.push({
+        artboardId: ab.id,
+        artboardName: ab.name,
+        matched: 0,
+        replaced: 0,
+      });
+      continue;
+    }
+    const r = findAndReplaceTree(ab.design, input.find, input.replace, scope);
+    totalMatched += r.matched;
+    totalReplaced += r.replaced;
+    perArtboard.push({
+      artboardId: ab.id,
+      artboardName: ab.name,
+      matched: r.matched,
+      replaced: r.replaced,
+    });
+    if (r.replaced > 0) {
+      state.updateArtboard(ab.id, { design: r.tree });
+    }
+  }
+
+  return ok({ totalMatched, totalReplaced, perArtboard });
+}
+
+/* ─── analyze_consistency ──────────────────────────────── */
+
+export interface AnalyzeConsistencyOutput {
+  issues: Array<{
+    category: string;
+    severity: "error" | "warning" | "info";
+    message: string;
+    occurrences: number;
+    values: Array<{ value: string; count: number }>;
+  }>;
+  totalIssues: number;
+}
+
+interface ValueBucket {
+  value: string;
+  count: number;
+  sampleNodeType: string;
+}
+
+function walkCollectValues(
+  node: DesignNode,
+  buckets: Map<string, Map<string, ValueBucket>>,
+): void {
+  if (node.style) {
+    for (const [k, v] of Object.entries(node.style)) {
+      const bucketKey = k;
+      const strVal = String(v);
+      if (!buckets.has(bucketKey)) buckets.set(bucketKey, new Map());
+      const map = buckets.get(bucketKey)!;
+      const existing = map.get(strVal);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        map.set(strVal, { value: strVal, count: 1, sampleNodeType: node.type });
+      }
+    }
+  }
+
+  // Collect button heights separately
+  if (node.type === "button" && node.style?.height !== undefined) {
+    const key = "buttonHeight";
+    const strVal = String(node.style.height);
+    if (!buckets.has(key)) buckets.set(key, new Map());
+    const map = buckets.get(key)!;
+    const existing = map.get(strVal);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      map.set(strVal, { value: strVal, count: 1, sampleNodeType: "button" });
+    }
+  }
+
+  // Collect accent-like colors
+  if (node.style?.backgroundColor !== undefined) {
+    const val = String(node.style.backgroundColor);
+    if (looksLikeColor(val) && !looksLikeNeutral(val)) {
+      const key = "accentBackgroundColor";
+      if (!buckets.has(key)) buckets.set(key, new Map());
+      const map = buckets.get(key)!;
+      const existing = map.get(val);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        map.set(val, { value: val, count: 1, sampleNodeType: node.type });
+      }
+    }
+  }
+
+  for (const child of childrenOf(node)) {
+    walkCollectValues(child, buckets);
+  }
+}
+
+function looksLikeColor(value: string): boolean {
+  return (
+    value.startsWith("#") ||
+    value.startsWith("rgb") ||
+    value.startsWith("hsl") ||
+    value.startsWith("var(")
+  );
+}
+
+function looksLikeNeutral(value: string): boolean {
+  const lowered = value.toLowerCase();
+  const neutrals = [
+    "transparent",
+    "white",
+    "black",
+    "#000",
+    "#fff",
+    "#ffffff",
+    "#000000",
+  ];
+  if (neutrals.some((n) => lowered === n || lowered.startsWith(n))) return true;
+  // zinc / gray / slate / neutral / stone families
+  if (/\b(zinc|gray|slate|neutral|stone)\b/.test(lowered)) return true;
+  // near-neutral hexes (first two channels almost equal)
+  if (lowered.startsWith("#") && lowered.length >= 4) {
+    const r = parseInt(lowered.slice(1, 3), 16);
+    const g = parseInt(lowered.slice(3, 5), 16);
+    const b = parseInt(lowered.slice(5, 7), 16);
+    if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
+      const maxDiff = Math.max(Math.abs(r - g), Math.abs(g - b), Math.abs(r - b));
+      if (maxDiff < 16) return true;
+    }
+  }
+  return false;
+}
+
+function buildConsistencyIssues(
+  buckets: Map<string, Map<string, ValueBucket>>,
+): AnalyzeConsistencyOutput["issues"] {
+  const issues: AnalyzeConsistencyOutput["issues"] = [];
+
+  const categories: Array<{
+    key: string | string[];
+    name: string;
+    threshold: number;
+    severity: "error" | "warning" | "info";
+    message: (unique: number, vals: ValueBucket[]) => string;
+  }> = [
+    {
+      key: "borderRadius",
+      name: "border radius",
+      threshold: 2,
+      severity: "warning",
+      message: (u) =>
+        `${u} different border radii found — tokens should govern this`,
+    },
+    {
+      key: "buttonHeight",
+      name: "button height",
+      threshold: 2,
+      severity: "error",
+      message: (u) =>
+        `${u} different button heights — every primary action should share one height`,
+    },
+    {
+      key: "accentBackgroundColor",
+      name: "accent color",
+      threshold: 2,
+      severity: "error",
+      message: (u) =>
+        `${u} different accent backgrounds — consolidate to one token`,
+    },
+    {
+      key: "fontSize",
+      name: "font size",
+      threshold: 4,
+      severity: "warning",
+      message: (u) =>
+        `${u} different font sizes — use the type scale (12/14/16/18/24/32/48/72)`,
+    },
+    {
+      key: "padding",
+      name: "padding",
+      threshold: 4,
+      severity: "info",
+      message: (u) =>
+        `${u} different padding values — prefer the spacing scale (4/8/12/16/24/32/48/64/96)`,
+    },
+    {
+      key: "gap",
+      name: "gap",
+      threshold: 3,
+      severity: "info",
+      message: (u) =>
+        `${u} different gap values — prefer the spacing scale`,
+    },
+    {
+      key: "fontFamily",
+      name: "font family",
+      threshold: 2,
+      severity: "error",
+      message: (u) =>
+        `${u} different font families — pick one and tokenize it`,
+    },
+  ];
+
+  for (const cat of categories) {
+    const keys = Array.isArray(cat.key) ? cat.key : [cat.key];
+    const merged = new Map<string, ValueBucket>();
+    for (const k of keys) {
+      const map = buckets.get(k);
+      if (!map) continue;
+      for (const [val, bucket] of map) {
+        const existing = merged.get(val);
+        if (existing) {
+          existing.count += bucket.count;
+        } else {
+          merged.set(val, { ...bucket });
+        }
+      }
+    }
+    if (merged.size >= cat.threshold) {
+      const values = Array.from(merged.values()).sort((a, b) => b.count - a.count);
+      const occurrences = values.reduce((sum, v) => sum + v.count, 0);
+      issues.push({
+        category: cat.name,
+        severity: cat.severity,
+        message: cat.message(merged.size, values),
+        occurrences,
+        values: values.map((v) => ({ value: v.value, count: v.count })),
+      });
+    }
+  }
+
+  // Sort by severity: error > warning > info
+  const severityOrder = { error: 0, warning: 1, info: 2 };
+  issues.sort(
+    (a, b) =>
+      severityOrder[a.severity] - severityOrder[b.severity] ||
+      b.occurrences - a.occurrences,
+  );
+
+  return issues;
+}
+
+export function executeAnalyzeConsistency(): ToolResult<AnalyzeConsistencyOutput> {
+  const state = useDesignCanvas.getState();
+  const buckets = new Map<string, Map<string, ValueBucket>>();
+
+  for (const ab of state.artboards) {
+    if (!ab.design) continue;
+    walkCollectValues(ab.design, buckets);
+  }
+
+  const issues = buildConsistencyIssues(buckets);
+  return ok({ issues, totalIssues: issues.length });
+}
+
+/* ─── suggest_components ─────────────────────────────── */
+
+export interface SuggestComponentsInput {
+  minOccurrences?: number;
+  minNodeCount?: number;
+}
+
+export interface SuggestComponentsOutput {
+  suggestions: Array<{
+    name: string;
+    occurrences: number;
+    nodeCount: number;
+    estimatedSavings: number;
+    examplePath: string;
+  }>;
+}
+
+/** Structural fingerprint that ignores text content but keeps type
+ *  hierarchy, style keys, and a few semantic props. */
+function structuralFingerprint(node: DesignNode): string {
+  const styleKeys = node.style ? Object.keys(node.style).sort().join(",") : "";
+  let base = `${node.type}|sk=[${styleKeys}]`;
+
+  const n = node as unknown as Record<string, unknown>;
+  if (node.type === "text") base += `|tag=${(n.tag as string) || "span"}`;
+  if (node.type === "button")
+    base += `|variant=${(n.variant as string) || "primary"}|size=${(n.size as string) || "md"}`;
+  if (node.type === "image") base += `|hasSrc=${!!n.src}`;
+  if (node.type === "input")
+    base += `|type=${(n.inputType as string) || "text"}`;
+  if (node.type === "link") base += `|hasHref=${!!n.href}`;
+  if (node.type === "icon") base += `|name=${n.name}`;
+  if (node.type === "frame") base += `|hasTitle=${!!n.title}`;
+  if (node.type === "component-ref")
+    base += `|slug=${n.componentSlug}`;
+
+  const kids = childrenOf(node);
+  if (kids.length > 0) {
+    base += `|c=[${kids.map(structuralFingerprint).join("][")}]`;
+  }
+  return base;
+}
+
+function countNodesDeep(node: DesignNode): number {
+  let n = 1;
+  for (const c of childrenOf(node)) n += countNodesDeep(c);
+  return n;
+}
+
+function collectSubtrees(
+  node: DesignNode,
+  path: string,
+  out: Array<{ node: DesignNode; fingerprint: string; nodeCount: number; path: string }>,
+): void {
+  const fp = structuralFingerprint(node);
+  const nc = countNodesDeep(node);
+  out.push({ node, fingerprint: fp, nodeCount: nc, path });
+  for (let i = 0; i < childrenOf(node).length; i++) {
+    collectSubtrees(
+      childrenOf(node)[i]!,
+      `${path}.children[${i}]`,
+      out,
+    );
+  }
+}
+
+function guessComponentName(node: DesignNode): string {
+  const n = node as unknown as Record<string, unknown>;
+  if (node.type === "card") return "Card";
+  if (node.type === "nav") return "Navbar";
+  if (node.type === "section") {
+    const heading = childrenOf(node).find(
+      (c) =>
+        c.type === "text" &&
+        (c as unknown as { tag?: string }).tag?.startsWith("h"),
+    );
+    const title =
+      (heading && (heading as unknown as { text?: string }).text?.slice(0, 20)) ??
+      "";
+    return title ? `"${title}" Section` : "Section";
+  }
+  if (node.type === "frame") {
+    const t = (n.title as string) || "";
+    return t ? `"${t}" Frame` : "Frame";
+  }
+  if (node.type === "button") return `Button ${(n.label as string) || ""}`.trim();
+  if (node.type === "div") {
+    const firstButton = childrenOf(node).find((c) => c.type === "button");
+    if (firstButton) return `CTA Group`;
+    const firstText = childrenOf(node).find((c) => c.type === "text");
+    if (firstText) return `Text Block`;
+    return "Container";
+  }
+  if (node.type === "component-ref") return `Ref ${n.componentSlug}`;
+  return `${node.type.charAt(0).toUpperCase()}${node.type.slice(1)}`;
+}
+
+export function executeSuggestComponents(
+  input: SuggestComponentsInput,
+): ToolResult<SuggestComponentsOutput> {
+  const state = useDesignCanvas.getState();
+  const minOccurrences = input.minOccurrences ?? 2;
+  const minNodeCount = input.minNodeCount ?? 3;
+
+  const allSubtrees: Array<{
+    fingerprint: string;
+    nodeCount: number;
+    path: string;
+    artboardName: string;
+  }> = [];
+
+  for (const ab of state.artboards) {
+    if (!ab.design) continue;
+    const local: Array<{
+      node: DesignNode;
+      fingerprint: string;
+      nodeCount: number;
+      path: string;
+    }> = [];
+    collectSubtrees(ab.design, "root", local);
+    for (const s of local) {
+      allSubtrees.push({
+        fingerprint: s.fingerprint,
+        nodeCount: s.nodeCount,
+        path: `${ab.name}:${s.path}`,
+        artboardName: ab.name,
+      });
+    }
+  }
+
+  // Group by fingerprint
+  const groups = new Map<
+    string,
+    Array<{ nodeCount: number; path: string; artboardName: string }>
+  >();
+  for (const s of allSubtrees) {
+    const g = groups.get(s.fingerprint);
+    if (g) {
+      g.push({ nodeCount: s.nodeCount, path: s.path, artboardName: s.artboardName });
+    } else {
+      groups.set(s.fingerprint, [
+        { nodeCount: s.nodeCount, path: s.path, artboardName: s.artboardName },
+      ]);
+    }
+  }
+
+  // Resolve fingerprint -> representative node for naming
+  const fingerprintToNode = new Map<string, DesignNode>();
+  for (const ab of state.artboards) {
+    if (!ab.design) continue;
+    const local: Array<{
+      node: DesignNode;
+      fingerprint: string;
+      nodeCount: number;
+      path: string;
+    }> = [];
+    collectSubtrees(ab.design, "root", local);
+    for (const s of local) {
+      if (!fingerprintToNode.has(s.fingerprint)) {
+        fingerprintToNode.set(s.fingerprint, s.node);
+      }
+    }
+  }
+
+  const suggestions: SuggestComponentsOutput["suggestions"] = [];
+  for (const [fp, entries] of groups) {
+    if (entries.length < minOccurrences) continue;
+    const nc = entries[0]?.nodeCount ?? 0;
+    if (nc < minNodeCount) continue;
+    const rep = fingerprintToNode.get(fp);
+    const name = rep ? guessComponentName(rep) : "Component";
+    const estimatedSavings = nc * (entries.length - 1); // nodes saved if extracted
+    suggestions.push({
+      name,
+      occurrences: entries.length,
+      nodeCount: nc,
+      estimatedSavings,
+      examplePath: entries[0]?.path ?? "",
+    });
+  }
+
+  // Rank by estimated savings (highest first), then occurrences
+  suggestions.sort((a, b) =>
+    b.estimatedSavings !== a.estimatedSavings
+      ? b.estimatedSavings - a.estimatedSavings
+      : b.occurrences - a.occurrences,
+  );
+
+  // Cap at top 10
+  const capped = suggestions.slice(0, 10);
+  return ok({ suggestions: capped });
+}
+
+/* ─── set_grid ───────────────────────────────────────── */
+
+export interface SetGridInput {
+  artboardId: string;
+  columns: number;
+  gutter: number;
+  margin: number;
+  color?: string;
+}
+
+export interface SetGridOutput {
+  artboardId: string;
+  grid: {
+    columns: number;
+    gutter: number;
+    margin: number;
+    color: string;
+  };
+}
+
+export function executeSetGrid(
+  input: SetGridInput,
+): ToolResult<SetGridOutput> {
+  const state = useDesignCanvas.getState();
+  const ab = state.artboards.find((a) => a.id === input.artboardId);
+  if (!ab) {
+    return fail("not_found", `Artboard "${input.artboardId}" not found.`);
+  }
+  const grid = {
+    columns: input.columns,
+    gutter: input.gutter,
+    margin: input.margin,
+    color: input.color ?? "rgba(161, 161, 170, 0.15)",
+  };
+  state.updateArtboard(input.artboardId, { grid });
+  return ok({ artboardId: input.artboardId, grid });
+}
+
 /* ─── helpers ──────────────────────────────────────── */
 
 // Re-exported so the chat can ask "is this id even in the tree?" before

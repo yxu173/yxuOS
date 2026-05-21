@@ -29,6 +29,12 @@ const dateFormatter = new Intl.DateTimeFormat("en", {
   day: "numeric",
 });
 
+function formatDate(val: string | Date): string {
+  const d = val instanceof Date ? val : new Date(val);
+  if (isNaN(d.getTime())) return "";
+  return dateFormatter.format(d);
+}
+
 export function LeftPanel({
   boards,
   activeBoardId,
@@ -85,7 +91,7 @@ export function LeftPanel({
                   >
                     <span className="truncate">{board.name}</span>
                     <span className="text-[10px] uppercase tracking-wide text-zinc-500">
-                      {dateFormatter.format(board.updatedAt)}
+                      {formatDate(board.updatedAt)}
                     </span>
                   </Link>
                 </li>

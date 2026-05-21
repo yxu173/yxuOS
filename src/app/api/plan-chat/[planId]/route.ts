@@ -2,11 +2,16 @@ import { handleChatStream } from "@mastra/ai-sdk";
 import { RequestContext } from "@mastra/core/request-context";
 import { createUIMessageStreamResponse } from "ai";
 
-import { safeChatStream } from "@/lib/ai/safe-chat-stream";
-import { and, eq } from "drizzle-orm";
-
 import { db } from "@/db";
 import { taskPlans } from "@/db/schema";
+import {
+  generateChatTitle,
+  extractFirstUserText,
+  needsTitle,
+} from "@/lib/ai/chat-title";
+import { wrapStreamWithTitle } from "@/lib/ai/stream-title";
+import { safeChatStream } from "@/lib/ai/safe-chat-stream";
+import { and, eq } from "drizzle-orm";
 import { requireActiveTeam } from "@/lib/permissions";
 import { mastra } from "@/mastra";
 import type { PlanningToolContext } from "@/mastra/tools/planning-workspace";
@@ -41,7 +46,7 @@ export async function POST(
 
   const plan = await db.query.taskPlans.findFirst({
     where: and(eq(taskPlans.id, planId), eq(taskPlans.teamId, teamId)),
-    columns: { id: true, threadId: true, projectId: true },
+    columns: { id: true, threadId: true, projectId: true, title: true },
   });
   if (!plan) {
     return new Response("Not found", { status: 404 });
@@ -49,6 +54,19 @@ export async function POST(
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const body = (await req.json()) as any;
+
+  // ── Auto-title generation ──────────────────────────────────
+  let generatedTitle: string | null = null;
+  if (needsTitle(plan.title)) {
+    const firstUserText = extractFirstUserText(body);
+    if (firstUserText) {
+      generatedTitle = await generateChatTitle(firstUserText);
+      await db
+        .update(taskPlans)
+        .set({ title: generatedTitle, updatedAt: new Date() })
+        .where(and(eq(taskPlans.id, planId), eq(taskPlans.teamId, teamId)));
+    }
+  }
 
   const requestContext = new RequestContext<{
     planning: PlanningToolContext;
@@ -64,7 +82,7 @@ export async function POST(
     projectId: plan.projectId,
   });
 
-  const upstream = await handleChatStream({
+  let upstream = await handleChatStream({
     version: "v6",
     mastra,
     agentId: "planner",
@@ -82,6 +100,10 @@ export async function POST(
       },
     },
   });
+
+  if (generatedTitle) {
+    upstream = wrapStreamWithTitle(upstream, generatedTitle);
+  }
 
   // Friendly-error wrap — see `safeChatStream` for the rationale.
   return createUIMessageStreamResponse({ stream: safeChatStream(upstream) });

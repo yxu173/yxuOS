@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
 import { Chat } from "./chat";
+import { VersionHistory } from "./version-history";
 
 export interface BoardRightPanelProps {
   boardId: string;
@@ -29,6 +30,8 @@ export interface BoardRightPanelProps {
   // When false, the panel is hidden via CSS instead of unmounted so the
   // Chat's in-memory message history survives collapse/expand cycles.
   hidden?: boolean;
+  /** Fired when the server stream emits an auto-generated title update. */
+  onTitleUpdate?: (title: string) => void;
 }
 
 export function BoardRightPanel({
@@ -42,6 +45,7 @@ export function BoardRightPanel({
   resolveTargetLabel,
   selectedShapeLabel,
   hidden = false,
+  onTitleUpdate,
 }: BoardRightPanelProps) {
   return (
     <aside
@@ -52,7 +56,7 @@ export function BoardRightPanel({
       aria-hidden={hidden}
     >
       <Tabs defaultValue="chat" className="flex h-full flex-col">
-        <TabsList className="m-2 grid w-auto grid-cols-2">
+        <TabsList className="m-2 grid w-auto grid-cols-3">
           <TabsTrigger value="chat">Chat</TabsTrigger>
           <TabsTrigger value="comments">
             Comments
@@ -62,13 +66,18 @@ export function BoardRightPanel({
               </span>
             ) : null}
           </TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
         <TabsContent
           value="chat"
           forceMount
           className="m-0 flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden"
         >
-          <Chat boardId={boardId} initialMessages={initialMessages} />
+          <Chat
+            boardId={boardId}
+            initialMessages={initialMessages}
+            onTitleUpdate={onTitleUpdate}
+          />
         </TabsContent>
         <TabsContent
           value="comments"
@@ -85,6 +94,13 @@ export function BoardRightPanel({
             onTargetClick={onFocusShape}
             resolveTargetLabel={resolveTargetLabel}
           />
+        </TabsContent>
+        <TabsContent
+          value="history"
+          forceMount
+          className="m-0 flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden"
+        >
+          <VersionHistory boardId={boardId} />
         </TabsContent>
       </Tabs>
     </aside>

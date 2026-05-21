@@ -14,6 +14,8 @@ import { HandoffToPlannerButton } from "./handoff-to-planner-button";
 export interface ResearchNoteEditorProps {
   noteId: string;
   initialTitle: string;
+  /** Real-time title from the server — takes precedence over initialTitle. */
+  streamedTitle?: string | null;
   initialBody: string;
   /**
    * Project slug so the handoff button can route to the new plan
@@ -42,6 +44,7 @@ export interface ResearchNoteEditorProps {
 export function ResearchNoteEditor({
   noteId,
   initialTitle,
+  streamedTitle,
   initialBody,
   projectSlug,
 }: ResearchNoteEditorProps) {
@@ -71,6 +74,19 @@ export function ResearchNoteEditor({
       lastSyncedTitle.current = initialTitle;
     }
   }, [initialTitle]);
+  // Sync a server-streamed auto-title into local editable state.
+  // This is the standard prop-to-state mirror pattern used throughout
+  // the codebase (see inline-text-edit.tsx, flow-overlay.tsx, etc.).
+  useEffect(() => {
+    if (streamedTitle && streamedTitle !== title) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setTitle(streamedTitle);
+      lastSyncedTitle.current = streamedTitle;
+    }
+  // We intentionally depend on `title` so the effect only fires when the
+  // values differ, preventing unnecessary re-renders.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streamedTitle]);
 
   const saveBody = () => {
     if (body === lastSyncedBody.current) {

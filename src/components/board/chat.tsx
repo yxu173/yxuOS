@@ -27,6 +27,8 @@ import { dispatchCanvasTool } from "./tool-dispatcher";
 export interface ChatProps {
   boardId: string;
   initialMessages?: UIMessage[];
+  /** Called when the server emits a real-time title update via the stream. */
+  onTitleUpdate?: (title: string) => void;
 }
 
 const TOOL_LABELS: Record<string, string> = {
@@ -43,7 +45,7 @@ const TOOL_LABELS: Record<string, string> = {
   add_mermaid_card: "Drawing diagram",
 };
 
-export function Chat({ boardId, initialMessages }: ChatProps) {
+export function Chat({ boardId, initialMessages, onTitleUpdate }: ChatProps) {
   const handleRef = useBoardCanvasHandle();
   const [input, setInput] = useState("");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -55,6 +57,15 @@ export function Chat({ boardId, initialMessages }: ChatProps) {
         api: `/api/chat/${boardId}`,
       }),
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+      onData(dataPart) {
+        if (
+          dataPart.type === "data-titleUpdate" &&
+          dataPart.data &&
+          typeof (dataPart.data as { title?: string }).title === "string"
+        ) {
+          onTitleUpdate?.((dataPart.data as { title: string }).title);
+        }
+      },
       async onToolCall({ toolCall }) {
         if (toolCall.dynamic) return;
 

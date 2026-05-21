@@ -37,10 +37,13 @@ export function PlanShell({
   initialMessages,
   initialPrompt,
 }: PlanShellProps) {
+  // Real-time title from the server-side auto-title generator.
+  const [streamedTitle, setStreamedTitle] = useState<string | null>(null);
+
   return (
     <div className="grid h-[calc(100vh-3rem)] min-h-0 w-full grid-cols-[minmax(0,1fr)_380px] overflow-hidden">
       <section className="flex min-h-0 min-w-0 flex-col border-r border-white/5">
-        <PlanHeader plan={plan} />
+        <PlanHeader plan={plan} streamedTitle={streamedTitle} />
         <PlanRows
           planId={plan.id}
           projectSlug={plan.projectSlug}
@@ -52,6 +55,7 @@ export function PlanShell({
           planId={plan.id}
           initialMessages={initialMessages}
           initialPrompt={initialPrompt}
+          onTitleUpdate={setStreamedTitle}
         />
       </aside>
     </div>
@@ -64,11 +68,19 @@ const STATUS_STYLES: Record<string, string> = {
   archived: "border-white/5 bg-white/[0.02] text-zinc-500",
 };
 
-function PlanHeader({ plan }: { plan: TaskPlanDetail }) {
+function PlanHeader({
+  plan,
+  streamedTitle,
+}: {
+  plan: TaskPlanDetail;
+  streamedTitle?: string | null;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [title, setTitle] = useState(plan.title);
 
+  // streamedTitle takes precedence over server-fetched title.
+  const displayTitle = streamedTitle ?? title;
   const saveTitle = (next: string) => {
     const trimmed = next.trim();
     if (!trimmed || trimmed === plan.title) return;
@@ -94,7 +106,7 @@ function PlanHeader({ plan }: { plan: TaskPlanDetail }) {
           <ArrowLeft className="size-4" />
         </Link>
         <input
-          value={title}
+          value={displayTitle}
           onChange={(event) => setTitle(event.target.value)}
           onBlur={(event) => saveTitle(event.target.value)}
           onKeyDown={(event) => {

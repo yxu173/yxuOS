@@ -2,9 +2,6 @@ import { handleChatStream } from "@mastra/ai-sdk";
 import { RequestContext } from "@mastra/core/request-context";
 import { createUIMessageStreamResponse } from "ai";
 
-import { safeChatStream } from "@/lib/ai/safe-chat-stream";
-import { and, asc, eq, inArray } from "drizzle-orm";
-
 import { db } from "@/db";
 import {
   boards,
@@ -18,6 +15,14 @@ import {
   boardSnapshotToDigest,
   type RawBoardSnapshot,
 } from "@/lib/boards/snapshot-digest";
+import {
+  generateChatTitle,
+  extractFirstUserText,
+  needsTitle,
+} from "@/lib/ai/chat-title";
+import { wrapStreamWithTitle } from "@/lib/ai/stream-title";
+import { safeChatStream } from "@/lib/ai/safe-chat-stream";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { requireActiveTeam } from "@/lib/permissions";
 import { mastra } from "@/mastra";
 import type { ProjectToolContext } from "@/mastra/tools/search-knowledge";
@@ -57,7 +62,7 @@ export async function POST(
   // retrieval to the right project.
   const design = await db.query.designs.findFirst({
     where: and(eq(designs.id, designId), eq(designs.teamId, teamId)),
-    columns: { id: true, threadId: true, projectId: true },
+    columns: { id: true, threadId: true, projectId: true, name: true },
   });
   if (!design) {
     return new Response("Not found", { status: 404 });
@@ -69,6 +74,19 @@ export async function POST(
   // helps. We pluck the bits we care about and validate them defensively.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const body = (await req.json()) as any;
+
+  // ── Auto-title generation ──────────────────────────────────
+  let generatedTitle: string | null = null;
+  if (needsTitle(design.name)) {
+    const firstUserText = extractFirstUserText(body);
+    if (firstUserText) {
+      generatedTitle = await generateChatTitle(firstUserText);
+      await db
+        .update(designs)
+        .set({ name: generatedTitle, updatedAt: new Date() })
+        .where(and(eq(designs.id, designId), eq(designs.teamId, teamId)));
+    }
+  }
 
   // Accept the new bucketed `mentions` shape, falling back to the
   // legacy `mentionedBoardIds` field so a stale client (cached SW,
@@ -102,7 +120,7 @@ export async function POST(
     });
   }
 
-  const upstream = await handleChatStream({
+  let upstream = await handleChatStream({
     version: "v6",
     mastra,
     agentId: "designArchitect",
@@ -116,6 +134,10 @@ export async function POST(
       },
     },
   });
+
+  if (generatedTitle) {
+    upstream = wrapStreamWithTitle(upstream, generatedTitle);
+  }
 
   // Wrap the raw stream so mid-stream provider failures (429s, etc.)
   // surface as a plain-English message to the client instead of a

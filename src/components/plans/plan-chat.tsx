@@ -25,6 +25,8 @@ export interface PlanChatProps {
   planId: string;
   initialMessages: UIMessage[];
   initialPrompt?: string;
+  /** Called when the server emits a real-time title update via the stream. */
+  onTitleUpdate?: (title: string) => void;
 }
 
 const TOOL_LABELS: Record<string, string> = {
@@ -51,6 +53,7 @@ export function PlanChat({
   planId,
   initialMessages,
   initialPrompt,
+  onTitleUpdate,
 }: PlanChatProps) {
   const [draft, setDraft] = useState("");
   const router = useRouter();
@@ -63,6 +66,15 @@ export function PlanChat({
       api: `/api/plan-chat/${planId}`,
     }),
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    onData(dataPart) {
+      if (
+        dataPart.type === "data-titleUpdate" &&
+        dataPart.data &&
+        typeof (dataPart.data as { title?: string }).title === "string"
+      ) {
+        onTitleUpdate?.((dataPart.data as { title: string }).title);
+      }
+    },
     onFinish: () => router.refresh(),
   });
 

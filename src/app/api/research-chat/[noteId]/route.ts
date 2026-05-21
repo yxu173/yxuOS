@@ -2,11 +2,16 @@ import { handleChatStream } from "@mastra/ai-sdk";
 import { RequestContext } from "@mastra/core/request-context";
 import { createUIMessageStreamResponse } from "ai";
 
-import { safeChatStream } from "@/lib/ai/safe-chat-stream";
-import { and, eq } from "drizzle-orm";
-
 import { db } from "@/db";
 import { researchNotes } from "@/db/schema";
+import {
+  generateChatTitle,
+  extractFirstUserText,
+  needsTitle,
+} from "@/lib/ai/chat-title";
+import { wrapStreamWithTitle } from "@/lib/ai/stream-title";
+import { safeChatStream } from "@/lib/ai/safe-chat-stream";
+import { and, eq } from "drizzle-orm";
 import { requireActiveTeam } from "@/lib/permissions";
 import { mastra } from "@/mastra";
 import type { ProjectToolContext } from "@/mastra/tools/search-knowledge";
@@ -49,6 +54,7 @@ export async function POST(
       id: true,
       threadId: true,
       projectId: true,
+      title: true,
     },
   });
   if (!note) {
@@ -57,6 +63,19 @@ export async function POST(
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const body = (await req.json()) as any;
+
+  // ── Auto-title generation ──────────────────────────────────
+  let generatedTitle: string | null = null;
+  if (needsTitle(note.title)) {
+    const firstUserText = extractFirstUserText(body);
+    if (firstUserText) {
+      generatedTitle = await generateChatTitle(firstUserText);
+      await db
+        .update(researchNotes)
+        .set({ title: generatedTitle, updatedAt: new Date() })
+        .where(and(eq(researchNotes.id, noteId), eq(researchNotes.teamId, teamId)));
+    }
+  }
 
   // Build a RequestContext carrying the per-turn note scope. Every
   // research tool reads this — the agent literally cannot read
@@ -80,7 +99,7 @@ export async function POST(
     projectId: note.projectId,
   });
 
-  const upstream = await handleChatStream({
+  let upstream = await handleChatStream({
     version: "v6",
     mastra,
     agentId: "researcher",
@@ -100,6 +119,10 @@ export async function POST(
       },
     },
   });
+
+  if (generatedTitle) {
+    upstream = wrapStreamWithTitle(upstream, generatedTitle);
+  }
 
   // Friendly-error wrap — see `safeChatStream` for the rationale.
   return createUIMessageStreamResponse({ stream: safeChatStream(upstream) });

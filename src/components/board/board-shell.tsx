@@ -11,6 +11,7 @@ import type {
 import { WorkspaceTopBar } from "@/components/workspaces/workspace-top-bar";
 import type { WorkspaceSwitcherTeam } from "@/components/workspaces/workspace-switcher";
 
+import { BoardActions } from "./board-actions";
 import { BoardName } from "./board-name";
 import {
   EditorRefProvider,
@@ -19,16 +20,23 @@ import {
   selectNone,
   useBoardCanvasHandle,
   useBoardSelection,
+  useBoardZoom,
 } from "./editor-context";
 import { LeftPanel, type BoardSummary } from "./left-panel";
+import { LockOverlay } from "./lock-overlay";
+import { MultiplayerCursors } from "./multiplayer-cursors";
 import { BoardRightPanel } from "./right-panel";
 import { ShareDialog } from "./share-dialog";
+import { StickyClusters } from "./sticky-clusters";
+import { useBoardLock } from "./use-board-lock";
+import { useMultiplayerCursors } from "./use-multiplayer-cursors";
 
 export interface BoardShellProps {
   boardId: string;
   boardName: string;
   userName: string;
   userEmail?: string;
+  userId: string;
   shareToken: string | null;
   initialSnapshot: Record<string, unknown> | null;
   boards: BoardSummary[];
@@ -57,6 +65,7 @@ function BoardShellInner({
   boardName,
   userName,
   userEmail,
+  userId,
   shareToken,
   initialSnapshot,
   boards,
@@ -71,10 +80,27 @@ function BoardShellInner({
 }: BoardShellProps) {
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
+  const [streamedTitle, setStreamedTitle] = useState<string | null>(null);
   const handleRef = useBoardCanvasHandle();
   const { selectedShapeIds } = useBoardSelection();
 
-  // Keyboard shortcuts: Cmd/Ctrl + \ → left panel, Cmd/Ctrl + / → right panel.
+  const [canvasEl, setCanvasEl] = useState<HTMLElement | null>(null);
+  const canvasZoom = useBoardZoom();
+
+  const {
+    loading: lockLoading,
+    lockedByOther,
+    takeOver,
+  } = useBoardLock(boardId);
+
+  const { cursors } = useMultiplayerCursors(
+    boardId,
+    userId,
+    userName,
+    canvasEl,
+    canvasZoom,
+  );
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return;
@@ -90,13 +116,9 @@ function BoardShellInner({
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  // Pin new comments to the single selected shape, if any. Multi-select
-  // doesn't pin (ambiguous which one to attach to).
   const selectedShapeId =
     selectedShapeIds.length === 1 ? selectedShapeIds[0] : null;
 
-  // Track a friendly label for the selected shape — recomputed in an
-  // effect so we never have to read editorRef.current during render.
   const [selectedShapeLabel, setSelectedShapeLabel] = useState<string | null>(
     null,
   );
@@ -119,10 +141,9 @@ function BoardShellInner({
     [handleRef],
   );
 
-  // For per-comment "on …" pills we just show a generic label — resolving
-  // each shape during render would need a live editor reference, which is
-  // a render anti-pattern. Clicking the pill still focuses the shape.
   const resolveTargetLabel = useCallback(() => "shape", []);
+
+  const isLockedAway = lockedByOther !== null;
 
   return (
     <div className="fixed inset-0 flex flex-col bg-background">
@@ -130,10 +151,17 @@ function BoardShellInner({
         homePath={boardsHrefBase}
         homeLabel="Boards"
         leftPanelLabel="chats"
-        nameSlot={<BoardName boardId={boardId} initialName={boardName} />}
+        nameSlot={
+          <BoardName
+            boardId={boardId}
+            initialName={boardName}
+            streamedTitle={streamedTitle}
+          />
+        }
         shareSlot={
           <ShareDialog boardId={boardId} initialShareToken={shareToken} />
         }
+        actionsSlot={<BoardActions getHandle={() => handleRef.current} />}
         userName={userName}
         userEmail={userEmail}
         teams={teams}
@@ -155,30 +183,36 @@ function BoardShellInner({
           />
         ) : null}
 
-        <main className="relative flex-1 overflow-hidden">
+        <main ref={setCanvasEl} className="relative flex-1 overflow-hidden">
+          {isLockedAway ? (
+            <LockOverlay
+              lockedByName={lockedByOther.name}
+              lockedByUsername={lockedByOther.username}
+              loading={lockLoading}
+              onTakeOver={takeOver}
+            />
+          ) : null}
           <Whiteboard boardId={boardId} initialSnapshot={initialSnapshot} />
+          <MultiplayerCursors cursors={cursors} />
+          <StickyClusters />
         </main>
 
-        <BoardRightPanel
-          boardId={boardId}
-          initialMessages={initialMessages}
-          initialComments={initialComments}
-          members={members}
-          selectedShapeId={selectedShapeId}
-          onClearSelection={onClearSelection}
-          onFocusShape={onFocusShape}
-          resolveTargetLabel={resolveTargetLabel}
-          selectedShapeLabel={selectedShapeLabel}
-          hidden={!rightOpen}
-        />
+        {isLockedAway ? null : (
+          <BoardRightPanel
+            boardId={boardId}
+            initialMessages={initialMessages}
+            initialComments={initialComments}
+            members={members}
+            selectedShapeId={selectedShapeId}
+            onClearSelection={onClearSelection}
+            onFocusShape={onFocusShape}
+            resolveTargetLabel={resolveTargetLabel}
+            selectedShapeLabel={selectedShapeLabel}
+            hidden={!rightOpen}
+            onTitleUpdate={setStreamedTitle}
+          />
+        )}
       </div>
     </div>
   );
 }
-
-// `readShapeLabel`, `selectNone`, `focusShape` live in
-// `editor-context.tsx` — thin wrappers around the Excalidraw API
-// imported here. Pre-Phase 4 they branched on `handle.engine` to
-// route to one of two engines; after Phase 4 they're Excalidraw-only.
-// The indirection still pays for itself: keeps the shell free of
-// imperative API calls.

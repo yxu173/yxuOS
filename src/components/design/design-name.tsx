@@ -8,6 +8,8 @@ import { cn } from "@/lib/utils";
 export interface DesignNameProps {
   designId: string;
   initialName: string;
+  /** Streamed title from the server — takes precedence over initialName. */
+  streamedTitle?: string | null;
 }
 
 /**
@@ -15,14 +17,14 @@ export interface DesignNameProps {
  * boards: click → input, Enter / blur commits, Escape cancels. Optimistic
  * override stays visible while the server action runs.
  */
-export function DesignName({ designId, initialName }: DesignNameProps) {
+export function DesignName({ designId, initialName, streamedTitle }: DesignNameProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [optimisticName, setOptimisticName] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const displayName = optimisticName ?? initialName;
+  const displayName = optimisticName ?? streamedTitle ?? initialName;
 
   useEffect(() => {
     if (editing) inputRef.current?.select();

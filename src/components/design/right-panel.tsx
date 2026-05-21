@@ -24,6 +24,8 @@ export interface DesignRightPanelProps {
   // When false, the panel is hidden via CSS instead of unmounted so the
   // DesignChat's in-memory message history survives collapse/expand cycles.
   hidden?: boolean;
+  /** Fired when the server stream emits an auto-generated title update. */
+  onTitleUpdate?: (title: string) => void;
 }
 
 type RightTab = "chat" | "inspect" | "library" | "comments";
@@ -47,6 +49,7 @@ export function DesignRightPanel({
   initialComments,
   members,
   hidden = false,
+  onTitleUpdate,
 }: DesignRightPanelProps) {
   const [tab, setTab] = useState<RightTab>("chat");
   const selectedNodeId = useDesignCanvas((state) => state.selectedNodeId);
@@ -93,7 +96,11 @@ export function DesignRightPanel({
           forceMount
           className="m-0 flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden"
         >
-          <DesignChat designId={designId} initialMessages={initialMessages} />
+          <DesignChat
+            designId={designId}
+            initialMessages={initialMessages}
+            onTitleUpdate={onTitleUpdate}
+          />
         </TabsContent>
         <TabsContent
           value="inspect"

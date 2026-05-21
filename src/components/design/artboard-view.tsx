@@ -12,6 +12,8 @@ export interface ArtboardViewProps {
    * drag of the artboard.
    */
   onPointerDownArtboard: (event: React.PointerEvent, id: string) => void;
+  /** True when the user is holding Alt — artboard shows a duplicate cursor. */
+  isAltDown?: boolean;
 }
 
 /**
@@ -27,6 +29,7 @@ export interface ArtboardViewProps {
 export function ArtboardView({
   artboard,
   onPointerDownArtboard,
+  isAltDown,
 }: ArtboardViewProps) {
   const isSelected = useDesignCanvas((state) =>
     state.selection.includes(artboard.id),
@@ -48,6 +51,11 @@ export function ArtboardView({
         top: artboard.y,
         width: artboard.w,
         height: artboard.h,
+        cursor: artboard.locked
+          ? "not-allowed"
+          : isAltDown
+            ? "copy"
+            : "move",
       }}
       onPointerDown={(event) => onPointerDownArtboard(event, artboard.id)}
     >

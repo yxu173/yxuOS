@@ -8,6 +8,8 @@ import { cn } from "@/lib/utils";
 export interface BoardNameProps {
   boardId: string;
   initialName: string;
+  /** Streamed title from the server — takes precedence over initialName. */
+  streamedTitle?: string | null;
 }
 
 /**
@@ -16,15 +18,18 @@ export interface BoardNameProps {
  *
  * We hold an optimistic override while the server action runs; once the
  * page revalidates, `initialName` updates and we clear the override.
+ * A `streamedTitle` (from the auto-title generator) wins over everything
+ * until the user explicitly edits it, at which point we discard the stream.
  */
-export function BoardName({ boardId, initialName }: BoardNameProps) {
+export function BoardName({ boardId, initialName, streamedTitle }: BoardNameProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [optimisticName, setOptimisticName] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const displayName = optimisticName ?? initialName;
+  // streamedTitle > optimistic (server action in flight) > initialName (SSR prop)
+  const displayName = optimisticName ?? streamedTitle ?? initialName;
 
   useEffect(() => {
     if (editing) {

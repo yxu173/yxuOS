@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { UIMessage } from "ai";
 
 import { ResearchChat } from "./research-chat";
@@ -41,12 +42,16 @@ export function ResearchShell({
   initialMessages,
   initialPrompt,
 }: ResearchShellProps) {
+  // Real-time title from the server-side auto-title generator.
+  const [streamedTitle, setStreamedTitle] = useState<string | null>(null);
+
   return (
     <div className="grid h-[calc(100vh-3rem)] min-h-0 w-full grid-cols-[minmax(0,1fr)_380px] overflow-hidden">
       <section className="min-h-0 min-w-0 border-r border-white/5">
         <ResearchNoteEditor
           noteId={noteId}
           initialTitle={initialTitle}
+          streamedTitle={streamedTitle}
           initialBody={initialBody}
           projectSlug={projectSlug}
         />
@@ -56,6 +61,7 @@ export function ResearchShell({
           noteId={noteId}
           initialMessages={initialMessages}
           initialPrompt={initialPrompt}
+          onTitleUpdate={setStreamedTitle}
         />
       </aside>
     </div>

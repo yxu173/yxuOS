@@ -82,6 +82,8 @@ export function DesignShell({
 }: DesignShellProps) {
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
+  // Real-time title from the server-side auto-title generator.
+  const [streamedTitle, setStreamedTitle] = useState<string | null>(null);
 
   // Hydrate the zustand store with the server-fetched artboards on the
   // first render of this DesignShell instance. Clears the undo stack
@@ -174,7 +176,13 @@ export function DesignShell({
         homePath={designsHrefBase}
         homeLabel="Designs"
         leftPanelLabel="designs"
-        nameSlot={<DesignName designId={designId} initialName={designName} />}
+        nameSlot={
+          <DesignName
+            designId={designId}
+            initialName={designName}
+            streamedTitle={streamedTitle}
+          />
+        }
         shareSlot={
           <DesignShareDialog
             designId={designId}
@@ -209,6 +217,7 @@ export function DesignShell({
           initialComments={initialComments}
           members={members}
           hidden={!rightOpen}
+          onTitleUpdate={setStreamedTitle}
         />
       </div>
       </div>

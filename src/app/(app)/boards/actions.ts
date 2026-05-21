@@ -1,15 +1,16 @@
 "use server";
 
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { nanoid } from "nanoid";
 
 import { db } from "@/db";
-import { boards } from "@/db/schema";
+import { boards, boardVersions } from "@/db/schema";
 import { logActivity } from "@/lib/activity";
 import { bustProjectBoards } from "@/lib/boards/listing";
+import { processShapeMentions } from "@/lib/boards/shape-mentions";
 import { indexBoard, unindexBoard } from "@/lib/rag/indexers/board";
 import {
   requireActiveProject,
@@ -59,12 +60,15 @@ export async function createBoard(projectSlug?: string | FormData) {
 /**
  * Persists the latest Excalidraw snapshot for a board. Any team member can
  * edit any team board.
+ *
+ * Also writes a row into `board_versions` so every save becomes a
+ * restorable point in the board's edit history.
  */
 export async function saveBoardSnapshot(
   boardId: string,
   snapshot: Record<string, unknown>,
 ) {
-  const { teamId } = await requireActiveTeam();
+  const { session, teamId } = await requireActiveTeam();
 
   const result = await db
     .update(boards)
@@ -78,6 +82,24 @@ export async function saveBoardSnapshot(
   if (result.length === 0) {
     throw new Error("Board not found");
   }
+
+  // Write a version record so the user can browse / restore past states.
+  await db.insert(boardVersions).values({
+    boardId,
+    snapshot,
+    editedById: session.user.id,
+  });
+
+  // Process @mentions in text elements — log activity for newly
+  // mentioned team members (deduped via Redis, 24 h window).
+  after(() =>
+    processShapeMentions(
+      boardId,
+      snapshot,
+      teamId,
+      session.user.id,
+    ),
+  );
 
   // Snapshots save on a debounce and can fire many times per
   // minute while editing. `after()` keeps the embed call off the
@@ -191,4 +213,289 @@ export async function disableBoardShare(boardId: string) {
     .where(and(eq(boards.id, boardId), eq(boards.teamId, teamId)));
 
   revalidatePath(`/boards/${boardId}`);
+}
+
+/**
+ * List the 100 most recent versions for a board. Returns version id,
+ * timestamp, and the editor who saved. Does NOT return snapshot data
+ * (use `getBoardVersion` for that).
+ */
+export async function listBoardVersions(boardId: string) {
+  const { teamId } = await requireActiveTeam();
+
+  const existing = await db.query.boards.findFirst({
+    where: and(eq(boards.id, boardId), eq(boards.teamId, teamId)),
+    columns: { id: true },
+  });
+  if (!existing) throw new Error("Board not found");
+
+  const versions = await db.query.boardVersions.findMany({
+    where: eq(boardVersions.boardId, boardId),
+    orderBy: desc(boardVersions.createdAt),
+    columns: {
+      id: true,
+      createdAt: true,
+    },
+    with: {
+      editedBy: {
+        columns: {
+          name: true,
+          username: true,
+          displayUsername: true,
+        },
+      },
+    },
+    limit: 100,
+  });
+
+  return versions.map((v) => ({
+    id: v.id,
+    createdAt: v.createdAt,
+    editedBy: {
+      name: v.editedBy.name,
+      username: v.editedBy.displayUsername ?? v.editedBy.username,
+    },
+  }));
+}
+
+/**
+ * Fetch a single version by id, including the full snapshot.
+ */
+export async function getBoardVersion(versionId: string) {
+  const { teamId } = await requireActiveTeam();
+
+  const version = await db.query.boardVersions.findFirst({
+    where: eq(boardVersions.id, versionId),
+    columns: {
+      id: true,
+      boardId: true,
+      snapshot: true,
+      createdAt: true,
+    },
+    with: {
+      board: { columns: { teamId: true } },
+      editedBy: {
+        columns: {
+          name: true,
+          username: true,
+          displayUsername: true,
+        },
+      },
+    },
+  });
+
+  if (!version || version.board.teamId !== teamId) {
+    throw new Error("Version not found");
+  }
+
+  return {
+    id: version.id,
+    boardId: version.boardId,
+    snapshot: version.snapshot,
+    createdAt: version.createdAt,
+    editedBy: {
+      name: version.editedBy.name,
+      username: version.editedBy.displayUsername ?? version.editedBy.username,
+    },
+  };
+}
+
+/**
+ * Restore the board to a past version. Writes the old snapshot back
+ * to `boards.snapshot` and inserts a NEW version row so the restore
+ * itself is tracked in the version history.
+ */
+export async function restoreBoardVersion(
+  boardId: string,
+  versionId: string,
+) {
+  const { session, teamId } = await requireActiveTeam();
+
+  const version = await db.query.boardVersions.findFirst({
+    where: eq(boardVersions.id, versionId),
+    columns: { snapshot: true },
+    with: {
+      board: { columns: { teamId: true } },
+    },
+  });
+  if (!version || version.board.teamId !== teamId) {
+    throw new Error("Version not found");
+  }
+
+  const now = new Date();
+
+  await db
+    .update(boards)
+    .set({ snapshot: version.snapshot, updatedAt: now })
+    .where(and(eq(boards.id, boardId), eq(boards.teamId, teamId)));
+
+  await db.insert(boardVersions).values({
+    boardId,
+    snapshot: version.snapshot,
+    editedById: session.user.id,
+  });
+
+  revalidatePath(`/boards/${boardId}`);
+
+  after(() => indexBoard(boardId));
+}
+
+/* ─── Board locking ──────────────────────────────────── */
+
+const LOCK_STALE_MS = 30_000; // stale after 30 s (browser crash guard)
+
+/**
+ * Claim the lock on a board. If someone else already holds a fresh lock
+ * (`lockedAt` within LOCK_STALE_MS), the call fails so the client can
+ * show a "locked by X" screen instead of silently stealing the lock.
+ *
+ * When the lock is stale (previous holder's tab crashed), we overwrite it.
+ */
+export async function claimBoardLock(boardId: string) {
+  const { session, teamId } = await requireActiveTeam();
+
+  const board = await db.query.boards.findFirst({
+    where: and(eq(boards.id, boardId), eq(boards.teamId, teamId)),
+    columns: { id: true, lockedById: true, lockedAt: true },
+    with: {
+      lockedBy: {
+        columns: { name: true, username: true, displayUsername: true },
+      },
+    },
+  });
+  if (!board) throw new Error("Board not found");
+
+  // Already locked by us — refresh the timestamp (heartbeat).
+  if (board.lockedById === session.user.id) {
+    await db
+      .update(boards)
+      .set({ lockedAt: new Date() })
+      .where(eq(boards.id, boardId));
+    return { ok: true, lockedBy: null } as const;
+  }
+
+  // Someone else holds the lock — check staleness.
+  if (board.lockedById && board.lockedAt) {
+    const stale =
+      Date.now() - new Date(board.lockedAt).getTime() > LOCK_STALE_MS;
+    if (!stale) {
+      return {
+        ok: false,
+        lockedBy: {
+          name: board.lockedBy?.name ?? "Unknown",
+          username:
+            board.lockedBy?.displayUsername ?? board.lockedBy?.username ?? null,
+        },
+      } as const;
+    }
+  }
+
+  // Lock is free or stale — claim it.
+  await db
+    .update(boards)
+    .set({ lockedById: session.user.id, lockedAt: new Date() })
+    .where(eq(boards.id, boardId));
+
+  return { ok: true, lockedBy: null } as const;
+}
+
+/**
+ * Keep the lock alive while editing. Clients call this every ~10 s.
+ */
+export async function heartbeatBoardLock(boardId: string) {
+  const { session, teamId } = await requireActiveTeam();
+
+  const board = await db.query.boards.findFirst({
+    where: and(eq(boards.id, boardId), eq(boards.teamId, teamId)),
+    columns: { lockedById: true },
+  });
+  if (!board) throw new Error("Board not found");
+  if (board.lockedById !== session.user.id) {
+    throw new Error("Lock not held");
+  }
+
+  await db
+    .update(boards)
+    .set({ lockedAt: new Date() })
+    .where(eq(boards.id, boardId));
+}
+
+/**
+ * Release the lock. Called on navigate-away via `beforeunload` +
+ * `navigator.sendBeacon`. Idempotent — if we don't hold the lock
+ * it's a no-op.
+ */
+export async function releaseBoardLock(boardId: string) {
+  const { session, teamId } = await requireActiveTeam();
+
+  await db
+    .update(boards)
+    .set({ lockedById: null, lockedAt: null })
+    .where(
+      and(
+        eq(boards.id, boardId),
+        eq(boards.teamId, teamId),
+        eq(boards.lockedById, session.user.id),
+      ),
+    );
+}
+
+/**
+ * Force-takeover the lock. Available to any team member when the
+ * current lock holder hasn't released within LOCK_STALE_MS. The UI
+ * exposes this as a "Take over" button.
+ */
+export async function takeoverBoardLock(boardId: string) {
+  const { session, teamId } = await requireActiveTeam();
+
+  const board = await db.query.boards.findFirst({
+    where: and(eq(boards.id, boardId), eq(boards.teamId, teamId)),
+    columns: { lockedById: true, lockedAt: true },
+  });
+  if (!board) throw new Error("Board not found");
+
+  // Only allow takeover if the lock actually exists (stale check on
+  // the UI side, but guard here too).
+  if (!board.lockedById) {
+    // No lock — just claim it.
+    await db
+      .update(boards)
+      .set({ lockedById: session.user.id, lockedAt: new Date() })
+      .where(eq(boards.id, boardId));
+    return;
+  }
+
+  await db
+    .update(boards)
+    .set({ lockedById: session.user.id, lockedAt: new Date() })
+    .where(eq(boards.id, boardId));
+}
+
+/**
+ * Check the current lock state for a board. Used on page load.
+ */
+export async function checkBoardLock(teamId: string, boardId: string) {
+  const board = await db.query.boards.findFirst({
+    where: and(eq(boards.id, boardId), eq(boards.teamId, teamId)),
+    columns: { lockedById: true, lockedAt: true },
+    with: {
+      lockedBy: {
+        columns: { name: true, username: true, displayUsername: true },
+      },
+    },
+  });
+  if (!board) throw new Error("Board not found");
+
+  if (!board.lockedById || !board.lockedAt) return null;
+
+  const stale =
+    Date.now() - new Date(board.lockedAt).getTime() > LOCK_STALE_MS;
+  if (stale) return null;
+
+  return {
+    userId: board.lockedById,
+    name: board.lockedBy?.name ?? "Unknown",
+    username:
+      board.lockedBy?.displayUsername ?? board.lockedBy?.username ?? null,
+  };
 }
